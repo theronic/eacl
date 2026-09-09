@@ -1,6 +1,8 @@
 (ns eacl.datascript.integrity
   "Read-only, offline endpoint-pair integrity diagnostics."
-  (:require [eacl.datascript.impl :as impl]
+  (:require [eacl.datascript.qualifiers :as qualifiers]
+            [eacl.relationships.qualifier-integrity :as qualifier-integrity]
+            [eacl.datascript.impl :as impl]
             [eacl.relationships.endpoint-pair :as endpoint-pair]))
 
 (defn dangling-relationship-halves
@@ -16,3 +18,13 @@
   ([db options]
    (endpoint-pair/dangling-report
     (dangling-relationship-halves db) options)))
+
+(defn qualifier-proof-input
+  "Captures offline qualifier, ownership, source, version, and Relation proof inputs."
+  [snapshot]
+  (qualifier-integrity/proof-input (qualifiers/read-api) snapshot))
+
+(defn qualifier-report
+  ([snapshot] (qualifier-report snapshot {}))
+  ([snapshot options]
+   (qualifier-integrity/report (qualifier-proof-input snapshot) options)))

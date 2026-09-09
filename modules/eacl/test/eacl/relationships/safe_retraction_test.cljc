@@ -32,18 +32,18 @@
 
 (deftest local-half-planning-is-exact-test
   (let [target 10
-        forward [[:account 20 :server 30]
-                 [:account 21 :account target]
-                 [:account 20 :server 30]]
-        reverse [[:account 22 :user 40]
-                 [:account 21 :account target]]
+        forward [[:account 20 :server 30 nil]
+                 [:account 21 :account target nil]
+                 [:account 20 :server 30 nil]]
+        reverse [[:account 22 :user 40 nil]
+                 [:account 21 :account target nil]]
         plan (safe/plan-local-halves target forward reverse)]
     (is (= 5 (:local-half-count plan)))
     (is (= [20 21 22] (:relation-ids plan)))
     (is (= #{[:db/retract 30 storage/reverse-attribute
-              [:server 20 :account target]]
+              [:server 20 :account target nil]]
              [:db/retract 40 storage/forward-attribute
-              [:user 22 :account target]]}
+              [:user 22 :account target nil]]}
            (set (:peer-retractions plan))))
     (is (= [[:db/add 20 :eacl/relation-version :db/current-tx]
             [:db/add 21 :eacl/relation-version :db/current-tx]
@@ -51,7 +51,7 @@
            (safe/relation-stamps (:relation-ids plan))))))
 
 (deftest combined-plans-deduplicate-peer-work-and-relation-stamps-test
-  (let [op [:db/retract 30 storage/reverse-attribute [:server 20 :account 10]]
+  (let [op [:db/retract 30 storage/reverse-attribute [:server 20 :account 10 nil]]
         combined
         (safe/combine-plans
          [{:peer-retractions [op]
@@ -80,7 +80,7 @@
           forward
           (mapv (fn [index]
                   [:user (+ 2 (mod index relation-count))
-                   :account (+ 1000 index)])
+                   :account (+ 1000 index) nil])
                 (range degree))
           plan (safe/plan-local-halves target forward [])]
       (is (= degree (:local-half-count plan)))

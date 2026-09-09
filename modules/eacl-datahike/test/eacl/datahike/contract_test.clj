@@ -15,6 +15,7 @@
             [eacl.backend.v8 :as backend]
             [eacl.cache :as cache]
             [eacl.contract-support :as contract]
+            [eacl.security.contract-support :as security-contract]
             [eacl.core :as eacl]
             [eacl.datahike.core :as datahike]
             [eacl.spicedb.consistency :as consistency]
@@ -50,7 +51,7 @@
         before (datahike/cache-content-revision client)
         snapshot (datahike/export-cache-snapshot client bounds)
         restored (datahike/restore-cache-snapshot! client snapshot bounds)]
-    (is (= :eacl.cache/basis-snapshot-v2 (:format snapshot)))
+    (is (= :eacl.cache/basis-snapshot-v3 (:format snapshot)))
     (is (zero? (:entry-count snapshot)))
     (is (true? (:restored? restored)))
     (is (> (datahike/cache-content-revision client) before))))
@@ -152,7 +153,7 @@
         snapshot-a (eacl/snapshot client-a)
         snapshot-b (eacl/snapshot client-b)]
     (try
-      (is (= "eacl/initial"
+      (is (= #uuid "00000000-0000-0000-0000-000000000000"
              (get-in client-a [:runtime :source-lifecycle])
              (get-in client-b [:runtime :source-lifecycle])
              (:source-lifecycle (eacl/basis snapshot-a))
@@ -379,3 +380,11 @@
            (= #{(contract/->server "server-1")
                 (contract/->server "server-2")}
               (set (:data after-write)))))))))
+
+(deftest live-security-keyring-rotation-contract-test
+  (doseq [attribute-refs? [false true]]
+    (let [conn (datahike/create-conn nil {:attribute-refs? attribute-refs?})
+          config (:config (d/db conn))]
+      (try (security-contract/assert-client-security! #(datahike/make-client conn %) #(seed-objects! conn)
+                                                      datahike/export-authenticated-cache-snapshot datahike/restore-authenticated-cache-snapshot!)
+           (finally (d/release conn) (d/delete-database config))))))

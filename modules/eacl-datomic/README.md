@@ -153,3 +153,28 @@ mutation rules, see the
   identity facade; the adapter reads `eacl.datomic.db` directly.
 - `eacl.datomic.schema/{calc-set-deltas,compare-schema}` are now aliases of
   `eacl.schema.model` (same values).
+
+## Relationship storage 8
+
+This adapter uses five-slot endpoint pairs with a trailing nullable
+`qualifier-eid`. V8 supports
+[Caveats and expiring Relationships](../../docs/caveats.md) ; older readers must be drained first. Upgrades are explicit
+and restartable, and client construction requires a completed target store.
+Follow the [7-to-8 operator guide](../../docs/relationship-storage-v7-to-v8.md) before
+starting clients, then the v8 serving rollout guide before qualified writes.
+
+Use `(eacl.datomic.schema/install! conn)` to bootstrap a fresh native database.
+
+## Live security keys (v8)
+
+`make-client` accepts `:security-keyring-controller` and an optional independent
+`:zed-token-keyring-controller`. Static key options remain supported. All
+controllers use the backend-neutral `eacl.core` add/activate/retire/status APIs;
+updates change token acceptance without changing database or authorization
+identity. Authenticated cache export/restore is available through this module's
+`export-authenticated-cache-snapshot` / `restore-authenticated-cache-snapshot!`.
+
+**Non-expiring cursors require indefinite old-key retention for lossless resume.**
+A finite `:cursor-ttl-seconds` applies only to subsequently issued cursors. See the
+[security-key guide and multi-Peer runbook](../../docs/security-keyrings.md) for
+external secret ownership, distribution before activation, and retirement.

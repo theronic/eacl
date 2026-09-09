@@ -84,7 +84,7 @@
          conn
          {:revision-watermark watermark
           :advance-revision-watermark! #(swap! watermark max %)
-          :source-lifecycle (str (random-uuid))
+          :source-lifecycle (random-uuid)
           :security-key test-key})]
     (try
       (f conn client)

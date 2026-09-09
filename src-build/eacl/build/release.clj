@@ -13,6 +13,7 @@
 
 (def consumer-entry-points
   {:eacl 'eacl.core
+   :eacl-caveats-jvm 'eacl.caveats.jvm
    :eacl-datomic 'eacl.datomic.core
    :eacl-datahike 'eacl.datahike.core
    :eacl-datascript 'eacl.datascript.core
@@ -108,11 +109,9 @@
    "            (datalevin/make-client\n"
    "             conn\n"
    "             {:security-key \"01234567890123456789012345678901\"\n"
-   "              :source-lifecycle \"packaged-smoke\"\n"
+   "              :source-lifecycle #uuid \"ad966640-d25c-4b7c-b5d2-25f00151b0be\"\n"
    "              :revision-watermark watermark\n"
-   "              :advance-revision-watermark! #(swap! watermark max %)\n"
-   "              :datalevin-topology\n"
-   "              backend/certified-topology-declaration})\n"
+   "              :advance-revision-watermark! #(swap! watermark max %)})\n"
    "            alice (eacl/spice-object :user \"alice\")\n"
    "            document (eacl/spice-object :document \"document-1\")]\n"
    "        (eacl/write-schema!\n"

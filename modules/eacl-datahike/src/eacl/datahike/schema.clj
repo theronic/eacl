@@ -1,12 +1,17 @@
 (ns eacl.datahike.schema
   (:require [clojure.set :as set]
             [datahike.api :as d]
+            [eacl.caveats.schema :as caveat-schema]
+            [eacl.caveats.definition :as caveat-definition]
             [eacl.datahike.db :as ddb]
+            [eacl.datahike.storage :as target-storage]
+            [eacl.relationships.upgrade :as upgrade]
             [eacl.relationships.storage :as relationship-storage]
             [eacl.schema.expression-persistence :as expression-persistence]
             [eacl.schema.expression-policy :as expression-policy]
             [eacl.schema.expression-resolver :as expression-resolver]
             [eacl.schema.model :as model]
+            [eacl.schema.relation-allowance :as relation-allowance]
             [eacl.schema.replacement-plan :as replacement-plan]))
 
 (def relation-key-attr
@@ -104,25 +109,20 @@
 
    {:db/ident       relationship-storage/forward-attribute
     :db/valueType   :db.type/tuple
-    :db/tupleTypes  [:db.type/keyword
-                     :db.type/ref
-                     :db.type/keyword
-                     :db.type/ref]
+    :db/tupleTypes  relationship-storage/tuple-types
     :db/cardinality :db.cardinality/many
     :db/index       true}
 
    {:db/ident       relationship-storage/reverse-attribute
     :db/valueType   :db.type/tuple
-    :db/tupleTypes  [:db.type/keyword
-                     :db.type/ref
-                     :db.type/keyword
-                     :db.type/ref]
+    :db/tupleTypes  relationship-storage/tuple-types
     :db/cardinality :db.cardinality/many
     :db/index       true}])
 
 (def datahike-schema
   "EACL's own attributes, as datahike transaction data."
-  (into component-schema tuple-schema))
+  (into (into component-schema upgrade/metadata-schema)
+        (concat tuple-schema caveat-schema/datom-schema)))
 
 (defn merge-schema
   "EACL's attributes plus the caller's. `extra-schema` is datahike-native
@@ -170,6 +170,7 @@
      (d/create-database cfg)
      (let [conn (d/connect cfg)]
        (d/transact conn (merge-schema extra-schema))
+       (target-storage/bootstrap! conn)
        conn))))
 
 (def relation-pull
@@ -224,12 +225,14 @@
       rows)))
 
 (defn read-relations
-  "Every relation definition. Enumerated from the relation key index rather than
-   by query: the index is the engine's own view of the schema, so a relation
-   that is invisible here is invisible to permission evaluation too."
+  "Canonical Relation definitions, including named Caveat alternatives."
   [db]
-  (mapv #(d/pull db relation-pull (:e %))
-        (ddb/avet-datoms db relation-key-attr)))
+  (let [pattern (cond-> relation-pull
+                  (ddb/entid db :eacl.relation/caveats)
+                  (into [:eacl.relation/allows-unqualified?
+                         {:eacl.relation/caveats [:eacl.caveat/name]}]))]
+    (mapv #(relation-allowance/canonicalize (d/pull db pattern (:e %)))
+          (ddb/avet-datoms db relation-key-attr))))
 
 (defn read-permissions
   [db]
@@ -282,12 +285,32 @@
           flat? :flat
           :else :none)))))
 
-(defn read-schema
-  [db & [_format]]
+(defn read-caveats [db]
+  (let [entities (if (ddb/entid db :eacl.caveat/name) (d/q '[:find [(pull ?c [:eacl.caveat/name :eacl.caveat/parameters-payload
+                               :eacl.caveat/expression-source :eacl.caveat/profile-version]) ...]
+            :where [?c :eacl.caveat/name]] db) [])]
+    (doseq [entity entities] (caveat-definition/decode-entity entity))
+    entities))
+
+(defn- caveat-references [db name]
+  (if-let [eid (ddb/entid db [:eacl.caveat/name name])]
+    (d/q '[:find [(pull ?q [:db/id :eacl.relationship-qualifier/caveat-context]) ...]
+               :in $ ?c
+               :where [?q :eacl.relationship-qualifier/caveat ?c]] db eid)
+    []))
+
+(defn read-authorization-schema
+  "Reads permission structure without compiling undemanded Caveat programs."
+  [db]
   (let [permissions (read-permissions db)]
     (expression-persistence/validate-entities permissions)
-    {:relations   (read-relations db)
-     :permissions permissions}))
+    {:relations (read-relations db) :permissions permissions}))
+
+(defn read-schema
+  [db & [_format]]
+  (let [schema (read-authorization-schema db)
+        caveats (read-caveats db)]
+    (cond-> schema (seq caveats) (assoc :caveats caveats))))
 
 (defn prepare-cache-coherence!
   "Initializes missing native schema/relation generations and the schema
@@ -372,11 +395,11 @@
       (max
        (count
         (ddb/avet-tuple-prefix
-         db relationship-storage/forward-attribute 4
+         db relationship-storage/forward-attribute relationship-storage/value-arity
          [subject-type relation-eid resource-type]))
        (count
         (ddb/avet-tuple-prefix
-         db relationship-storage/reverse-attribute 4
+         db relationship-storage/reverse-attribute relationship-storage/value-arity
          [resource-type relation-eid subject-type]))))))
 
 (defn relationship-present-for-relation?
@@ -389,11 +412,11 @@
      (or
       (first
        (ddb/avet-tuple-prefix
-        db relationship-storage/forward-attribute 4
+        db relationship-storage/forward-attribute relationship-storage/value-arity
         [subject-type relation-eid resource-type]))
       (first
        (ddb/avet-tuple-prefix
-        db relationship-storage/reverse-attribute 4
+        db relationship-storage/reverse-attribute relationship-storage/value-arity
         [resource-type relation-eid subject-type]))))))
 
 (defn current-schema-generation
@@ -456,16 +479,22 @@
           throwable))
         (throw throwable)))))
 
+(defn- stored-relation-caveats [db relation]
+  (relation-allowance/stored-caveats
+   {:entid #(ddb/entid db %) :entity #(ddb/entity-data db %)
+    :rows #(ddb/relationship-identity-datoms db %1 %2 %3)
+    :scan #(ddb/avet-tuple-prefix db %1 relationship-storage/value-arity %2)} relation))
+
 (defn plan-schema-replacement
   "Pure schema replacement planner shared by committed and speculative paths."
   [db schema-string
-   {:keys [allow-empty-schema? expression-limits orphan-policy]
+   {:keys [allow-empty-schema? expression-limits orphan-policy allow-caveats?]
     :or {orphan-policy :error}}]
   (let [expression-limits
         (expression-policy/normalize-client-limits expression-limits)
         new-schema-map
         (expression-persistence/candidate-schema
-         (expression-resolver/validate-schema schema-string expression-limits))
+         (expression-resolver/validate-schema schema-string expression-limits {:allow-caveats? allow-caveats?}))
         existing-schema
         (binding [expression-persistence/*expression-limits* expression-limits]
           (read-schema db))
@@ -473,7 +502,8 @@
         (when (and (empty? (:definitions new-schema-map))
                    (not allow-empty-schema?)
                    (or (seq (:relations existing-schema))
-                       (seq (:permissions existing-schema))))
+                       (seq (:permissions existing-schema))
+                       (seq (:caveats existing-schema))))
           (throw
            (ex-info
             (str "Refusing to replace a non-empty schema with zero definitions."
@@ -483,6 +513,7 @@
              :existing {:relations (count (:relations existing-schema))
                         :permissions (count (:permissions existing-schema))}})))
         deltas (compare-schema existing-schema new-schema-map)
+        _ (relation-allowance/validate-existing! (:relations deltas) #(stored-relation-caveats db %))
         semantic
         (replacement-plan/plan
          {:deltas deltas
@@ -490,8 +521,9 @@
           :relationship-count #(count-relationships-using-relation db %)
           :relationship-present?
           #(relationship-present-for-relation? db %)})
-        {:keys [relations permissions]} deltas
-        relation-retractions (:retractions relations)
+        {:keys [relations permissions caveats]} deltas
+        _ (caveat-definition/validate-replacements! caveats #(caveat-references db %))
+        relation-retractions (relation-allowance/entity-deletions relations)
         permission-retractions
         (expression-persistence/entity-deletions permissions)
         relation-additions
@@ -518,12 +550,18 @@
              [:db.fn/cas relation-eid
               (ddb/attr-repr db :eacl/relation-version)
               relation-generation relation-generation]))
-         relation-retractions)
+         (:retractions relations))
         tx-data
         (vec
          (concat
+          (:additions caveats)
+          (relation-allowance/attribute-retractions relations)
           relation-additions
           (:additions permissions)
+          (for [caveat (caveat-definition/entity-deletions caveats)
+                :let [eid (ddb/entid db [:eacl.caveat/name (:eacl.caveat/name caveat)])]
+                :when eid]
+            [:db/retractEntity eid])
           (for [relation relation-retractions
                 :let [eid (ddb/entid db [:eacl/id (:eacl/id relation)])]
                 :when eid]
@@ -547,7 +585,9 @@
                        [(:additions relations)
                         (:retractions relations)
                         (:additions permissions)
-                        (:retractions permissions)])))
+                        (:retractions permissions)
+                        (:additions caveats)
+                        (:retractions caveats)])))
         tx-data (if no-op? [] tx-data)]
     (assoc semantic
            :tx-data tx-data

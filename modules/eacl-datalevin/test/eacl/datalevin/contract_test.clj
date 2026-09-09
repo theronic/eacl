@@ -8,6 +8,7 @@
             [eacl.cache :as cache]
             [eacl.causal-token :as causal-token]
             [eacl.contract-support :as contract]
+            [eacl.security.contract-support :as security-contract]
             [eacl.core :as eacl]
             [eacl.datalevin.backend :as datalevin-backend]
             [eacl.datalevin.core :as datalevin]
@@ -69,7 +70,7 @@
              conn
              (merge
               watermark-config
-              {:source-lifecycle "test-lifecycle"
+              {:source-lifecycle #uuid "56e42789-dff4-5066-96c9-d275736f47e2"
                :security-key test-key}))]
         (f {:dir dir
             :conn conn
@@ -174,7 +175,7 @@
          "      conn (datalevin/create-conn " (pr-str dir) ") "
          "      client (datalevin/make-client "
          "              conn "
-         "              {:source-lifecycle \"process-kill-lifecycle\" "
+         "              {:source-lifecycle #uuid \"097182ba-9b4f-5906-8b68-7b5a4ed1a659\" "
          "               :revision-watermark watermark "
          "               :advance-revision-watermark! "
          "               (fn [revision] "
@@ -208,7 +209,7 @@
   ([overrides]
    (merge
     (watermark-options)
-    {:source-lifecycle "test-lifecycle"
+    {:source-lifecycle #uuid "56e42789-dff4-5066-96c9-d275736f47e2"
      :security-key test-key}
     overrides)))
 
@@ -470,6 +471,10 @@
         (testing "lifecycle and signing material must be externally supplied"
           (doseq [config [(dissoc (client-config) :source-lifecycle)
                           (client-config {:source-lifecycle nil})
+                          (client-config {:source-lifecycle false})
+                          (client-config {:source-lifecycle "56e42789-dff4-5066-96c9-d275736f47e2"})
+                          (client-config {:source-lifecycle :legacy})
+                          (client-config {:source-lifecycle #uuid "00000000-0000-0000-0000-000000000000"})
                           (dissoc (client-config) :security-key)]]
             (is (= :eacl/invalid-config
                    (:type
@@ -481,7 +486,7 @@
   (with-system
     (fn [{:keys [client]}]
       (doseq [invoke [#(datalevin/expire-cache! client)
-                      #(datalevin/expire-cache! client "new-life")]]
+                      #(datalevin/expire-cache! client #uuid "b7324aa1-ecff-5f1a-ba2e-7df19054d9d4")]]
         (is (= :eacl.datalevin/source-lifecycle-persistence-required
                (:type (error-data invoke))))))))
 
@@ -514,7 +519,7 @@
             client
             (datalevin/make-client
              conn
-             {:source-lifecycle "watermark-failure"
+             {:source-lifecycle #uuid "b9b7300a-bafe-5a5b-918d-8c75e79379ae"
               :revision-watermark watermark
               :advance-revision-watermark!
               (fn [revision]
@@ -543,7 +548,7 @@
   (let [dir (u/tmp-dir (str "eacl-datalevin-restart-" (random-uuid)))
         backup (u/tmp-dir (str "eacl-datalevin-backup-" (random-uuid)))
         watermark (atom 0)
-        lifecycle "continuity-life-1"
+        lifecycle #uuid "1b6a6653-e097-5280-aa68-98522a7112d1"
         options
         {:source-lifecycle lifecycle
          :revision-watermark watermark
@@ -586,7 +591,7 @@
                         (datalevin/make-client
                          restored
                          (assoc options
-                                :source-lifecycle "continuity-life-2"
+                                :source-lifecycle #uuid "67b9dd1c-89ca-565a-b5f5-dc5c0c9ae85c"
                                 :revision-watermark rotated-watermark
                                 :advance-revision-watermark!
                                 #(swap! rotated-watermark max %)))]
@@ -624,7 +629,7 @@
             (let [client
                   (datalevin/make-client
                    conn
-                   {:source-lifecycle "process-kill-lifecycle"
+                   {:source-lifecycle #uuid "097182ba-9b4f-5906-8b68-7b5a4ed1a659"
                     :revision-watermark watermark
                     :advance-revision-watermark!
                     (fn [revision]
@@ -706,7 +711,7 @@
               {:eacl/id {:db/valueType :db.type/long
                          :db/unique :db.unique/identity}})]
     (try
-      (is (= :eacl.datalevin/physical-schema-drift
+      (is (= :eacl/storage-version
              (:type
               (error-data
                #(datalevin/make-client conn (client-config))))))
@@ -723,13 +728,14 @@
             schema-eid (d/entid (d/db conn) [:eacl/id "schema-string"])]
         (d/transact!
          conn
-         [[:db/retractEntity schema-eid]]
+         [[:db/retractEntity schema-eid]
+          [:db/add schema-eid :eacl.storage/migration-generation :db/current-tx]]
          {:datalevin/write-token token})
         (let [error
               (error-data
                #(datalevin/make-client conn (client-config)))]
-          (is (= :eacl.cache/generation-unprepared (:type error)))
-          (is (= :schema-singleton (:missing error)))
+          (is (= :eacl/storage-version (:type error)))
+          (is (= :incomplete-storage (:reason error)))
           (is (= :datalevin (:backend error))))))))
 
 (deftest persisted-write-policy-drift-is-rejected-test
@@ -852,8 +858,9 @@
               scan ddb/avet-endpoint-prefix]
           (with-redefs [ddb/avet-endpoint-prefix
                         (fn [& args]
-                          (when (number? (last args))
-                            (swap! native-limits conj (last args)))
+                          (let [limit (if (boolean? (last args)) (nth args (- (count args) 2)) (last args))]
+                            (when (number? limit)
+                              (swap! native-limits conj limit)))
                           (apply scan args))]
             (let [relationships
                   (loop [after nil
@@ -926,47 +933,47 @@
               schema-reads (atom 0)
               ledger (request-counters/make-ledger)
               open-read-snapshot d/open-read-snapshot
-              read-schema datalevin-schema/read-schema
+              read-schema datalevin-schema/read-authorization-schema
               escaped (atom nil)]
           (with-redefs [d/open-read-snapshot
                         (fn [connection]
                           (swap! opens inc)
                           (open-read-snapshot connection))
-                        datalevin-schema/read-schema
+                        datalevin-schema/read-authorization-schema
                         (fn [db]
                           (swap! schema-reads inc)
                           (read-schema db))]
             (binding [request-counters/*ledger* ledger]
               (eacl/with-snapshot [snapshot (eacl/snapshot client)]
-                 (reset! escaped snapshot)
-                 (is (= 1 (count (:relations (eacl/read-schema snapshot)))))
-                 (is (= 1
-                        (count
-                         (:data
-                          (eacl/read-relationships
-                           snapshot {:subject/type :user
-                                     :subject/id "alice"
-                                     :resource/type :document
-                                     :resource/relation :viewer
-                                     :first 10
-                                     :cache? false})))))
-                 (dotimes [_ 4]
-                   (is (:allowed?
-                        (eacl/check-permission
-                         snapshot {:subject alice
-                                   :permission :view
-                                   :resource document
-                                   :cache? false}))))
-                 (is (= :eacl/unsupported-capability
-                        (:type
-                         (error-data
-                          #(eacl/delete-relationship!
-                            snapshot alice :viewer document)))))
-                 (is (= :eacl/snapshot-thread-violation
-                        (:type
-                         @(future
-                            (error-data
-                             #(eacl/can? snapshot alice :view document))))))))
+                (reset! escaped snapshot)
+                (is (= 1 (count (:relations (eacl/read-schema snapshot)))))
+                (is (= 1
+                       (count
+                        (:data
+                         (eacl/read-relationships
+                          snapshot {:subject/type :user
+                                    :subject/id "alice"
+                                    :resource/type :document
+                                    :resource/relation :viewer
+                                    :first 10
+                                    :cache? false})))))
+                (dotimes [_ 4]
+                  (is (:allowed?
+                       (eacl/check-permission
+                        snapshot {:subject alice
+                                  :permission :view
+                                  :resource document
+                                  :cache? false}))))
+                (is (= :eacl/unsupported-capability
+                       (:type
+                        (error-data
+                         #(eacl/delete-relationship!
+                           snapshot alice :viewer document)))))
+                (is (= :eacl/snapshot-thread-violation
+                       (:type
+                        @(future
+                           (error-data
+                            #(eacl/can? snapshot alice :view document))))))))
             (is (= 1 @opens))
             (is (= 2 @schema-reads)
                 "one public schema read plus one shared request-local parse")
@@ -1043,7 +1050,7 @@
         (testing "authenticated incomparable scope and lifecycle fail before acquisition"
           (doseq [[label overrides]
                   [[:source {:source-id "another-source"}]
-                   [:lifecycle {:source-lifecycle "another-lifecycle"}]]]
+                   [:lifecycle {:source-lifecycle #uuid "f278acd4-c0ea-526f-85ea-9b8bf3c8ec75"}]]]
             (let [before (d/active-read-snapshot-info)
                   error
                   (error-data
@@ -1333,7 +1340,7 @@
              (watermark-options)
              {:cache store
               :security-key test-key
-              :source-lifecycle "shared-contract"})
+              :source-lifecycle #uuid "277ac607-fd81-5d30-ac87-4751e9c60428"})
             client
             (datalevin/make-client conn client-options)]
         (eacl/write-schema! client contract/smoke-schema)
@@ -1360,7 +1367,7 @@
            (watermark-options)
            {:cache cache/no-cache
             :security-key test-key
-            :source-lifecycle "shared-contract"})))
+            :source-lifecycle #uuid "277ac607-fd81-5d30-ac87-4751e9c60428"})))
         (is (= {:active 0 :oldest-age-ms nil}
                (d/active-read-snapshot-info)))))))
 
@@ -1375,7 +1382,7 @@
               (watermark-options)
               {:cache store
                :security-key test-key
-               :source-lifecycle "aggregate-lifecycle"}))
+               :source-lifecycle #uuid "028919a5-8235-5939-aaa3-88c866748e92"}))
             user-1 (contract/->user "user-1")
             user-2 (contract/->user "user-2")
             account-1 (contract/->account "account-1")
@@ -1481,7 +1488,7 @@
           (let [capabilities
                 (source/capabilities
                  (:source client))]
-            (is (= "aggregate-lifecycle"
+            (is (= #uuid "028919a5-8235-5939-aaa3-88c866748e92"
                    (source/source-lifecycle
                     (:source client))))
             ;; Ordered-generation evidence belongs to each selected immutable
@@ -1564,7 +1571,7 @@
              (merge
               (watermark-options)
               {:security-key test-key
-               :source-lifecycle "plan-reuse"}))]
+               :source-lifecycle #uuid "a4602851-faac-55fd-b07a-faf942c3c213"}))]
         (eacl/write-schema! client contract/smoke-schema)
         (d/transact!
          conn
@@ -1586,7 +1593,7 @@
              (merge
               (watermark-options)
               {:security-key test-key
-               :source-lifecycle "one-hundred-checks"}))
+               :source-lifecycle #uuid "acc007ee-f11f-55f4-ad32-bb1ca3de473e"}))
             original-seal sealed-plan/seal-plan
             seals (atom 0)]
         (eacl/write-schema! client contract/smoke-schema)
@@ -1653,7 +1660,7 @@
              (merge
               (watermark-options)
               {:security-key test-key
-               :source-lifecycle "recursive-contract"}))]
+               :source-lifecycle #uuid "ddf0261d-2ca5-5927-a2a7-3d2a31af018d"}))]
         (eacl/write-schema! client contract/recursive-schema)
         (d/transact!
          conn
@@ -1665,3 +1672,12 @@
         (contract/assert-v8-recursive-contracts! client)
         (is (= {:active 0 :oldest-age-ms nil}
                (d/active-read-snapshot-info)))))))
+
+(deftest live-security-keyring-rotation-contract-test
+  (with-system
+    (fn [{:keys [conn watermark]}]
+      (security-contract/assert-client-security!
+       #(datalevin/make-client conn (merge {:source-lifecycle #uuid "56e42789-dff4-5066-96c9-d275736f47e2" :revision-watermark watermark
+                                            :advance-revision-watermark! (fn [revision] (swap! watermark max revision))} %))
+       #(d/transact! conn (mapv (fn [{:keys [id]}] {:eacl/id id}) contract/smoke-objects))
+       datalevin/export-authenticated-cache-snapshot datalevin/restore-authenticated-cache-snapshot!))))

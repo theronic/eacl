@@ -4,11 +4,14 @@
    [datomic.api :as d]
    [eacl.core :as eacl :refer [spice-object]]
    [eacl.datomic.backend :as backend]
+   [eacl.datomic.db :as db]
    [eacl.datomic.impl.base :as base]
    [eacl.datomic.impl.indexed :as impl.indexed]
    [eacl.engine.relationships :as relationship-engine]
    [eacl.engine.v8 :as engine]
    [eacl.relationships.endpoint-pair :as endpoint-pair]
+   [eacl.relationships.edge :as edge]
+   [eacl.relationships.inspection :as inspection]
    [eacl.relationships.filters :as relationship-filters]
    [eacl.relationships.mutations :as relationship-mutations]
    [eacl.relationships.storage :as relationship-storage]
@@ -251,6 +254,14 @@
      :resource-identity-guard
      (endpoint-identity-guard db :resource resource-eid resource)}))
 
+(defn relationship-publication-input
+  "Resolves the same endpoint identities and commit guards as ordinary writes."
+  [db relationship]
+  (let [resolved (resolve-relationship db relationship {})]
+    {:relationship (mapv resolved [:subject-type :subject-eid :relation-eid :resource-type :resource-eid])
+     :identity-guards [(:subject-identity-guard resolved)
+                       (:resource-identity-guard resolved)]}))
+
 (defn- relationship-tuple
   [{:keys [subject-type relation-eid resource-type resource-eid]}]
   (endpoint-pair/forward-value
@@ -260,6 +271,15 @@
   [{:keys [resource-type relation-eid subject-type subject-eid]}]
   (endpoint-pair/reverse-value
    resource-type relation-eid subject-type subject-eid))
+
+(defn- stored-halves
+  [db resolved]
+  [(vec (db/relationship-identity-datoms
+         db (:subject-eid resolved) relationship-storage/forward-attribute
+         (relationship-tuple resolved)))
+   (vec (db/relationship-identity-datoms
+         db (:resource-eid resolved) relationship-storage/reverse-attribute
+         (reverse-relationship-tuple resolved)))])
 
 (defn- add-relationship-txes
   [resolved]
@@ -276,49 +296,46 @@
          (tx-relation-version-stamp (:relation-eid resolved))]))
 
 (defn- retract-relationship-txes
-  [resolved]
-  [[:db/retract (:subject-eid resolved)
-    relationship-storage/forward-attribute
-    (relationship-tuple resolved)]
-   [:db/retract (:resource-eid resolved)
-    relationship-storage/reverse-attribute
-    (reverse-relationship-tuple resolved)]
-   (tx-relation-version-stamp (:relation-eid resolved))])
+  [db resolved]
+  (let [[forward reverse] (stored-halves db resolved)
+        operations
+        (into (mapv #(vector :db/retract (:subject-eid resolved)
+                             relationship-storage/forward-attribute (:v %)) forward)
+              (map #(vector :db/retract (:resource-eid resolved)
+                            relationship-storage/reverse-attribute (:v %))) reverse)]
+    ;; Keep absent deletes at the native commit boundary, so they serialize
+    ;; with a concurrent create. Present identities always use stored values.
+    (conj (if (seq operations)
+            operations
+            [[:db/retract (:subject-eid resolved) relationship-storage/forward-attribute
+              (relationship-tuple resolved)]
+             [:db/retract (:resource-eid resolved) relationship-storage/reverse-attribute
+              (reverse-relationship-tuple resolved)]])
+          (tx-relation-version-stamp (:relation-eid resolved)))))
 
 (defn- forward-tuple-exists?
   [db {:keys [subject-eid] :as resolved}]
-  (boolean (seq (d/datoms db :eavt subject-eid relationship-storage/forward-attribute
+  (boolean (seq (db/relationship-identity-datoms db subject-eid relationship-storage/forward-attribute
                           (relationship-tuple resolved)))))
 
 (defn- reverse-tuple-exists?
   [db {:keys [resource-eid] :as resolved}]
-  (boolean (seq (d/datoms db :eavt resource-eid relationship-storage/reverse-attribute
+  (boolean (seq (db/relationship-identity-datoms db resource-eid relationship-storage/reverse-attribute
                           (reverse-relationship-tuple resolved)))))
 
-(defn- relationship-exists?
-  "True only when BOTH halves of the relationship are present.
-
-  Checking the forward index alone made a half-written pair unrepairable:
-  :touch saw 'already there' and :delete saw 'nothing to do', so the surviving
-  half kept answering lookups forever. A half-pair now reads as absent, which
-  lets :touch re-assert it and :delete retract it."
-  [db {:keys [subject-eid resource-eid] :as resolved}]
-  (and (number? subject-eid)
-       (number? resource-eid)
-       (forward-tuple-exists? db resolved)
-       (reverse-tuple-exists? db resolved)))
-
 (defn find-one-relationship-id
-  "Returns the resolved tuple identity for an existing relationship, or nil.
-  A read: unresolvable endpoints mean no such relationship can exist -> nil."
+  "Returns the resolved identity for a supported complete pair, or nil."
   [db relationship]
   (let [resolved (try
                    (resolve-relationship db relationship {})
                    (catch clojure.lang.ExceptionInfo e
                      (when-not (= :eacl/unknown-object (:type (ex-data e)))
                        (throw e))))]
-    (when (and resolved (relationship-exists? db resolved))
-      resolved)))
+    (when resolved
+      (let [halves (stored-halves db resolved)]
+        (doseq [half halves]
+          (dorun (endpoint-pair/checked-datoms half)))
+        (when (every? seq halves) resolved)))))
 
 (defn- all-relation-defs
   "Every relation definition in the shape the shared scan planner consumes.
@@ -346,43 +363,39 @@
    tx-data #{:db/add :db/retract}))
 
 (defn- endpoint-datoms
-  [db endpoint attr prefix cursor-eid direction]
-  (let [attr-eid (d/entid db attr)
-        bound (conj prefix
-                    (or cursor-eid
-                        (case direction
-                          :asc 0
-                          :desc Long/MAX_VALUE)))
-        datoms ((case direction
-                  :asc d/seek-datoms
-                  :desc d/rseek-datoms)
-                db :eavt endpoint attr-eid bound)]
-    (take-while
-     (fn [{:keys [e a v]}]
-       (and (== endpoint e)
-            (== attr-eid a)
-            (endpoint-pair/value-prefix? v prefix)))
-     datoms)))
+  ([db endpoint attr prefix cursor-eid direction] (endpoint-datoms db endpoint attr prefix cursor-eid direction false))
+  ([db endpoint attr prefix cursor-eid direction include-qualifier?]
+   (let [attr-eid (d/entid db attr)
+         bound (endpoint-pair/seek-bound prefix cursor-eid direction Long/MAX_VALUE)
+         datoms ((case direction
+                   :asc d/seek-datoms
+                   :desc d/rseek-datoms)
+                 db :eavt endpoint attr-eid bound)]
+     (endpoint-pair/checked-datoms
+      (take-while
+       (fn [{:keys [e a v]}]
+         (and (== endpoint e)
+              (== attr-eid a)
+              (endpoint-pair/value-prefix? v prefix)))
+       datoms) include-qualifier?))))
 
 (defn- global-endpoint-datoms
-  [db attr prefix cursor-eid cursor-endpoint direction]
-  (let [attr-eid (d/entid db attr)
-        bound (conj prefix
-                    (or cursor-eid
-                        (case direction
-                          :asc 0
-                          :desc Long/MAX_VALUE)))
-        components (cond-> [attr-eid bound]
-                     cursor-endpoint (conj cursor-endpoint))
-        datoms (apply (case direction
-                        :asc d/seek-datoms
-                        :desc d/rseek-datoms)
-                      db :avet components)]
-    (take-while
-     (fn [{:keys [a v]}]
-       (and (== attr-eid a)
-            (endpoint-pair/value-prefix? v prefix)))
-     datoms)))
+  ([db attr prefix cursor-eid cursor-endpoint direction] (global-endpoint-datoms db attr prefix cursor-eid cursor-endpoint direction false))
+  ([db attr prefix cursor-eid cursor-endpoint direction include-qualifier?]
+   (let [attr-eid (d/entid db attr)
+         bound (endpoint-pair/seek-bound prefix cursor-eid direction Long/MAX_VALUE)
+         components (cond-> [attr-eid bound]
+                      cursor-endpoint (conj cursor-endpoint))
+         datoms (apply (case direction
+                         :asc d/seek-datoms
+                         :desc d/rseek-datoms)
+                       db :avet components)]
+     (endpoint-pair/checked-datoms
+      (take-while
+       (fn [{:keys [a v]}]
+         (and (== attr-eid a)
+              (endpoint-pair/value-prefix? v prefix)))
+       datoms) include-qualifier?))))
 
 (defn read-relationships
   ([db filters]
@@ -395,7 +408,8 @@
    ;; present-but-nil anchor throws instead of widening the read.
    (when-not relationship-filters/*validated-request?*
      (relationship-filters/validate! filters))
-   (let [relation-defs (all-relation-defs db)
+   (let [include-qualifier? (true? (:include-qualifier? window-options))
+         relation-defs (all-relation-defs db)
          subject-id (:subject/id filters)
          resource-id (:resource/id filters)
          ;; object-eid, not d/entid: a raw-impl caller passing a string id got a
@@ -417,15 +431,17 @@
                        {:resource/id resource-id}))
 
        :else
-       (letfn [(relationship-row [spec subject-id resource-id]
+       (letfn [(relationship-row [spec subject-id resource-id qualifier-id]
                  {:spec-idx (:idx spec)
                   :subject-id subject-id
                   :resource-id resource-id
                   :relationship
-                  (eacl/->Relationship
-                   (spice-object (:subject-type spec) subject-id)
-                   (:relation-name spec)
-                   (spice-object (:resource-type spec) resource-id))})
+                  (inspection/row
+                   (eacl/->Relationship
+                    (spice-object (:subject-type spec) subject-id)
+                    (:relation-name spec)
+                    (spice-object (:resource-type spec) resource-id))
+                   (:relation-id spec) qualifier-id)})
                (drop-until-beyond-cursor [spec cursor direction rows]
                  (drop-while
                   #(not
@@ -435,22 +451,17 @@
                (exact-match-row [spec cursor direction]
                  (let [row
                        (when (and (:subject-id spec) (:resource-id spec))
-                         (when
-                          (seq
-                           (d/datoms
-                            db :eavt
-                            (:subject-id spec)
-                            relationship-storage/forward-attribute
-                            (endpoint-pair/forward-value
-                             (:subject-type spec)
-                             (:relation-id spec)
-                             (:resource-type spec)
-                             (:resource-id spec))))
-                           (relationship-row
-                            spec (:subject-id spec) (:resource-id spec))))]
+                         (when-let [compact
+                                    (if include-qualifier?
+                                      (db/direct-edge db (:subject-type spec) (:subject-id spec)
+                                                      (:relation-id spec) (:resource-type spec) (:resource-id spec))
+                                      (when (db/direct-match? db (:subject-type spec) (:subject-id spec)
+                                                              (:relation-id spec) (:resource-type spec) (:resource-id spec))
+                                        (:resource-id spec)))]
+                           (relationship-row spec (:subject-id spec) (:resource-id spec)
+                                             (edge/qualifier-id compact))))]
                    (if row
-                     (drop-until-beyond-cursor
-                      spec cursor direction [row])
+                     (drop-until-beyond-cursor spec cursor direction [row])
                      [])))
                (scan-forward-anchored [spec cursor direction]
                  (if (:resource-id spec)
@@ -463,11 +474,11 @@
                           (:relation-id spec)
                           (:resource-type spec)]
                          (:resource-id cursor)
-                         direction)
+                         direction include-qualifier?)
                         (map
                          (fn [{:keys [v]}]
                            (relationship-row
-                            spec (:subject-id spec) (nth v 3))))
+                            spec (:subject-id spec) (nth v 3) (nth v 4))))
                         (drop-until-beyond-cursor
                          spec cursor direction))))
                (scan-reverse-anchored [spec cursor direction]
@@ -481,11 +492,11 @@
                           (:relation-id spec)
                           (:subject-type spec)]
                          (:subject-id cursor)
-                         direction)
+                         direction include-qualifier?)
                         (map
                          (fn [{:keys [v]}]
                            (relationship-row
-                            spec (nth v 3) (:resource-id spec))))
+                            spec (nth v 3) (:resource-id spec) (nth v 4))))
                         (drop-until-beyond-cursor
                          spec cursor direction))))
                (scan-forward-partial [spec cursor direction]
@@ -497,10 +508,10 @@
                         (:resource-type spec)]
                        (:resource-id cursor)
                        (:subject-id cursor)
-                       direction)
+                       direction include-qualifier?)
                       (map
                        (fn [{:keys [e v]}]
-                         (relationship-row spec e (nth v 3))))
+                         (relationship-row spec e (nth v 3) (nth v 4))))
                       (drop-until-beyond-cursor
                        spec cursor direction)))
                (scan-reverse-partial [spec cursor direction]
@@ -512,10 +523,10 @@
                         (:subject-type spec)]
                        (:subject-id cursor)
                        (:resource-id cursor)
-                       direction)
+                       direction include-qualifier?)
                       (map
                        (fn [{:keys [e v]}]
-                         (relationship-row spec (nth v 3) e)))
+                         (relationship-row spec (nth v 3) e (nth v 4))))
                       (drop-until-beyond-cursor
                        spec cursor direction)))
                (scan-spec [spec cursor direction]
@@ -533,7 +544,7 @@
          (let [scan-specs
                (relationship-engine/plan-scans
                 relation-defs normalized-filters)]
-           (if window-options
+           (if (:accept? window-options)
              (relationship-engine/execute-filtered-window
               scan-specs normalized-filters decision-kernel scan-spec
               window-options)
@@ -543,7 +554,7 @@
 
 ;; --- Object deletion --------------------------------------------------------
 ;;
-;; A v7 relationship is two datoms living on two DIFFERENT entities, each
+;; A storage-8 relationship is two datoms living on two DIFFERENT entities, each
 ;; naming its peer inside a tuple VALUE:
 ;;
 ;;   [subject-eid  <forward-attr> [subject-type relation-eid resource-type resource-eid]]
@@ -691,26 +702,26 @@
        ;; Orphaned forward halves, plus the canonical copy of a self-edge.
        (mapcat
         (fn [datom]
-          (let [[subject-type relation-eid resource-type resource-eid] (:v datom)
-                reverse-value [resource-type relation-eid subject-type eid]]
+          (let [[subject-type relation-eid resource-type resource-eid qualifier-eid] (:v datom)
+                reverse-value (endpoint-pair/reverse-value resource-type relation-eid subject-type eid qualifier-eid)]
             (when (or (= eid resource-eid)
                       (empty? (d/datoms db :eavt resource-eid
                                         relationship-storage/reverse-attribute
                                         reverse-value)))
               (endpoint-pair/retractions subject-type eid relation-eid
-                                             resource-type resource-eid))))
+                                             resource-type resource-eid qualifier-eid))))
         (d/datoms db :eavt eid relationship-storage/forward-attribute))
 
        ;; Orphaned reverse halves. Healthy self-edges were emitted above.
        (mapcat
         (fn [datom]
-          (let [[resource-type relation-eid subject-type subject-eid] (:v datom)
-                forward-value [subject-type relation-eid resource-type eid]]
+          (let [[resource-type relation-eid subject-type subject-eid qualifier-eid] (:v datom)
+                forward-value (endpoint-pair/forward-value subject-type relation-eid resource-type eid qualifier-eid)]
             (when (empty? (d/datoms db :eavt subject-eid
                                     relationship-storage/forward-attribute
                                     forward-value))
               (endpoint-pair/retractions subject-type subject-eid
-                                             relation-eid resource-type eid))))
+                                             relation-eid resource-type eid qualifier-eid))))
         (d/datoms db :eavt eid relationship-storage/reverse-attribute))
 
        ;; Peer halves naming this object as the SUBJECT.
@@ -721,9 +732,9 @@
              ;; Self-edges are canonicalized to the own-forward scan above.
              (when (not= eid (:e datom))
                (endpoint-pair/retractions subject-type eid relation-eid
-                                              resource-type (:e datom))))
-           (d/datoms db :avet relationship-storage/reverse-attribute
-                     [resource-type relation-eid subject-type eid])))
+                                              resource-type (:e datom) (nth (:v datom) 4))))
+           (db/global-relationship-identity-datoms db relationship-storage/reverse-attribute
+                     (endpoint-pair/reverse-value resource-type relation-eid subject-type eid))))
         triples)
 
        ;; Peer halves naming this object as the RESOURCE.
@@ -733,9 +744,9 @@
            (fn [datom]
              (when (not= eid (:e datom))
                (endpoint-pair/retractions subject-type (:e datom)
-                                              relation-eid resource-type eid)))
-           (d/datoms db :avet relationship-storage/forward-attribute
-                     [subject-type relation-eid resource-type eid])))
+                                              relation-eid resource-type eid (nth (:v datom) 4))))
+           (db/global-relationship-identity-datoms db relationship-storage/forward-attribute
+                     (endpoint-pair/forward-value subject-type relation-eid resource-type eid))))
         triples)))
     ()))
 
@@ -761,38 +772,15 @@
        (guard-schema-version db)))
 
 (defn orphaned-relationship-halves
-  "Lazy seq of relationship halves whose peer half is absent — the residue of
-  entities retracted without tx-delete-object.
-
-  Scans both relationship indexes and probes for each peer, so this is an
-  offline maintenance operation, O(number of relationships). Pass a plain db
-  value (not history/filter)."
+  "Offline exact-peer diagnostics, including malformed and mismatched qualifiers."
   [db]
-  (concat
-   (for [datom (d/datoms db :aevt relationship-storage/forward-attribute)
-         :let  [subject-eid (:e datom)
-                [subject-type relation-eid resource-type resource-eid] (:v datom)]
-         :when (empty? (d/datoms db :eavt resource-eid relationship-storage/reverse-attribute
-                                 [resource-type relation-eid subject-type subject-eid]))]
-     {:half          :forward
-      :e             subject-eid
-      :attr          relationship-storage/forward-attribute
-      :v             (vec (:v datom))
-      :subject-eid   subject-eid
-      :resource-eid  resource-eid
-      :relation-eid  relation-eid})
-   (for [datom (d/datoms db :aevt relationship-storage/reverse-attribute)
-         :let  [resource-eid (:e datom)
-                [resource-type relation-eid subject-type subject-eid] (:v datom)]
-         :when (empty? (d/datoms db :eavt subject-eid relationship-storage/forward-attribute
-                                 [subject-type relation-eid resource-type resource-eid]))]
-     {:half          :reverse
-      :e             resource-eid
-      :attr          relationship-storage/reverse-attribute
-      :v             (vec (:v datom))
-      :subject-eid   subject-eid
-      :resource-eid  resource-eid
-      :relation-eid  relation-eid})))
+  (mapcat (fn [[direction attr peer-attr]]
+            (endpoint-pair/orphaned-halves
+             direction (d/datoms db :aevt attr)
+             (fn [{:keys [endpoint-eid value]}]
+               (boolean (seq (d/datoms db :eavt endpoint-eid peer-attr value))))))
+          [[:forward relationship-storage/forward-attribute relationship-storage/reverse-attribute]
+           [:reverse relationship-storage/reverse-attribute relationship-storage/forward-attribute]]))
 
 (defn tx-retract-orphaned-relationships
   "Retraction tx-data for orphaned-relationship-halves. Fails closed: an
@@ -829,12 +817,16 @@
   (relationship-mutations/validate-operation! operation))
 
 (defn tx-update-relationship
-  "Relationship writes are implemented against v7 forward/reverse tuple indexes.
+  "Relationship writes use the storage 8 forward/reverse tuple indexes.
   :touch is idempotent. Endpoints must resolve to existing entities."
   [db {:keys [operation relationship]}]
   (validate-relationship-operation! operation)
   (let [resolved (resolve-relationship db relationship {})
-        exists?  (relationship-exists? db resolved)
+        halves (stored-halves db resolved)
+        exists? (every? seq halves)
+        _ (when (or (= :touch operation) (and (= :create operation) (not exists?)))
+            (doseq [half halves]
+              (dorun (endpoint-pair/checked-datoms half))))
         ops
         (case operation
           :touch
@@ -849,6 +841,6 @@
           ;; Unconditional: Datomic ignores retraction of an absent datom, and
           ;; skipping on a not-exists? check left a surviving half-pair in place.
           :delete
-          (retract-relationship-txes resolved))]
+          (retract-relationship-txes db resolved))]
     (when ops
       (guard-schema-version db ops))))

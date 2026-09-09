@@ -74,12 +74,12 @@ heterogeneous tuples:
 
 ```clojure
 [subject-eid
- :eacl.v7.relationship/subject-type+relation+resource-type+resource
- [subject-type relation-eid resource-type resource-eid]]
+ :eacl.v8.relationship/subject-type+relation+resource-type+resource+qualifier
+ [subject-type relation-eid resource-type resource-eid nil]]
 
 [resource-eid
- :eacl.v7.relationship/resource-type+relation+subject-type+subject
- [resource-type relation-eid subject-type subject-eid]]
+ :eacl.v8.relationship/resource-type+relation+subject-type+subject+qualifier
+ [resource-type relation-eid subject-type subject-eid nil]]
 ```
 
 The peer eid inside an ordinary vector is a value, not a DataScript ref.
@@ -139,3 +139,28 @@ requirements. Build this module in isolation with `clojure -T:build jar`; Git an
 development must first follow the explicitly opt-in
 [core source preparation instructions](../../README.md#source-dependencies-and-formal-tooling).
 Maven consumers install no formal tools.
+
+## Relationship storage 8
+
+This adapter uses five-slot endpoint pairs with a trailing nullable
+`qualifier-eid`. V8 supports
+[Caveats and expiring Relationships](../../docs/caveats.md) ; older readers must be drained first. Upgrades are explicit
+and restartable, and client construction requires a completed target store.
+Follow the [7-to-8 operator guide](../../docs/relationship-storage-v7-to-v8.md) before
+starting clients, then the v8 serving rollout guide before qualified writes.
+
+The adapter's `create-conn` helper explicitly bootstraps fresh stores.
+
+## Live security keys (v8)
+
+`make-client` accepts `:security-keyring-controller` and an optional independent
+`:zed-token-keyring-controller`. Static key options remain supported. All
+controllers use the backend-neutral `eacl.core` add/activate/retire/status APIs;
+updates change token acceptance without changing database or authorization
+identity. Authenticated cache export/restore is available through this module's
+`export-authenticated-cache-snapshot` / `restore-authenticated-cache-snapshot!`.
+
+**Non-expiring cursors require indefinite old-key retention for lossless resume.**
+A finite `:cursor-ttl-seconds` applies only to subsequently issued cursors. See the
+[security-key guide and multi-Peer runbook](../../docs/security-keyrings.md) for
+external secret ownership, distribution before activation, and retirement.

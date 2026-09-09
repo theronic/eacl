@@ -4,6 +4,7 @@
             [clojure.string :as str]
             [clojure.walk :as walk]
             [eacl.schema.model :as model]
+            [eacl.caveats.definition :as caveat-definition]
             [eacl.secure-format :as secure]))
 
 ;      primary-expr = identifier | <'('> permission-expr <')'>
@@ -31,7 +32,14 @@
 (def spicedb-parser
   (insta/parser
     "(* Top-level schema *)
-      schema = line-end* definition (line-end* definition)* line-end*
+      schema = line-end* (definition | caveat-definition) (line-end* (definition | caveat-definition))* line-end*
+
+      (* Named typed Caveats; the expression parser owns CEL profile checks. *)
+      caveat-definition = <'caveat'> identifier <'('> line-end* caveat-parameters? line-end* <')'> <'{'> caveat-source <'}'>
+      caveat-parameters = caveat-parameter (<','> line-end* caveat-parameter)*
+      caveat-parameter = identifier caveat-type
+      caveat-type = identifier (<'<'> identifier <'>'>)?
+      caveat-source = #'(?:\"(?:\\\\.|[^\"\\\\])*\"|//[^\\n\\r]*|[^}\"/]|/(?!/))*'
 
       (* Definition block *)
       definition = <'definition'> type-path <'{'> line-end* definition-body line-end* <'}'>
@@ -251,16 +259,75 @@
                 (assoc acc type-path spec)))
             {})))
 
+(defn extract-caveats [parse-tree]
+  (->> (rest parse-tree)
+       (filter #(and (vector? %) (= :caveat-definition (first %))))
+       (map (fn [[_ name-node & children]]
+              (let [name (extract-identifier name-node)
+                    parameter-node (some #(when (= :caveat-parameters (first %)) %) children)
+                    source-node (some #(when (= :caveat-source (first %)) %) children)
+                    source (second source-node)
+                    parameters
+                    (mapv (fn [[_ parameter-name [_ type-node item-node]]]
+                            (let [type (keyword (extract-identifier type-node))
+                                  item (some-> item-node extract-identifier keyword)]
+                              [(extract-identifier parameter-name)
+                               (if item (case type :list [:list item] :map [:map :string item]
+                                                   [:unsupported type item]) type)]))
+                          (rest parameter-node))]
+                (try (caveat-definition/entity name parameters source)
+                     (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+                       (throw (ex-info "Invalid Caveat declaration."
+                                       (assoc (ex-data error) :caveat name
+                                              :source-span (insta/span source-node)) error)))))))
+       (reduce (fn [by-name entity]
+                 (let [name (:eacl.caveat/name entity)]
+                   (when (contains? by-name name)
+                     (throw (ex-info "Duplicate Caveat declaration."
+                                     {:type :eacl.schema/duplicate-caveat
+                                      :eacl/error :eacl.schema/duplicate-caveat :caveat name})))
+                   (assoc by-name name entity)))
+               (sorted-map))
+       vals vec))
+
 (defn transform-schema
   "Transform parse tree to intermediate representation.
   Throws on unexpected input; a failed parse must never coerce to an empty schema."
   [parse-tree]
   (if (and (vector? parse-tree) (= :schema (first parse-tree)))
-    {:definitions (extract-definitions (rest parse-tree))}
+    (let [caveats (extract-caveats parse-tree)]
+      (cond-> {:definitions (extract-definitions (rest parse-tree))}
+        (seq caveats) (assoc :caveats caveats)))
     (throw (ex-info "Unexpected schema parse tree; refusing to interpret as an empty schema."
              {:type :eacl.schema/parse-error
               :eacl/error :eacl.schema/parse-error
               :parse-tree parse-tree}))))
+
+(defn staged-relation-entities
+  "Non-serving schema foundation: groups plain and Caveated alternatives under
+   one Relation identity. Public schema admission still rejects `with` branches."
+  [{:keys [definitions caveats]}]
+  (let [names (set (map :eacl.caveat/name caveats))]
+    (vec
+      (for [[resource-type {:keys [relations]}] (sort-by key definitions)
+            [relation-name refs] (sort-by key relations)
+            [subject-type alternatives] (sort-by key (group-by :type refs))]
+        (let [allowances (mapv :caveat alternatives)
+              qualified (sort (remove nil? allowances))]
+          (when-not (= (count allowances) (count (set allowances)))
+            (throw (ex-info "Duplicate Relation branch."
+                            {:type :eacl.schema/duplicate-relation-branch
+                             :eacl/error :eacl.schema/duplicate-relation-branch
+                             :resource-type resource-type :relation relation-name :subject-type subject-type})))
+          (doseq [name qualified]
+            (when-not (contains? names name)
+              (throw (ex-info "Relation references an undefined Caveat."
+                              {:type :eacl.schema/invalid-caveat-reference
+                               :eacl/error :eacl.schema/invalid-caveat-reference :caveat name}))))
+          (cond-> (model/Relation (keyword resource-type) (keyword relation-name) (keyword subject-type))
+            (seq qualified)
+            (assoc :eacl.relation/caveats (mapv #(vector :eacl.caveat/name %) qualified)
+                   :eacl.relation/allows-unqualified? (boolean (some nil? allowances)))))))))
 
 ;; Helper to parse expressions
 (defn parse-permission-expression [expr-str]
@@ -346,7 +413,7 @@
 (defn- collect-relation-issues
   "Check relations for EACL compatibility issues.
    Takes the transformed schema definitions map."
-  [definitions]
+  [definitions allow-caveats?]
   (let [issues (atom [])]
     (doseq [[res-type {:keys [relations]}] definitions
             [rel-name type-refs] relations
@@ -354,31 +421,31 @@
       ;; Check for wildcards
       (when (:wildcard? type-ref)
         (swap! issues conj
-          {:type          :wildcard-relation
-           :resource-type res-type
-           :relation      rel-name
-           :message       (str "Unsupported feature: Wildcard relation '" (:type type-ref) ":*' in "
-                            res-type "/" rel-name ". EACL does not support public/wildcard access.")}))
+               {:type          :wildcard-relation
+                :resource-type res-type
+                :relation      rel-name
+                :message       (str "Unsupported feature: Wildcard relation '" (:type type-ref) ":*' in "
+                                    res-type "/" rel-name ". EACL does not support public/wildcard access.")}))
 
       ;; Check for subject relations
       (when (:subject-relation type-ref)
         (swap! issues conj
-          {:type             :subject-relation
-           :resource-type    res-type
-           :relation         rel-name
-           :subject-relation (:subject-relation type-ref)
-           :message          (str "Unsupported feature: Subject relation '" (:type type-ref) "#" (:subject-relation type-ref)
-                               "' in " res-type "/" rel-name ". EACL does not support nested subject relations.")}))
+               {:type             :subject-relation
+                :resource-type    res-type
+                :relation         rel-name
+                :subject-relation (:subject-relation type-ref)
+                :message          (str "Unsupported feature: Subject relation '" (:type type-ref) "#" (:subject-relation type-ref)
+                                       "' in " res-type "/" rel-name ". EACL does not support nested subject relations.")}))
 
       ;; Check for caveats
-      (when (:caveat type-ref)
+      (when (and (:caveat type-ref) (not allow-caveats?))
         (swap! issues conj
-          {:type          :caveat
-           :resource-type res-type
-           :relation      rel-name
-           :caveat        (:caveat type-ref)
-           :message       (str "Unsupported feature: Caveat 'with " (:caveat type-ref) "' in "
-                            res-type "/" rel-name ". EACL does not support conditional access via caveats.")})))
+               {:type          :caveat
+                :resource-type res-type
+                :relation      rel-name
+                :caveat        (:caveat type-ref)
+                :message       (str "Unsupported feature: Caveat 'with " (:caveat type-ref) "' in "
+                                    res-type "/" rel-name ". EACL does not support conditional access via caveats.")})))
     @issues))
 
 (defn validate-eacl-restrictions
@@ -394,25 +461,27 @@
    - No namespaced type paths (docs/document)
    - No wildcards (user:*)
    - No subject relations (group#member)
-   - No caveats (with caveatname)
+   - Caveated branches require explicit qualified schema admission
 
    Returns nil if valid, throws ex-info with :issues vector if invalid."
-  [parse-tree transformed-schema]
-  (let [parse-issues    (collect-parse-tree-issues parse-tree)
-        relation-issues (collect-relation-issues (:definitions transformed-schema))
-        all-issues      (vec (concat parse-issues relation-issues))]
-    (when (seq all-issues)
-      (let [first-msg (:message (first all-issues))
-            total     (count all-issues)
-            summary   (if (= 1 total)
-                        first-msg
-                        (str first-msg " (and " (dec total) " more issue(s))"))]
-        (throw (ex-info summary
-                 {:type        :eacl.schema/unsupported-feature
-                  :eacl/error  :eacl.schema/unsupported-feature
-                  :issues      all-issues
-                  :issue-count total}))))
-    nil))
+  ([parse-tree transformed-schema]
+   (validate-eacl-restrictions parse-tree transformed-schema {}))
+  ([parse-tree transformed-schema {:keys [allow-caveats?]}]
+   (let [parse-issues    (collect-parse-tree-issues parse-tree)
+         relation-issues (collect-relation-issues (:definitions transformed-schema) (true? allow-caveats?))
+         all-issues      (vec (concat parse-issues relation-issues))]
+     (when (seq all-issues)
+       (let [first-msg (:message (first all-issues))
+             total     (count all-issues)
+             summary   (if (= 1 total)
+                         first-msg
+                         (str first-msg " (and " (dec total) " more issue(s))"))]
+         (throw (ex-info summary
+                         {:type        :eacl.schema/unsupported-feature
+                          :eacl/error  :eacl.schema/unsupported-feature
+                          :issues      all-issues
+                          :issue-count total}))))
+     nil)))
 
 ;; ============================================================================
 ;; Permission Expression Transformation
@@ -708,7 +777,7 @@
 
     (let [definitions (:definitions transformed)
           schema-info (collect-schema-info definitions)]
-      {:definitions (vec (keys definitions))
+      (cond-> {:definitions (vec (keys definitions))
 
        :relations
        (vec
@@ -728,4 +797,5 @@
                (for [comp components
                      :when comp]
                  (let [spec (resolve-component comp res-type schema-info)]
-                   (model/Permission (keyword res-type) (keyword name) spec)))))))})))
+                   (model/Permission (keyword res-type) (keyword name) spec)))))))}
+        (seq (:caveats transformed)) (assoc :caveats (:caveats transformed))))))

@@ -4,6 +4,7 @@
             [eacl.cache :as shared-cache]
             [eacl.backend.v8 :as backend]
             [eacl.contract-support :as contract]
+            [eacl.security.contract-support :as security-contract]
             [eacl.core :as eacl]
             [eacl.datomic.core :as datomic]
             [eacl.datomic.datomic-helpers
@@ -29,7 +30,7 @@
 
 (deftest recreated-memory-database-rejects-prior-source-token-test
   (let [key "01234567890123456789012345678901"]
-    (with-mem-conn [first-conn schema/v7-schema]
+    (with-mem-conn [first-conn schema/v8-schema]
       (let [first-client (datomic/make-client first-conn {:security-key key})]
         (eacl/write-schema! first-client contract/smoke-schema)
         (seed-objects! first-conn)
@@ -53,7 +54,7 @@
                        :first 10
                        :cache? false
                        :populate-cache? false)))]
-          (with-mem-conn [second-conn schema/v7-schema]
+          (with-mem-conn [second-conn schema/v8-schema]
             (let [second-client
                   (datomic/make-client second-conn {:security-key key})]
               (eacl/write-schema! second-client contract/smoke-schema)
@@ -77,14 +78,14 @@
                 :durability :non-durable}))))))))
 
 (deftest default-source-lifecycle-is-cross-client-constant-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [key "01234567890123456789012345678901"
           client-a (datomic/make-client conn {:security-key key})
           client-b (datomic/make-client conn {:security-key key})
           snapshot-a (eacl/snapshot client-a)
           snapshot-b (eacl/snapshot client-b)]
       (try
-        (is (= "eacl/initial"
+        (is (= #uuid "00000000-0000-0000-0000-000000000000"
                (get-in client-a [:runtime :source-lifecycle])
                (get-in client-b [:runtime :source-lifecycle])
                (:source-lifecycle (eacl/basis snapshot-a))
@@ -106,7 +107,7 @@
               (consistency/at-least-as-fresh token))))))))
 
 (deftest same-database-connection-handoff-preserves-cursor-lineage-test
-  (with-mem-conns [first-conn second-conn schema/v7-schema]
+  (with-mem-conns [first-conn second-conn schema/v8-schema]
     (let [key "01234567890123456789012345678901"
           first-client (datomic/make-client first-conn {:security-key key})
           second-client (datomic/make-client second-conn {:security-key key})
@@ -135,7 +136,7 @@
           :durability :durable})))))
 
 (deftest removed-cache-coherence-options-are-unknown-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (doseq [[option values]
             [[:coherence-authority [:unknown :managed]]
              [:proof-mode [:auto :mutation :content :none]]]
@@ -150,7 +151,7 @@
         (is (= [option] (:unknown-keys error)))))))
 
 (deftest datomic-contract-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [security-key "datomic-contract-test00000000000"
           client (datomic/make-client conn {:security-key security-key})]
       (eacl/write-schema! client contract/smoke-schema)
@@ -172,7 +173,7 @@
               :cache shared-cache/no-cache})))))
 
 (deftest datomic-certified-generation-plan-reuse-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (datomic/make-client
                   conn {:security-key "datomic-plan-reuse00000000000000"})]
       (eacl/write-schema! client contract/smoke-schema)
@@ -181,7 +182,7 @@
       (contract/assert-certified-generation-plan-reuse! client))))
 
 (deftest datomic-pinned-spicedb-permission-tree-golden-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (datomic/make-client conn {})]
       (eacl/write-schema! client contract/permission-tree-golden-schema)
       @(d/transact
@@ -211,7 +212,7 @@
             "a lifted as-of answer is promoted; its repeat hits exactly")))))
 
 (deftest datomic-permission-tree-schema-mutation-snapshot-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (datomic/make-client conn {})
           resource (eacl/spice-object :document "d1")
           old-schema
@@ -247,7 +248,7 @@
                        [:tree-root :intermediate :children])))))))
 
 (deftest datomic-recursive-contract-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client
           (datomic/make-client
            conn
@@ -271,3 +272,8 @@
            (str "datomic-recursive-safety-" (name limit-key))
            :cache {}
            :recursive-traversal-limits {limit-key 1}}))))))
+
+(deftest live-security-keyring-rotation-contract-test
+  (with-mem-conn [conn schema/v8-schema]
+    (security-contract/assert-client-security! #(datomic/make-client conn %) #(seed-objects! conn)
+                                               datomic/export-authenticated-cache-snapshot datomic/restore-authenticated-cache-snapshot!)))

@@ -1,5 +1,12 @@
 (ns eacl.datomic.datomic-helpers
-  (:require [datomic.api]))
+  (:require [datomic.api]
+            [eacl.datomic.storage :as storage]
+            [eacl.relationships.storage :as relationship-storage]))
+
+(defn install-fixture-schema! [conn schema]
+  @(datomic.api/transact conn schema)
+  (when (some #(= relationship-storage/forward-attribute (:db/ident %)) schema)
+    (storage/bootstrap! conn)))
 
 (defmacro with-mem-conn
   "Like with-open for Datomic (for tests).
@@ -21,7 +28,7 @@
      (assert (true? g#) (str "Failed to create in-memory Datomic:" datomic-uri#))
      (let [~sym (datomic.api/connect datomic-uri#)]
        (try
-         @(datomic.api/transact ~sym ~schema)                         ; can fail.
+         (install-fixture-schema! ~sym ~schema)
          (do ~@body)
          (finally
            (datomic.api/release ~sym)
@@ -38,7 +45,7 @@
      (let [~first-sym (datomic.api/connect datomic-uri#)
            ~second-sym (datomic.api/connect datomic-uri#)]
        (try
-         @(datomic.api/transact ~first-sym ~schema)
+         (install-fixture-schema! ~first-sym ~schema)
          (do ~@body)
          (finally
            (datomic.api/release ~first-sym)

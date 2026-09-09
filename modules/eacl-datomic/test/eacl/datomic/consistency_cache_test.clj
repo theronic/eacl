@@ -6,6 +6,7 @@
             [eacl.backend.v8 :as backend]
             [eacl.cache :as shared-cache]
             [eacl.causal-token :as causal-token]
+            [eacl.client.orchestration :as orchestration]
             [eacl.core :as eacl :refer [->Relationship spice-object]]
             [eacl.datomic.backend :as datomic-backend]
             [eacl.datomic.core :as core]
@@ -21,7 +22,7 @@
      permission admin = owner
    }")
 
-(def ^:private source-lifecycle "datomic-consistency-cache-v4-test")
+(def ^:private source-lifecycle #uuid "50535ed7-50b5-5ad0-9a1b-86892625bb3c")
 
 (defn- cached-client
   [conn]
@@ -69,7 +70,7 @@
       (ex-data e))))
 
 (deftest readable-as-of-basis-rejects-a-future-equal-proof-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (cached-client conn)
           old-token (:zed/token (seed! conn client))
           alice (spice-object :user "alice")
@@ -100,7 +101,7 @@
             "the completed older computation is retained under its exact key")))))
 
 (deftest readable-as-of-basis-misses-when-its-proof-differs-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (cached-client conn)
           old-token (:zed/token (seed! conn client))
           alice (spice-object :user "alice")
@@ -123,7 +124,7 @@
             "different complete proofs cannot lift across revisions")))))
 
 (deftest reader-peer-cache-survives-token-change-across-unrelated-write-test
-  (with-mem-conns [writer-conn reader-conn schema/v7-schema]
+  (with-mem-conns [writer-conn reader-conn schema/v8-schema]
     (let [writer (cached-client writer-conn)
           reader (cached-client reader-conn)
           _ (seed! writer-conn writer)
@@ -142,11 +143,11 @@
               :resource account
               :consistency (consistency/at-least-as-fresh token)})]
         (is (true? (:allowed? refreshed)))
-        (is (true? (:cached? refreshed))
+        (is (= (not orchestration/*qualified-authorization-enabled?*) (:cached? refreshed))
             "the reader Peer preserves its managed generation across tokens")))))
 
 (deftest explicit-cache-expiry-installs-a-fresh-lifecycle-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (cached-client conn)
           _ (seed! conn client)
           alice (spice-object :user "alice")
@@ -163,7 +164,7 @@
           (is (= (:exact-hits before) (:exact-hits after))))))))
 
 (deftest schema-no-op-keeps-completed-cache-hot-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (cached-client conn)
           _ (seed! conn client)
           alice (spice-object :user "alice")
@@ -179,7 +180,7 @@
           (is (= (inc (:exact-hits before)) (:exact-hits after))))))))
 
 (deftest native-lru-admits-the-first-completed-value-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client
           (core/make-client
            conn
@@ -188,8 +189,8 @@
           alice (spice-object :user "alice")
           account (spice-object :account "acct")
           calls (atom 0)
-          original engine/can?]
-      (with-redefs [engine/can?
+          original engine/check-evidence]
+      (with-redefs [engine/check-evidence
                     (fn [db subject permission resource]
                       (swap! calls inc)
                       (original db subject permission resource))]
@@ -199,15 +200,15 @@
         (is (= 1 @calls))))))
 
 (deftest can-results-obey-all-cache-consistency-modes-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (cached-client conn)
           alice (spice-object :user "alice")
           account (spice-object :account "acct")
           relationship (->Relationship alice :owner account)
           {created-token :zed/token} (seed! conn client)
           calls (atom 0)
-          original engine/can?]
-      (with-redefs [engine/can?
+          original engine/check-evidence]
+      (with-redefs [engine/check-evidence
                     (fn [db subject permission resource]
                       (swap! calls inc)
                       (original db subject permission resource))]
@@ -249,12 +250,12 @@
                 "the historical exact entry remains snapshot-correct")))))))
 
 (deftest missing-external-ids-never-enter-the-result-cache-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (cached-client conn)
           _ (seed! conn client)
           calls (atom 0)
-          original engine/can?]
-      (with-redefs [engine/can?
+          original engine/check-evidence]
+      (with-redefs [engine/check-evidence
                     (fn [db subject permission resource]
                       (swap! calls inc)
                       (original db subject permission resource))]
@@ -270,15 +271,15 @@
             "boundary resolution returns before graph traversal or result caching")))))
 
 (deftest detailed-permission-check-cache-provenance-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (cached-client conn)
           _ (seed! conn client)
           demand {:subject (spice-object :user "alice")
                   :permission :admin
                   :resource (spice-object :account "acct")}
           calls (atom 0)
-          original engine/can?]
-      (with-redefs [engine/can?
+          original engine/check-evidence]
+      (with-redefs [engine/check-evidence
                     (fn [db subject permission resource]
                       (swap! calls inc)
                       (original db subject permission resource))]
@@ -302,7 +303,7 @@
           (is (boolean? (eacl/can? client demand))))))))
 
 (deftest exact-lookup-uses-cache-or-historical-replay-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (cached-client conn)
           alice (spice-object :user "alice")
           account (spice-object :account "acct")
@@ -341,7 +342,7 @@
            (:data (eacl/lookup-resources client query)))))))
 
 (deftest exact-result-retention-is-explicit-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client
           (core/make-client
            conn
@@ -359,7 +360,7 @@
 
   ;; Native current answers are client-private and admitted immediately. The
   ;; same completed semantic answer is also addressable by its exact snapshot.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client
                   conn
                   {})
@@ -384,7 +385,7 @@
           "exact correctness does not require result retention"))))
 
 (deftest exact-query-resolves-the-historical-boundary-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (cached-client conn)
           alice (spice-object :user "alice")
           account (spice-object :account "acct")
@@ -400,7 +401,7 @@
 
 (deftest stale-cached-lookup-pages-use-their-selected-basis-test
   (testing "lookup-resources with minimize-latency"
-    (with-mem-conn [conn schema/v7-schema]
+    (with-mem-conn [conn schema/v8-schema]
       (let [client (cached-client conn)
             alice (spice-object :user "alice")
             account (spice-object :account "acct")
@@ -426,7 +427,7 @@
             "minimize-latency never bypasses selected-snapshot proof validation"))))
 
   (testing "lookup-subjects with at-least-as-fresh"
-    (with-mem-conn [conn schema/v7-schema]
+    (with-mem-conn [conn schema/v8-schema]
       (let [client (cached-client conn)
             alice (spice-object :user "alice")
             account (spice-object :account "acct")
@@ -453,7 +454,7 @@
             "at-least selects a current dominating snapshot, not an old cached value")))))
 
 (deftest exact-query-preserves-historical-unknown-object-semantics-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (cached-client conn)
           _ (eacl/write-schema! client direct-schema)
           token (core/current-zed-token client)
@@ -486,7 +487,7 @@
           "the same objects and relationship exist only in the live DB"))))
 
 (deftest current-zed-token-never-forces-sync-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (cached-client conn)
           _ (seed! conn client)
           sync-calls (atom [])]
@@ -510,8 +511,8 @@
               "token creation and a locally covered read require no sync"))))))
 
 (deftest cross-database-zed-token-is-rejected-test
-  (with-mem-conn [conn-a schema/v7-schema]
-    (with-mem-conn [conn-b schema/v7-schema]
+  (with-mem-conn [conn-a schema/v8-schema]
+    (with-mem-conn [conn-b schema/v8-schema]
       (let [client-a (cached-client conn-a)
             client-b (cached-client conn-b)
             _ (seed! conn-a client-a)
@@ -531,8 +532,8 @@
                    (:reason (ex-data e))))))))))
 
 (deftest cross-database-page-cursor-is-rejected-before-history-test
-  (with-mem-conn [conn-a schema/v7-schema]
-    (with-mem-conn [conn-b schema/v7-schema]
+  (with-mem-conn [conn-a schema/v8-schema]
+    (with-mem-conn [conn-b schema/v8-schema]
       (let [token-key "shared-page-token-key00000000000"
             client-a (core/make-client conn-a {:security-key token-key})
             client-b (core/make-client conn-b {:security-key token-key})
@@ -562,7 +563,7 @@
             "database identity is rejected before selecting the cursor basis")))))
 
 (deftest forged-zed-token-is-rejected-before-basis-selection-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (cached-client conn)
           _ (seed! conn client)
           token (core/current-zed-token client)
@@ -591,7 +592,7 @@
         (is (empty? @operations))))))
 
 (deftest zed-token-keyring-is-shared-and-rotatable-across-clients-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [old-key "old-stable-zed-token-key00000000"
           new-key "new-stable-zed-token-key00000000"
           old-client
@@ -637,7 +638,7 @@
           "retiring the old key invalidates old frontend tokens"))))
 
 (deftest page-cursor-remains-on-its-historical-snapshot-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (cached-client conn)
           alice (spice-object :user "alice")
           _ (eacl/write-schema! client direct-schema)
@@ -679,7 +680,7 @@
             "a relevant write does not alter the cursor's original page")))))
 
 (deftest cache-disabled-cursor-survives-unrelated-and-relationship-writes-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client
                   conn
                   {:cache shared-cache/no-cache
@@ -716,7 +717,7 @@
           "cache disablement cannot turn exact cursor replay into an error"))))
 
 (deftest cursor-identity-is-validated-before-historical-db-selection-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (cached-client conn)
           alice (spice-object :user "alice")
           _ (seed! conn client)
@@ -746,7 +747,7 @@
         (is (zero? @as-of-calls))))))
 
 (deftest read-relationships-cursor-survives-basis-advancement-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client
                   conn
                   {:cache shared-cache/no-cache
@@ -775,7 +776,7 @@
                (assoc query :first 1 :after cursor))))))))
 
 (deftest at-least-as-fresh-targets-only-the-requested-revision-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (cached-client conn)
           _ (seed! conn client)
           future-t (inc (d/basis-t (d/db conn)))
@@ -802,7 +803,7 @@
           "EACL waits for the caller's exact lower bound, not transactor head"))))
 
 (deftest at-least-as-fresh-bounds-a-targeted-sync-wait-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (assoc-in (cached-client conn)
                            [:runtime :consistency-sync-timeout-ms]
                            1)
@@ -830,7 +831,7 @@
             (is (= 1 (:timeout-ms (ex-data e))))))))))
 
 (deftest at-least-as-fresh-normalizes-targeted-sync-failures-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (cached-client conn)
           _ (seed! conn client)
           future-t (inc (d/basis-t (d/db conn)))
@@ -853,7 +854,7 @@
                    (:requested-order-hint (ex-data e))))))))))
 
 (deftest exact-request-reuses-only-the-matching-snapshot-cache-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client
                   conn
                   {:cache {}})
@@ -899,7 +900,7 @@
   ;; A relation root reads that relation's relationships, but no permission
   ;; path names it. When the dependency closure missed it, the managed
   ;; cross-snapshot tier proved a stale tree equal at every later snapshot.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (cached-client conn)
           alice (spice-object :user "alice")
           bob (spice-object :user "bob")
@@ -927,7 +928,7 @@
   ;; A runtime-unique adapter fingerprint makes exact reuse safe inside one
   ;; client. It cannot certify semantic equivalence across different bases,
   ;; so proof-backed lifting remains disabled.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client
                   conn
                   {:security-key "consistency-cache-test-key000000"
@@ -965,7 +966,7 @@
   ;; d/filter, d/since and d/history report their origin's database id and
   ;; basis, so an exact identity minted from one is indistinguishable from the
   ;; plain value at the same basis while answering a different question.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [db (d/db conn)
           adapter-for (fn [value]
                         (datomic-backend/basis-adapter

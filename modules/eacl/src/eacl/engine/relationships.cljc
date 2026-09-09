@@ -5,7 +5,7 @@
 
 (def default-limit 1000)
 (def maximum-limit 10000)
-(def relationship-cursor-version 2)
+(def relationship-cursor-version 3)
 
 (defn- sort-token
   [value]

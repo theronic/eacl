@@ -40,8 +40,8 @@ The reserved release coordinate is
 dependency until the release and clean remote-consumer gates pass.
 
 Construction requires externally retained lifecycle, signing material, and
-revision state. Omitting a signing key/keyring
-or supplying a nil lifecycle fails construction; the shared development key is
+revision state. Omitting an explicit signing key, keyring, or live controller
+or supplying a nil, legacy, or reserved initial lifecycle fails construction; the shared development key is
 never used by this module:
 
 ```clojure
@@ -54,6 +54,7 @@ never used by this module:
   (datalevin/make-client
    conn
    {:security-key signing-key
+    ;; Must return the same persisted noninitial native UUID on every worker.
     :source-lifecycle (load-source-lifecycle)
     :revision-watermark watermark
     :advance-revision-watermark!
@@ -154,3 +155,28 @@ mutation, or opening the directory with upstream Datalevin are outside it.
   `eacl.datalevin.db/entity-exists?` and the
   `eacl.datalevin.schema/validate-schema-references` alias — unreferenced
   since the module's integrity namespace was retired.
+
+## Relationship storage 8
+
+This adapter uses five-slot endpoint pairs with a trailing nullable
+`qualifier-eid`. V8 supports
+[Caveats and expiring Relationships](../../docs/caveats.md) ; older readers must be drained first. Upgrades are explicit
+and restartable, and client construction requires a completed target store.
+Follow the [7-to-8 operator guide](../../docs/relationship-storage-v7-to-v8.md) before
+starting clients, then the v8 serving rollout guide before qualified writes.
+
+The adapter's `create-conn` helper explicitly bootstraps fresh stores.
+
+## Live security keys (v8)
+
+`make-client` accepts `:security-keyring-controller` and an optional independent
+`:zed-token-keyring-controller`. Static key options remain supported. All
+controllers use the backend-neutral `eacl.core` add/activate/retire/status APIs;
+updates change token acceptance without changing database or authorization
+identity. Authenticated cache export/restore is available through this module's
+`export-authenticated-cache-snapshot` / `restore-authenticated-cache-snapshot!`.
+
+**Non-expiring cursors require indefinite old-key retention for lossless resume.**
+A finite `:cursor-ttl-seconds` applies only to subsequently issued cursors. See the
+[security-key guide and multi-Peer runbook](../../docs/security-keyrings.md) for
+external secret ownership, distribution before activation, and retirement.

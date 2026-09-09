@@ -12,7 +12,7 @@
             [eacl.relationships.storage :as storage]))
 
 (def function-digest
-  "99ec0f983ea09eea439583e22297f55611ca55d8114f4b9230954834efc42bbc")
+  "fd4f181fbe62c484b3dce6e41b30e9a1330e17a241137a039439560ee0a44602")
 
 (def function-doc
   (str safe/function-doc-prefix " v" safe/function-version
@@ -113,7 +113,7 @@
                      db :eacl.relation/resource-type+relation-name+subject-type))
                    target-eid
                    (fn [attribute value]
-                     (map :e (ddb/avet-datoms db attribute value))))
+                     (ddb/global-relationship-identity-datoms db attribute value)))
                   safe/empty-plan))]
           (into []
                 (concat

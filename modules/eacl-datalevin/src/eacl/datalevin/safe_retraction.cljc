@@ -34,7 +34,7 @@
   "Datalevin target-only transaction function implementation."
   [db target]
   (safe/validate-target! target)
-  (let [target-eid (ds/entid db target)
+  (let [target-eid (if (nat-int? target) target (ds/entid db target))
         lookup-ref? (vector? target)]
     (if (and lookup-ref? (nil? target-eid))
       []
@@ -71,7 +71,7 @@
                      db :eacl.relation/resource-type+relation-name+subject-type))
                    target-eid
                    (fn [attribute value]
-                     (map :e (ddb/avet-datoms db attribute value))))
+                     (ddb/global-relationship-identity-datoms db attribute value)))
                   safe/empty-plan))]
           (into []
                 (concat

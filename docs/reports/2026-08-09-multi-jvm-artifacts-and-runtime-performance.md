@@ -151,4 +151,4 @@ peak heap, GC CPU/pause time, RSS, startup, and warmup. Define "good" before the
 run, for example as the oldest JVM within 10% of Java 25 steady-state throughput
 while meeting the project's p99 and memory constraints. The current benchmark
 methodology is documented in
-[`v6-vs-v8.0.md`](../benchmarks/v6-vs-v8.0.md).
+[benchmark sources and output policy](../benchmarks/README.md).

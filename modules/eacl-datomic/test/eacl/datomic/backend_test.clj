@@ -17,7 +17,7 @@
    }")
 
 (deftest immutable-basis-adapter-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client conn {})]
       (eacl/write-schema! client test-schema)
       @(d/transact conn [{:eacl/id "alice"}
@@ -87,7 +87,7 @@
                                   :consistency mode))))))))
 
 (deftest relation-generation-history-is-readable-through-as-of-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client conn {})]
       (eacl/write-schema! client test-schema)
       @(d/transact conn [{:eacl/id "alice"}
@@ -138,7 +138,7 @@
                 (if (= :eacl/relation-version (:db/ident attribute))
                   (assoc attribute :db/noHistory true)
                   attribute))
-              schema/v7-schema)]
+              schema/v8-schema)]
     (with-mem-conn [conn legacy-schema]
       (is (true? (:db/noHistory
                   (d/entity (d/db conn) :eacl/relation-version))))

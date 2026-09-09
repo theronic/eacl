@@ -2,11 +2,13 @@
   "Optional target-only Datomic transaction function for cache-coherent native
   entity retraction and EACL relationship peer cleanup."
   (:require [clojure.string :as str]
+            [clojure.walk :as walk]
+            [eacl.relationships.endpoint-pair :as endpoint-pair]
             [datomic.api :as d]
             [eacl.relationships.safe-retraction :as safe]))
 
 (def function-digest
-  "a9808277940344437dcc5e57f956bbada019838522ab874ef2f64bcce6410479")
+  "00c50c459a2b8bc69d103c0a4a03a5b0a6950fe76f9c2c9b32c376715c1530ba")
 
 (def function-doc
   (str safe/function-doc-prefix " v" safe/function-version
@@ -23,7 +25,12 @@
     {:lang "clojure"
      :params '[db target]
      :code
-     '(let [invalid!
+     (walk/postwalk-replace
+      {'endpoint-value-constructor endpoint-pair/constructor-form
+       'qualified-control-attributes safe/qualified-control-attributes
+       'qualified-schema-idents safe/qualified-schema-idents}
+      '(let [endpoint-value endpoint-value-constructor
+             invalid!
             (fn [reason data]
               (throw
                (ex-info
@@ -34,9 +41,9 @@
                   :reason reason}
                  data))))
             forward-attr
-            :eacl.v7.relationship/subject-type+relation+resource-type+resource
+            :eacl.v8.relationship/subject-type+relation+resource-type+resource+qualifier
             reverse-attr
-            :eacl.v7.relationship/resource-type+relation+subject-type+subject
+            :eacl.v8.relationship/resource-type+relation+subject-type+subject+qualifier
             relation-key-attr
             :eacl.relation/resource-type+relation-name+subject-type
             valid-target?
@@ -97,6 +104,8 @@
                         (some? (:eacl/schema-string entity))
                         (some? (:eacl.relation/relation-name entity))
                         (some? (:eacl.permission/permission-name entity))
+                        (some #(some? (% entity)) qualified-control-attributes)
+                        (contains? qualified-schema-idents ident)
                         (and (keyword? ident)
                              (contains? #{"eacl" "eacl.fn"}
                                         (namespace ident))))))
@@ -108,13 +117,15 @@
             (let [valid-value?
                   (fn [value]
                     (and (vector? value)
-                         (= 4 (count value))
+                         (= 5 (count value))
                          (keyword? (nth value 0))
                          (integer? (nth value 1))
                          (not (neg? (nth value 1)))
                          (keyword? (nth value 2))
                          (integer? (nth value 3))
-                         (not (neg? (nth value 3)))))
+                         (not (neg? (nth value 3)))
+                         (or (nil? (nth value 4))
+                             (and (integer? (nth value 4)) (not (neg? (nth value 4)))))))
                   local-halves
                   (when live?
                     (mapcat
@@ -134,24 +145,31 @@
                                      {:target-eid eid}))
                          (concat
                           (for [[subject-type relation-eid resource-type
-                                 resource-eid] forward-values]
+                                 resource-eid qualifier-eid] forward-values]
                             {:relation-eid relation-eid
                              :op
                              (when (not= eid resource-eid)
                                [:db/retract
                                 resource-eid reverse-attr
-                                [resource-type relation-eid
-                                 subject-type eid]])})
+                                (endpoint-value resource-type relation-eid subject-type eid qualifier-eid)])})
                           (for [[resource-type relation-eid subject-type
-                                 subject-eid] reverse-values]
+                                 subject-eid qualifier-eid] reverse-values]
                             {:relation-eid relation-eid
                              :op
                              (when (not= eid subject-eid)
                                [:db/retract
                                 subject-eid forward-attr
-                                [subject-type relation-eid
-                                 resource-type eid]])}))))
+                                (endpoint-value subject-type relation-eid resource-type eid qualifier-eid)])}))))
                      closure))
+                  identity-peers
+                  (fn [attr value]
+                    (let [prefix (pop value)
+                          attr-eid (datomic.api/entid db attr)]
+                      (take-while
+                       #(and (= attr-eid (:a %))
+                             (valid-value? (:v %))
+                             (= prefix (pop (:v %))))
+                       (datomic.api/seek-datoms db :avet attr value))))
                   repair-halves
                   (when-not live?
                     (mapcat
@@ -160,28 +178,23 @@
                              [resource-type _relation-name subject-type]
                              (:v relation-datom)
                              reverse-value
-                             [resource-type relation-eid
-                              subject-type target-eid]
+                             (endpoint-value resource-type relation-eid subject-type target-eid nil)
                              forward-value
-                             [subject-type relation-eid
-                              resource-type target-eid]]
+                             (endpoint-value subject-type relation-eid resource-type target-eid nil)]
                          (concat
                           (for [peer
-                                (datomic.api/datoms
-                                 db :avet reverse-attr reverse-value)]
+                                (identity-peers reverse-attr reverse-value)]
                             {:relation-eid relation-eid
                              :op [:db/retract (:e peer)
-                                  reverse-attr reverse-value]})
+                                  reverse-attr (:v peer)]})
                           (for [peer
-                                (datomic.api/datoms
-                                 db :avet forward-attr forward-value)]
+                                (identity-peers forward-attr forward-value)]
                             {:relation-eid relation-eid
                              :op [:db/retract (:e peer)
-                                  forward-attr forward-value]}))))
+                                  forward-attr (:v peer)]}))))
                      (datomic.api/datoms db :aevt relation-key-attr)))
-                  halves (remove #(nil? (:op %))
-                                 (or local-halves repair-halves))
-                  peer-retractions (distinct (map :op halves))
+                  halves (or local-halves repair-halves)
+                  peer-retractions (distinct (keep :op halves))
                   relation-eids (distinct (map :relation-eid halves))]
               (vec
                (concat
@@ -191,7 +204,7 @@
                         :eacl/relation-version "datomic.tx"])
                      relation-eids)
                 (when live?
-                  [[:db.fn/retractEntity target-eid]])))))))})})
+                  [[:db.fn/retractEntity target-eid]]))))))))})})
 
 (def support
   (safe/support-descriptor

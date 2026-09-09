@@ -30,10 +30,11 @@
 
 (defn- public-shape
   [page]
-  (select-keys page [:data :page-info]))
+  (-> (select-keys page [:data :page-info])
+      (update :page-info dissoc :start-cursor :end-cursor)))
 
 (deftest shorter-page-is-derived-from-the-longer-resident-page-test
-  (with-mem-conn [conn datomic-schema/v7-schema]
+  (with-mem-conn [conn datomic-schema/v8-schema]
     (let [client (seed-client! conn)
           u (rich-user client)
           long-page (fixture/page client u 12)
@@ -69,7 +70,7 @@
         [result @commands]))))
 
 (deftest longer-page-composes-the-resident-page-with-one-continuation-test
-  (with-mem-conn [conn datomic-schema/v7-schema]
+  (with-mem-conn [conn datomic-schema/v8-schema]
     (let [client (seed-client! conn)
           u (rich-user client)
           _ (fixture/page client u 4)
@@ -94,7 +95,7 @@
           (is (= (public-shape oracle-next) (public-shape composed-next))))))))
 
 (deftest continuations-inside-the-resident-page-are-served-test
-  (with-mem-conn [conn datomic-schema/v7-schema]
+  (with-mem-conn [conn datomic-schema/v8-schema]
     (let [client (seed-client! conn)
           u (rich-user client)
           resident (fixture/page client u 12)
@@ -122,7 +123,7 @@
           (is (pos? (:partial-hits (:range-reuse (datomic/cache-stats client))))))))))
 
 (deftest windows-from-any-retained-boundary-are-served-test
-  (with-mem-conn [conn datomic-schema/v7-schema]
+  (with-mem-conn [conn datomic-schema/v8-schema]
     (let [client (seed-client! conn)
           u (rich-user client)
           _ (fixture/page client u 12)
@@ -140,7 +141,7 @@
           "the served window's end cursor continues like the computed one"))))
 
 (deftest last-window-pages-derive-as-suffixes-test
-  (with-mem-conn [conn datomic-schema/v7-schema]
+  (with-mem-conn [conn datomic-schema/v8-schema]
     (let [client (seed-client! conn)
           u (rich-user client)
           query (fn [n cache?] (eacl/lookup-resources
@@ -155,7 +156,7 @@
              (get-in derived [:page-info :has-previous-page?]))))))
 
 (deftest cache-disabled-requests-never-derive-test
-  (with-mem-conn [conn datomic-schema/v7-schema]
+  (with-mem-conn [conn datomic-schema/v8-schema]
     (let [client (seed-client! conn)
           u (rich-user client)
           _ (fixture/page client u 12)

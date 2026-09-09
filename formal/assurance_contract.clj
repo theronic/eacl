@@ -8,7 +8,20 @@
   are generated under target/formal and are deliberately absent here.")
 
 (def theorem-policies
-  {:abstract-operator-engine-phase-a
+  {:qualified-relationship-evaluation
+   {:sources ["formal/dafny/QualifiedEvidence.dfy"
+              "formal/dafny/QualifiedTemporal.dfy"
+              "formal/dafny/QualifiedReuse.dfy"]
+    :claim :proof-only-conditional-denotation-exclusive-expiry-and-witness-scoped-reuse
+    :minimum-proof-efforts 71}
+   :caveat-qualifier-foundation
+   {:sources ["formal/dafny/CaveatOutcomes.dfy"
+              "formal/dafny/CaveatProfile.dfy"
+              "formal/dafny/CaveatSchema.dfy"
+              "formal/dafny/QualifierLifecycle.dfy"]
+    :claim :proof-only-typed-profile-partial-outcomes-and-atomic-qualifier-lifecycle
+    :minimum-proof-efforts 82}
+   :abstract-operator-engine-phase-a
    {:sources
     ["formal/dafny/PermissionSetAlgebra.dfy"
      "formal/dafny/SignedDependencyStratification.dfy"
@@ -122,7 +135,87 @@
     :minimum-proof-efforts 73}})
 
 (def operation-contracts
-  [{:operation :execution-contract
+  [{:operation :uuid-source-lifecycle
+    :entry-points ['eacl.uuid/capture 'eacl.uuid/parse-canonical
+                   'eacl.secure-format/encode-canonical
+                   'eacl.causal-token/validate-source-lifecycle!
+                   'eacl.backend.source/semantic-identity
+                   'eacl.backend.v8/unmanaged-lifecycle
+                   'eacl.client.orchestration/expire-cache!
+                   'eacl.client.orchestration/restore-cache-snapshot!]
+    :dafny ["formal/dafny/UuidLifecycle.dfy"]
+    :adapter-obligations [:immutable-owned-host-uuid :fresh-history-identity
+                          :coordinated-durable-configuration :complete-source-scope]
+    :trusted-boundaries [:host-uuid-runtime :host-persistence :rng :parser :crypto]}
+   {:operation :qualified-evaluation-model-gate
+    :entry-points ["formal/qualified/model.clj"
+                   "formal/qualified/model_test.clj"
+                   "formal/qualified/mutation_test.clj"]
+    :theorems [:pointwise-residual-and-authoritative-fault-algebra
+               :finite-positive-least-fixed-point
+               :inert-preparation-and-atomic-temporal-publication
+               :exclusive-expiry-and-non-monotonic-permission
+               :decisive-witness-stability-intervals
+               :context-evaluator-proof-and-result-kind-scoped-cache
+               :pinned-and-live-continuation-validity]
+    :dafny ["formal/dafny/QualifiedEvidence.dfy"
+            "formal/dafny/QualifiedTemporal.dfy"
+            "formal/dafny/QualifiedReuse.dfy"]
+    :adapter-obligations [:canonical-residual-refinement
+                          :complete-recursive-and-cursor-evidence
+                          :trusted-clock-and-native-qualifier-proof]
+    :runtime-targets [:clj-java :cljs-javascript]
+    :remaining [:production-refinement-and-mutations
+                :performance-and-cross-backend-qualification
+                :semantic-epoch-activation
+                :independent-review]}
+   {:operation :staged-caveat-qualifier-foundation
+    :entry-points ['eacl.relationships.qualifier/normalize
+                   'eacl.relationships.qualifier/decode
+                   'eacl.caveats.values/encode-context
+                   'eacl.caveats.values/decode-context
+                   'eacl.caveats.plan/compile-plan
+                   'eacl.caveats.plan/decode-plan
+                   'eacl.caveats.partial/evaluate
+                   'eacl.caveats.evaluator/evaluate
+                   'eacl.caveats.jvm/evaluator
+                   'eacl.relationships.qualifier-integrity/proof-input
+                   'eacl.relationships.qualifier-integrity/report
+                   'eacl.relationships.qualifier-integrity/repair-pair!
+                   'eacl.relationships.staged/prepare!
+                   'eacl.relationships.staged/plan-current
+                   'eacl.relationships.staged/cleanup!]
+    :theorems [:atomic-qualifier-pair-publication
+               :prepared-qualifiers-have-no-authorization-effect
+               :immutable-single-owner-qualifier-replacement
+               :non-nil-missing-qualifier-is-a-fault
+               :schema-generation-cas-and-retained-caveat-references
+               :bound-context-overrides-request-context
+               :four-valued-logical-composition
+               :typed-profile-and-bounded-progress]
+    :dafny ["formal/dafny/CaveatOutcomes.dfy"
+            "formal/dafny/CaveatProfile.dfy"
+            "formal/dafny/CaveatSchema.dfy"
+            "formal/dafny/QualifierLifecycle.dfy"]
+    :adapter-obligations [:native-nested-ref-publication
+                          :immutable-snapshot-and-qualifier-history-evidence
+                          :canonical-context-and-plan-encoding
+                          :bounded-cel-value-and-error-conversion]
+    :runtime-targets [:clj-java :cljs-javascript]
+    :remaining [:phase-3-serving-activation
+                :independent-review]}
+   {:operation :qualifier-cleanup-sweep
+    :entry-points ['eacl.relationships.qualifier-integrity/cleanup-sweep!]
+    :theorems [:own-cleanup-preserves-remaining-absence
+               :foreign-attachment-invalidates-certificate]
+    :dafny ["formal/dafny/QualifierCleanupSweep.dfy"]
+    :adapter-obligations [:authoritative-own-commit-before-and-after
+                          :exact-source-and-native-head-guard
+                          :candidate-fact-assertions
+                          :bounded-streaming-proof-capture]
+    :runtime-targets [:clj-java :cljs-javascript]
+    :remaining [:independent-review]}
+   {:operation :execution-contract
     :entry-points
     ['eacl.execution/normalize 'eacl.engine.v8/lookup-resources]
     :theorems

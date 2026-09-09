@@ -1,22 +1,31 @@
 (ns eacl.operator.vector-evaluator-test
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is]]
+            [clojure.string :as str]
             [datascript.core :as ds]
+            [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.qualification :as qualification]
+            [eacl.authorization.evidence-test :as evidence-fixtures]
+            [eacl.backend.direct-membership :as direct]
             [eacl.cache.key :as cache-key]
             [eacl.core :as eacl]
             [eacl.datascript.backend :as datascript-backend]
             [eacl.datascript.core :as datascript]
             [eacl.datascript.impl :as datascript-impl]
+            [eacl.datascript.qualifiers :as qualifiers]
             [eacl.datascript.schema :as datascript-schema]
             [eacl.operator.evaluator :as scalar]
+            [eacl.operator.evaluator-test :as scalar-fixtures]
             [eacl.operator.plan :as plan]
             [eacl.operator.vector-evaluator :as vector-evaluator]
-            [eacl.subproblem-cache :as subproblem]))
+            [eacl.schema.expression-policy :as expression-policy]
+            [eacl.subproblem-cache :as subproblem]
+            [eacl.relationships.staged :as staged]))
 
 (defn- test-exact-key
   [semantic]
   (let [identity {:tier :denotation
-                  :source-lifecycle {:source :test :lifecycle :operator}
+                  :source-lifecycle #uuid "07529ca3-2c5b-57d9-a992-31d5a71299f5"
                   :abi :test-authorization-v2
                   :semantic semantic
                   :reuse [:basis 1]}]
@@ -62,7 +71,7 @@
         (ds/db conn) {:operation :touch :relationship relationship})))
     (let [db (ds/db conn)
           eid #(ds/entid db (:id %))]
-      {:adapter (datascript-backend/basis-adapter db {})
+      {:conn conn :db db :adapter (datascript-backend/basis-adapter db {})
        :user (first users)
        :documents documents
        :eid eid})))
@@ -73,6 +82,42 @@
     nil
     (catch #?(:clj Exception :cljs :default) error
       (ex-data error))))
+
+(deftest admitted-permission-chains-support-point-checks-and-pagination
+  (let [n (dec (:maximum-permissions expression-policy/aggregate-limits))
+        conn (datascript/create-conn)
+        client (datascript/make-client conn {})
+        user (eacl/spice-object :user "chain-user")
+        absent (eacl/spice-object :user "chain-absent")
+        documents (mapv #(eacl/spice-object :document (str "chain-doc-" %)) (range 2))
+        query {:subject user :resource/type :document :permission :allowed}
+        schema (str "definition user {}\ndefinition document {\n"
+                    "relation member: user\nrelation banned: user\n"
+                    "permission p0 = member\n"
+                    (str/join "\n" (for [i (range 1 n)]
+                                      (str "permission p" i " = p" (dec i) " & member")))
+                    "\npermission allowed = p" (dec n) " - banned\n}")]
+    (eacl/write-schema! client schema)
+    (ds/transact! conn (mapv #(hash-map :eacl/id (:id %)) (into [user absent] documents)))
+    (eacl/create-relationships! client (mapv #(eacl/->Relationship user :member %) documents))
+    (doseq [cache? [false true true]]
+      (is (true? (eacl/can? client {:subject user :resource (first documents)
+                                   :permission :allowed :cache? cache?})))
+      (is (false? (eacl/can? client {:subject absent :resource (first documents)
+                                    :permission :allowed :cache? cache?})))
+      (is (= 2 (:count (eacl/count-resources client (assoc query :cache? cache?))))))
+    (let [first-page (eacl/lookup-resources client (assoc query :first 1))
+          next-page (eacl/lookup-resources client (assoc query :first 1
+                                                       :after (get-in first-page [:page-info :end-cursor])))
+          last-page (eacl/lookup-resources client (assoc query :last 1))
+          prior-page (eacl/lookup-resources client (assoc query :last 1
+                                                        :before (get-in last-page [:page-info :start-cursor])))]
+      (is (= documents (into (:data first-page) (:data next-page))))
+      (is (= documents (into (:data prior-page) (:data last-page))))
+      (is (false? (get-in next-page [:page-info :has-next-page?])))
+      (is (false? (get-in prior-page [:page-info :has-previous-page?]))))
+    (is (= [user] (:data (eacl/lookup-subjects client {:resource (first documents)
+                                                     :permission :allowed :subject/type :user :first 1}))))))
 
 (def ^:private differential-seeds
   [104729 130363 155921 196613 262147 327673 393241 458789
@@ -434,3 +479,114 @@
        (is (>= (:calls different) 2))
        (is (zero? (:failures (:stats identical) 0)))
        (is (zero? (:failures (:stats different) 0))))))
+
+(deftest qualified-vectors-retain-alignment-and-exact-cache-scope
+  (let [{:keys [conn user documents eid]} (fixture)
+        documents (vec (take 8 documents))]
+    (datascript-schema/write-schema! conn (str "caveat enabled(flag bool) { flag }\n" schema))
+    (let [relation (fn [name] (ds/entid (ds/db conn)
+                                     [:eacl.relation/resource-type+relation-name+subject-type
+                                      [:document name :user]]))
+          caveat (ds/entid (ds/db conn) [:eacl.caveat/name "enabled"])
+          writer (qualifiers/writer conn)]
+      (ds/transact! conn [{:db/id (relation :a) :eacl.relation/caveats [caveat]
+                          :eacl.relation/allows-unqualified? true}])
+      (doseq [[index document] (map-indexed vector documents)]
+        (staged/write! writer :replace [:user (eid user) (relation :a) :document (eid document)]
+                       {:caveat caveat})
+        (when (zero? (mod index 5))
+          (staged/write! writer :replace [:user (eid user) (relation :banned) :document (eid document)]
+                         {:valid-until-ms 100})))
+      (let [db (ds/db conn)
+            adapter (datascript-backend/basis-adapter db {})
+            sealed (plan/seal-plan adapter [:document :view])
+            candidates (mapv (fn [document]
+                               {:direction :forward :subject-type :user :subject-eid (eid user)
+                                :resource-type :document :resource-eid (eid document)}) documents)
+            store (subproblem/store)
+            run (fn [time context]
+                  (let [stats (atom {})
+                        options {:adapter adapter :plan sealed :candidates candidates :scope-identity :qualified
+                                 :qualification (scalar-fixtures/qualified-request db time context)}
+                        result (binding [subproblem/*store* store
+                                         subproblem/*exact-denotation-key-fn* test-exact-key
+                                         vector-evaluator/*vector-stats* stats]
+                                 (vector-evaluator/check-cached-many-eids options))]
+                    {:result result :stats @stats}))
+            before (run 99 {})
+            warm (run 99 {})
+            after (run 100 {})
+            granted (run 100 {"flag" true})
+            denied (run 100 {"flag" false})
+            prior-entries (get-in (subproblem/stats store) [:tiers :denotation :entries])
+            fault (run 100 {"flag" "wrong-type"})]
+        (is (= (:result before) (:result warm)))
+        (is (= 8 (get-in warm [:stats :point-cache-hits])))
+        (is (= 8 (get-in after [:stats :point-cache-misses])))
+        (is (= [:no-permission :no-permission :conditional-permission :conditional-permission
+                :conditional-permission :no-permission :conditional-permission :no-permission]
+               (mapv evidence/permissionship (:result before))))
+        (is (= :conditional-permission (evidence/permissionship (first (:result after)))))
+        (is (= [true false true true true false true false] (:result granted)))
+        (is (every? false? (:result denied)))
+        (is (every? evidence/fault? (:result fault)))
+        (is (= prior-entries (get-in (subproblem/stats store) [:tiers :denotation :entries])))
+        (let [reverse-options {:adapter adapter :plan sealed
+                               :candidates (mapv #(assoc % :direction :reverse) candidates)
+                               :qualification (scalar-fixtures/qualified-request db 100 {})}]
+          (is (= (:result after) (vector-evaluator/check-many-eids reverse-options))))))))
+
+(deftest exact-evidence-witnesses-avoid-rechecking-proven-nodes
+  (let [{:keys [adapter db user documents eid]} (fixture)
+        sealed (plan/seal-plan adapter [:document :view])
+        root-key [[:document :view] (get (plan/expression-roots sealed) [:document :view])]
+        candidate {:direction :forward :subject-type :user :subject-eid (eid user)
+                   :resource-type :document :resource-eid (eid (nth documents 2))}
+        request (scalar-fixtures/qualified-request db 99 {})
+        options {:adapter adapter :plan sealed :qualification request :candidates [candidate]}
+        scope (qualification/exact-reuse-identity request)]
+    (doseq [leaf (list true false evidence-fixtures/x
+                       (evidence/with-certificate true 100 true)
+                       (evidence/with-certificate evidence-fixtures/x 100 false)
+                       (evidence/fault :test/failure :invalid))]
+      (let [expected (with-redefs [qualification/qualify (fn [_ _ edge] (if edge leaf false))]
+                       (vector-evaluator/check-many-eids options))
+            witnessed (assoc candidate :evidence-witnesses {root-key (first expected)})]
+        (with-redefs [direct/dispatch-edges (fn [& _] (throw (ex-info "Already proved" {})))]
+          (is (= expected (vector-evaluator/check-many-eids
+                           (assoc options :candidates [witnessed] :witness-scope scope)))))))
+    (let [witnessed (assoc candidate :evidence-witnesses {root-key true})
+          options (assoc options :candidates [witnessed] :witness-scope scope)]
+      (doseq [changed [(assoc options :witness-scope nil)
+                       (assoc options :qualification (scalar-fixtures/qualified-request db 100 {}))
+                       (assoc options :qualification (scalar-fixtures/qualified-request db 99 {"flag" true}))
+                       (assoc options :qualification (qualification/request (assoc request :basis {:source :another :revision 1})))
+                       (assoc options :qualification (qualification/request (assoc request :evaluator nil)))]]
+        (is (= :witness-scope (:reason (error-data #(vector-evaluator/check-many-eids changed))))))
+      (is (= :qualified-witness-required
+             (:reason (error-data #(vector-evaluator/check-many-eids (dissoc options :qualification))))))
+      (is (= :expired-witness
+             (:reason (error-data #(vector-evaluator/check-many-eids
+                                    (assoc options :candidates [(assoc candidate :evidence-witnesses
+                                                                       {root-key (evidence/with-certificate true 99 true)})]))))))
+      (with-redefs [vector-evaluator/maximum-evidence-witnesses 0]
+        (is (= :witness-limit (:reason (error-data #(vector-evaluator/check-many-eids options))))))
+      (with-redefs [vector-evaluator/maximum-evidence-witness-bytes 0]
+        (is (= :witness-size (:reason (error-data #(vector-evaluator/check-many-eids options))))))
+      (let [store (subproblem/store)]
+        (binding [subproblem/*store* store subproblem/*exact-denotation-key-fn* test-exact-key]
+          (is (= [true] (vector-evaluator/check-cached-many-eids options)))
+          (let [leaf-key [[:document :view]
+                          (first (remove #{(second root-key)}
+                                         (keys (get-in sealed [:predicate-programs [:document :view]]))))]
+                fault (evidence/fault :test/failure :invalid)]
+            (with-redefs [direct/dispatch-edges (fn [& _] (throw (ex-info "Fault already encountered" {})))]
+              (is (= [fault] (vector-evaluator/check-cached-many-eids
+                              (assoc options :candidates [(assoc candidate :evidence-witnesses {leaf-key fault})]))))))
+          (is (= :witness-scope
+                 (:reason (error-data #(vector-evaluator/check-cached-many-eids
+                                        (dissoc options :witness-scope)))))))))
+    (is (= :invalid-witness-node
+           (:reason (error-data #(vector-evaluator/check-many-eids
+                                  (assoc options :witness-scope scope
+                                         :candidates [(assoc candidate :evidence-witnesses {[[:absent :view] 0] true})]))))))))

@@ -36,6 +36,38 @@
         (is (= [5 3 1] (scan-cache/serve descending 7 64 :desc)))
         (is (= [3 1] (scan-cache/serve descending 4 64 :desc)))))))
 
+(deftest compact-prefixes-keep-qualifiers-and-use-endpoint-bounds-test
+  (let [edges [1 [3 103] 5 [7 107] [9 109]]
+        entry {:prefix edges :exhausted? true}]
+    (is (= [[7 107] [9 109]] (scan-cache/serve entry 5 10 :asc)))
+    (is (= [5 [7 107]] (scan-cache/serve entry 3 2 :asc)))
+    (is (= [1] (scan-cache/serve (assoc entry :prefix (vec (rseq edges)))
+                                3 10 :desc)))
+    (is (= {:prefix [1 [3 103] 5 [7 107]] :exhausted? true}
+           (scan-cache/extend-entry {:prefix [1 [3 103]] :exhausted? false}
+                                    3 [5 [7 107]] 3 :asc 8)))
+    (is (= (scan-cache/descriptor-key descriptor)
+           (scan-cache/descriptor-key (assoc descriptor :include-qualifier? false))))
+    (is (not= (scan-cache/descriptor-key descriptor)
+              (scan-cache/descriptor-key (assoc descriptor :include-qualifier? true))))))
+
+(deftest compact-and-ordinary-responses-never-share-memo-or-resident-prefixes-test
+  (let [calls (atom [])
+        tier (scan-cache/tier {})
+        inner (fn [d]
+                (swap! calls conj d)
+                (if (:include-qualifier? d) [[1 101] 3] [1 3]))
+        options {:tier tier :scope-fn (constantly [:basis 1])}
+        fetch (scan-cache/caching-fetch-fn inner (assoc options :memo (scan-cache/memo)))
+        d (assoc descriptor :limit 8)]
+    (is (= [1 3] (fetch d)))
+    (is (= [[1 101] 3] (fetch (assoc d :include-qualifier? true))))
+    (is (= [[1 101] 3] (fetch (assoc d :include-qualifier? true))))
+    (let [fresh (scan-cache/caching-fetch-fn inner (assoc options :memo (scan-cache/memo)))]
+      (is (= [1 3] (fresh d)))
+      (is (= [[1 101] 3] (fresh (assoc d :include-qualifier? true)))))
+    (is (= 2 (count @calls)))))
+
 (deftest extend-entry-keeps-prefixes-from-the-scan-start-test
   (testing "first chunk from the start"
     (is (= {:prefix [1 2 3] :exhausted? false}

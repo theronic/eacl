@@ -10,8 +10,12 @@
             [eacl.cursor :as cursor]
             [eacl.datascript.backend :as datascript-backend]
             [eacl.datascript.impl :as impl]
+            [eacl.datascript.qualifiers :as qualifiers]
             [eacl.datascript.schema :as schema]
-            [eacl.relationships.storage :as relationship-storage]))
+            [eacl.datascript.storage :as target-storage]
+            [eacl.relationships.upgrade :as storage-upgrade]
+            [eacl.relationships.storage :as relationship-storage]
+            [eacl.relationships.staged :as staged]))
 
 (def cursor->token cursor/cursor->token)
 (def token->cursor cursor/token->cursor)
@@ -78,6 +82,11 @@
 
 (def ^:private api
   {:backend-id :datascript
+   :writer-max-attempts 8
+   :writer-contention? staged/prepared-contention?
+   :qualified-writer #'qualifiers/writer
+   :qualified-publication-capability #'qualifiers/publication-capability
+   :qualified-plan #'qualifiers/plan
    :db ds/db
    :entid ds/entid
    :default-entid->object-id (fn [db eid] (:eacl/id (ds/entity db eid)))
@@ -102,11 +111,13 @@
    ;; the impl suites) and REPL redefinition visible through the shared
    ;; orchestration.
    :schema {:read-schema #'schema/read-schema
+            :read-authorization-schema #'schema/read-authorization-schema
             :generation #'schema/current-schema-generation
             :plan-replacement #'schema/plan-schema-replacement
             :write-schema! #'schema/write-schema!}
    :impl {:validate-relationship-operation!
           #'impl/validate-relationship-operation!
+          :relationship-publication-input #'impl/relationship-publication-input
           :relationship-relation-id #'impl/relationship-relation-id
           :relation-coordinate relation-coordinate
           :tx-update-relationship #'impl/tx-update-relationship
@@ -197,6 +208,8 @@
   DataScript is current-basis-only across requests. It does not retain old DB
   values and rejects :at-exact-snapshot before cache access."
   [conn config-opts]
+  (storage-upgrade/reject-auto-migration! config-opts)
+  (target-storage/assert-compatible! (ds/db conn))
   (orchestration/make-client api conn config-opts))
 
 (defn db
@@ -209,3 +222,15 @@
   `eacl.datascript.schema/create-conn` for the config options."
   ([] (schema/create-conn))
   ([extra-schema] (schema/create-conn extra-schema)))
+
+(defn export-authenticated-cache-snapshot
+  "Exports count/byte-bounded authenticated cache bytes using the primary keyring."
+  [client bounds]
+  (require-datascript-client! client "export-authenticated-cache-snapshot")
+  (orchestration/export-authenticated-cache-snapshot client bounds))
+
+(defn restore-authenticated-cache-snapshot!
+  "Restores optional authenticated cache bytes. Unavailable keys are cache misses."
+  [client token bounds]
+  (require-datascript-client! client "restore-authenticated-cache-snapshot!")
+  (orchestration/restore-authenticated-cache-snapshot! client token bounds))

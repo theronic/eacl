@@ -6,7 +6,9 @@
    This namespace is JVM-only, as is the rest of the module: datahike's
    ClojureScript API is asynchronous, and the backend SPI is synchronous."
   (:require [datahike.api :as d]
-            [datahike.db.interface :as dbi]))
+            [datahike.db.interface :as dbi]
+            [eacl.relationships.storage :as storage]
+            [eacl.relationships.endpoint-pair :as endpoint-pair]))
 
 (defn db-config
   "The configuration of `db` through Datahike's database protocol, so
@@ -229,3 +231,43 @@
    unchanged, so presence has to be checked separately."
   [db eid]
   (boolean (seq (d/datoms db {:index :eavt :components [eid]}))))
+
+(defn relationship-identity-datoms
+  "Guarded first-four identity access, including retained temporal values."
+  [db entity attr value]
+  (eavt-tuple-prefix db entity attr storage/value-arity
+                     (endpoint-pair/identity-prefix value)))
+
+(defn global-relationship-identity-datoms
+  [db attr value]
+  (avet-tuple-prefix db attr storage/value-arity
+                     (endpoint-pair/identity-prefix value)))
+
+(defn checked-relationship-datoms
+  ([db entity attr prefix cursor-eid direction]
+   (checked-relationship-datoms db entity attr prefix cursor-eid direction false))
+  ([db entity attr prefix cursor-eid direction include-qualifier?]
+  (endpoint-pair/checked-datoms
+   (eavt-tuple-prefix db entity attr storage/value-arity prefix cursor-eid direction)
+   include-qualifier?)))
+
+(defn checked-global-relationship-datoms
+  ([db attr prefix cursor-eid direction]
+   (checked-global-relationship-datoms db attr prefix cursor-eid direction false))
+  ([db attr prefix cursor-eid direction include-qualifier?]
+   (endpoint-pair/checked-datoms
+    (avet-tuple-prefix db attr storage/value-arity prefix cursor-eid direction)
+    include-qualifier?)))
+
+(defn entity-facts [database eid]
+  (mapv (fn [datom] [(:a datom) (:v datom) (:tx datom)])
+        (d/datoms database {:index :eavt :components [eid]})))
+
+(defn entity-data [database eid]
+  (let [rows (entity-facts database eid)]
+    (when (seq rows)
+      (reduce (fn [result [a v]]
+                (let [attribute (if (keyword? a) a (:db/ident (d/entity database a)))]
+                  (if (= :eacl.relation/caveats attribute)
+                    (update result attribute (fnil conj #{}) v) (assoc result attribute v))))
+              {:db/id eid} rows))))

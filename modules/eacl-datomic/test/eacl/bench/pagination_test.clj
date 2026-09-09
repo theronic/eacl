@@ -93,7 +93,8 @@
   ;; With the default cache, a repeated identical page is served
   ;; from the answer cache and the engine is never entered, so traversal-call
   ;; counts read as zero and prove nothing.
-  @(d/transact conn (into schema/v7-schema basic-attrs))
+  (schema/install! conn)
+  @(d/transact conn basic-attrs)
   (let [acl (spiceomic/make-client
              conn
              {:cache shared-cache/no-cache})]
@@ -184,7 +185,7 @@
 
 (defn seed-recursive-chain!
   [conn {:keys [chain-length unrelated-count]}]
-  @(d/transact conn schema/v7-schema)
+  (schema/install! conn)
   (let [acl (spiceomic/make-client conn {})]
     (eacl/write-schema! acl recursive-chain-schema-dsl)
     @(d/transact conn
@@ -365,7 +366,7 @@
 
 (deftest ^:benchmark cache-proof-strategy-churn-benchmark
   (testing "managed proof reuse, global invalidation, and no-cache"
-    (with-mem-conn [conn schema/v7-schema]
+    (with-mem-conn [conn schema/v8-schema]
       (let [common {:security-key "cache-proof-benchmark00000000000"}
             managed #(spiceomic/make-client conn (assoc common :cache %))
             proof-client (managed {})

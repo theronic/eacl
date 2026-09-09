@@ -243,27 +243,33 @@
 (deftest registry-mechanisms-name-and-execute-their-targets-test
   (let [{:keys [required-score historical-mutant-count
                 historical-clojure-mutant-count
-                historical-model-mutant-count mutants
+                historical-model-mutant-count mutants introduced-after-historical-audit
                 retired-mutant-groups]}
         (registry)
         forms (detector-source-forms)
         active-ids (mapv :id mutants)
         retired-ids (mapv identity (mapcat :ids retired-mutant-groups))
+        added (set introduced-after-historical-audit)
+        historical (remove #(contains? added (:id %)) mutants)
         production (filterv #(= :executed-production (:mechanism %)) mutants)
         source-text (filterv #(= :source-text (:mechanism %)) mutants)
         models (filterv #(= :executed-model (:mechanism %)) mutants)]
     (testing "the historical registry was classified without silent deletion"
       (is (= historical-mutant-count
-             (+ (count active-ids) (count retired-ids))))
+             (+ (count historical) (count retired-ids))))
       (is (= historical-mutant-count
              (+ historical-clojure-mutant-count
                 historical-model-mutant-count)))
       (is (= historical-clojure-mutant-count
-             (+ (count production) (count source-text)
+             (+ (count (remove #(= :executed-model (:mechanism %)) historical))
                 (count retired-ids))))
-      (is (= historical-model-mutant-count (count models)))
+      (is (= historical-model-mutant-count
+             (count (filter #(= :executed-model (:mechanism %)) historical))))
       (is (= historical-mutant-count
-             (count (set (concat active-ids retired-ids)))))
+             (count (set (concat (map :id historical) retired-ids)))))
+      (is (= (count added) (count introduced-after-historical-audit)))
+      (is (every? (set active-ids) added))
+      (is (not-any? (set retired-ids) added))
       (is (= (count active-ids) (count (set active-ids))))
       (is (= (count retired-ids) (count (set retired-ids))))
       (is (every? keyword? (map :reason retired-mutant-groups)))

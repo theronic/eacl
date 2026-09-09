@@ -22,6 +22,7 @@
 
 (def ^:private request-keys
   #{:checks
+    :caveat-context
     :consistency
     :timeout-ms
     :cancellation-token
@@ -34,6 +35,7 @@
 (def ^:private endpoint-keys #{:type :id :relation})
 (def ^:private per-demand-control-keys
   #{:consistency
+    :caveat-context
     :timeout-ms
     :cancellation-token
     :cache?
@@ -257,10 +259,12 @@
 (defn aggregate-counters
   "Returns safe cumulative counters relative to the start of one batch."
   [work-before work-after ledger-before ledger-after output-units]
-  (let [commands (numeric-delta work-before work-after :advanced-datoms)
+  (let [ledger-delta (request-counters/delta ledger-before ledger-after)
+        ;; The mandatory ledger includes scans, exact probes, and qualifier
+        ;; data reads. Traversal observers contain only a subset of that work.
+        commands (:commands ledger-delta)
+        fetched-values (:fetched-values ledger-delta)
         transitions (numeric-delta work-before work-after :queued-work)
-        fetched-values (numeric-delta work-before work-after :fetched-values)
-        ledger-delta (request-counters/delta ledger-before ledger-after)
         candidates (:candidates-examined ledger-delta)
         probes (:probes ledger-delta)
         allocation-proxy

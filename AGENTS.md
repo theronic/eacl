@@ -39,7 +39,7 @@ when you need the CI test runner on the classpath, exactly as CI does):
 
 ```
 clojure -M:dev:nrepl
-clojure -M:dev:test:cljs-test:nrepl --port 7788
+clojure -M:dev:test:caveats-jvm:cljs-test:nrepl --port 7788
 ```
 
 Run a single test namespace:
@@ -47,10 +47,10 @@ Run a single test namespace:
 clj-nrepl-eval -p <port> "(require 'some.test-ns :reload) (clojure.test/run-tests 'some.test-ns)"
 ```
 
-Run the CI-equivalent battery (all four module test roots, benchmark and
+Run the CI-equivalent battery (core, optional JVM Caveat, and three public backend module test roots, benchmark and
 formal-artifact suites excluded) on an nREPL started with the `:test` alias:
 ```
-clj-nrepl-eval -p <port> "(do (require '[cognitect.test-runner.api :as runner] :reload) (runner/test {:dirs [\"modules/eacl/test\" \"modules/eacl-datomic/test\" \"modules/eacl-datascript/test\" \"modules/eacl-datahike/test\" \"src-build\"] :excludes [:benchmark :formal-artifact]}))"
+clj-nrepl-eval -p <port> "(do (require '[cognitect.test-runner.api :as runner] :reload) (runner/test {:dirs [\"modules/eacl/test\" \"modules/eacl-caveats-jvm/test\" \"modules/eacl-datomic/test\" \"modules/eacl-datascript/test\" \"modules/eacl-datahike/test\" \"src-build\"] :excludes [:benchmark :formal-artifact]}))"
 ```
 
 Heavy benchmark/load suites are tagged `^:benchmark` and live under each
@@ -67,3 +67,22 @@ Run the DataScript ClojureScript build (`cljs.main/-main ... -c eacl.datascript.
 After any edit under a public source root, run `bin/formal source-closure`.
 The generated report lives under ignored `target/formal/verification/`; do
 not commit it.
+
+## Benchmark output
+
+Keep raw samples, timing/allocation tables, machine provenance, qualification
+summaries, and report archives under ignored `target/benchmarks/` (or as CI
+artifacts). Do not commit run output, including successful qualification reports.
+Version benchmark code, authored acceptance budgets fixed before sampling, and
+intentional regression fixtures instead. A retained fixture must have a named
+test consumer that exercises current code. Hashing a saved report or asserting
+its recorded pass status does not test the implementation. A measurement does
+not become a fixture merely by being old.
+
+## Verification output
+
+Do not pin repository source hashes or observed proof/assertion counts in source
+or gate configuration. CI verifies the current checkout and writes hashes,
+counts, and results under ignored `target/formal/` for artifact upload. Keep
+authored proof/resource limits and behavioral checks in Git; source edits must
+not require a hash-refresh commit.

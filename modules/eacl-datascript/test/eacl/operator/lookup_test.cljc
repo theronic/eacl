@@ -2,6 +2,7 @@
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is testing]]
             [datascript.core :as ds]
+            [eacl.client.orchestration :as orchestration]
             [eacl.core :as eacl]
             [eacl.datascript.backend :as datascript-backend]
             [eacl.datascript.core :as datascript]
@@ -502,10 +503,10 @@
         (let [lifted (eacl/check-permission client query)
               after-unrelated (datascript/cache-stats client)]
           (is (true? (:allowed? lifted)))
-          (is (true? (:cached? lifted)))
-          (is (= (inc (:managed-hits before))
+          (is (= (not orchestration/*qualified-authorization-enabled?*) (:cached? lifted)))
+          (is (= (cond-> (:managed-hits before) (not orchestration/*qualified-authorization-enabled?*) inc)
                  (:managed-hits after-unrelated)))
-          (is (= (:misses before) (:misses after-unrelated)))
+          (is (= (cond-> (:misses before) orchestration/*qualified-authorization-enabled?* inc) (:misses after-unrelated)))
           (is (= (:stamp-failures before)
                  (:stamp-failures after-unrelated))))
         (eacl/create-relationship!
@@ -615,11 +616,11 @@
             second-page (eacl/lookup-resources client (assoc base :after token))]
         (is (= ["d2"] (public-page-ids first-page)))
         (is (= ["d6"] (public-page-ids second-page)))
-        (is (= 13 (:v envelope))
+        (is (= 14 (:v envelope))
             "the current public cursor envelope version is unchanged")
         (is (= :operator-least-path-edge
                (get-in envelope [:edge :kind])))
-        (is (= 2 (get-in envelope [:edge :version])))
+        (is (= 3 (get-in envelope [:edge :version])))
         (is (string? (get-in envelope [:edge :fingerprint])))
         (is (string? (get-in envelope [:edge :cover-fingerprint])))
         (is (string? (get-in envelope [:edge :semantic-scope])))

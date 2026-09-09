@@ -5,14 +5,18 @@
   adapter, schema installation, and transaction submission. The
   nine public operations, snapshot-context assembly, cursor plumbing, and
   cache wiring live once in eacl.client.orchestration."
-  (:require [datalevin.core :as ds]
+  (:require [eacl.uuid :as uuid]
+            [eacl.causal-token :as causal-token]
+            [datalevin.core :as ds]
             [eacl.client.orchestration :as orchestration]
             [eacl.cursor :as cursor]
             [eacl.datalevin.backend :as datalevin-backend]
             [eacl.datalevin.db :as ddb]
             [eacl.datalevin.fork :as fork]
             [eacl.datalevin.impl :as impl]
+            [eacl.datalevin.qualifiers :as qualifiers]
             [eacl.datalevin.schema :as schema]
+            [eacl.datalevin.storage :as target-storage]
             [eacl.relationships.storage :as relationship-storage]))
 
 (def cursor->token cursor/cursor->token)
@@ -62,8 +66,10 @@
 
 (defn- stale-connection-contention?
   [throwable]
-  (= :eacl.datalevin/stale-connection-generation
-     (:type (ex-data throwable))))
+  (or (= :eacl.datalevin/stale-connection-generation
+         (:type (ex-data throwable)))
+      (= :cleanup-source-changed
+         (:reason (datalevin-failure-data throwable :eacl.qualifier/staged-write)))))
 
 (defn- transact-native!
   [write-token conn {:keys [tx-data]}]
@@ -172,6 +178,9 @@
   [snapshot-or-db object-eid]
   (ddb/with-db snapshot-or-db #(impl/tx-delete-object % object-eid)))
 
+(defn- snapshot-object-relationship-retractions [snapshot-or-db object-eid]
+  (ddb/with-db snapshot-or-db #(impl/selected-object-relationship-retractions % object-eid)))
+
 (defn- snapshot-read-relationships
   ([snapshot-or-db query kernel]
    (snapshot-read-relationships snapshot-or-db query kernel nil))
@@ -182,6 +191,9 @@
 
 (def ^:private base-api
   {:backend-id :datalevin
+   :qualified-writer #'qualifiers/writer
+   :qualified-publication-capability #'qualifiers/publication-capability
+   :qualified-plan #'qualifiers/plan
    :writer-max-attempts 8
    :writer-contention? stale-connection-contention?
    :db ds/db
@@ -207,14 +219,17 @@
    ;; the impl suites) and REPL redefinition visible through the shared
    ;; orchestration.
    :schema {:read-schema #'schema/read-schema
+            :read-authorization-schema #'schema/read-authorization-schema
             :generation snapshot-schema-generation
             :write-schema! nil}
    :impl {:validate-relationship-operation!
           #'impl/validate-relationship-operation!
+          :relationship-publication-input (fn [db relationship] (ddb/with-db db #(impl/relationship-publication-input % relationship)))
           :relationship-relation-id snapshot-relationship-relation-id
           :relation-coordinate snapshot-relation-coordinate
           :tx-update-relationship snapshot-tx-update-relationship
           :tx-delete-object snapshot-tx-delete-object
+          :object-relationship-retractions snapshot-object-relationship-retractions
           :affected-relation-ids #'impl/affected-relation-ids
           :read-relationships snapshot-read-relationships}
    :extra-client-opt-keys
@@ -375,8 +390,23 @@
        :eacl/error :eacl/invalid-config
        :key :source-lifecycle
        :value nil})))
+  ;; Reject legacy values before native validation or schema bootstrap can
+  ;; acquire readers, advance watermarks, or write durable source metadata.
+  (try
+    (causal-token/validate-source-lifecycle! (:source-lifecycle config-opts))
+    (catch #?(:clj Exception :cljs :default) error
+      (throw (ex-info "Datalevin requires a persisted native UUID lifecycle."
+                      {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
+                       :key :source-lifecycle :expected :uuid
+                       :reason (:type (ex-data error))}
+                      error))))
+  (when (= uuid/initial (:source-lifecycle config-opts))
+    (throw (ex-info "Datalevin requires a persisted noninitial lifecycle UUID."
+                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
+                     :key :source-lifecycle :reason :initial-source-lifecycle})))
   (when-not (or (contains? config-opts :security-key)
-                (contains? config-opts :security-keyring))
+                (contains? config-opts :security-keyring)
+                (contains? config-opts :security-keyring-controller))
     (throw
      (ex-info
       "Datalevin requires an externally retained token-signing key or keyring."
@@ -444,6 +474,7 @@
            :eacl/error :eacl.datalevin/revision-regression
            :revision revision
            :revision-watermark watermark})))))
+  (target-storage/assert-compatible! (ds/db conn))
   (let [{:keys [source-id schema-eid write-token]}
         (schema/ensure-physical-schema! conn)
         validated-source-id (datalevin-backend/connection-source-id conn)
@@ -483,3 +514,15 @@
   ([dir extra-schema] (schema/create-conn dir extra-schema))
   ([dir extra-schema store-options]
    (schema/create-conn dir extra-schema store-options)))
+
+(defn export-authenticated-cache-snapshot
+  "Exports count/byte-bounded authenticated cache bytes using the primary keyring."
+  [client bounds]
+  (require-datalevin-client! client "export-authenticated-cache-snapshot")
+  (orchestration/export-authenticated-cache-snapshot client bounds))
+
+(defn restore-authenticated-cache-snapshot!
+  "Restores optional authenticated cache bytes. Unavailable keys are cache misses."
+  [client token bounds]
+  (require-datalevin-client! client "restore-authenticated-cache-snapshot!")
+  (orchestration/restore-authenticated-cache-snapshot! client token bounds))

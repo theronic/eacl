@@ -1,9 +1,8 @@
 # Migrating Datomic or Datahike permissions from v7 to v8
 
-EACL v8 reuses the released v7 relationship storage model. The forward and
-reverse tuple attributes, relation entity identities, and relationship datoms
-are not rebuilt. The migration changes only permission definitions and the
-schema/version singleton.
+This permission migration changes permission definitions and the schema/version
+singleton. EACL v8 also requires the separate explicit
+[Relationship storage migration](relationship-storage-v7-to-v8.md).
 
 New Datomic databases install `eacl.datomic.schema/v8-schema`. The legacy
 `v7-schema` name remains a compatibility installer for existing code, but it
@@ -78,32 +77,12 @@ Additive attribute definitions installed before a failed final transaction are
 inert for v7 readers. Mixed flat/expression storage is rejected rather than
 guessed or repaired.
 
-Client construction is fail-closed until migration succeeds:
+Current client construction first requires completed Relationship storage 8,
+then canonical permission storage 8. Run this permission-only migration and the
+[Relationship migration](relationship-storage-v7-to-v8.md) as separate explicit maintenance
+steps before starting clients. Constructors reject `:auto-migrate-*` options.
 
-```clojure
-(eacl.datomic.core/make-client conn {})
-;; throws :eacl/permission-storage-version on released-v7 permission rows
-```
-
-The equivalent Datahike call is `eacl.datahike.core/make-client` and reports
-the same typed `:eacl/permission-storage-version` error.
-
-An application may opt into the same migration during construction:
-
-```clojure
-(eacl.datomic.core/make-client
- conn
- {:expression-limits {:maximum-source-nodes 32768
-                      :maximum-source-depth 64}
-  :auto-migrate-v7 {:schema released-v8-schema-string}})
-```
-
-For Datahike, use `{:auto-migrate-v7 true}` to consume the stored schema, or
-`{:auto-migrate-v7 {:schema released-v8-schema-string}}` to provide it
-explicitly.
-
-Do not use automatic migration when several processes may start concurrently;
-run the explicit maintenance step once, then start ordinary v8 clients. A
+A
 concurrent schema replacement fails with `:eacl.schema/concurrent-write`; retry
 the migration against the new current database value after resolving which
 schema is authoritative.

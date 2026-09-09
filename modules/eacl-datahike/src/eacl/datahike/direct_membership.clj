@@ -7,6 +7,7 @@
   (:require [eacl.datahike.db :as ddb]
             [eacl.execution :as execution]
             [eacl.relationships.storage :as relationship-storage]
+            [eacl.relationships.endpoint-pair :as endpoint-pair]
             [eacl.request.counters :as request-counters]))
 
 (def physical-policy-version :datahike-density-bounded-v2)
@@ -79,8 +80,8 @@
   (let [first-eid (:eid (first ordered))
         last-eid (:eid (peek ordered))
         datoms
-        (ddb/eavt-tuple-prefix
-         db endpoint-eid attribute 4 prefix first-eid)
+        (ddb/checked-relationship-datoms
+         db endpoint-eid attribute prefix first-eid :asc)
         ;; The deadline check reads its diagnostic only on the throw path;
         ;; one primitive cell and one thunk serve every datom.
         progress (long-array 1)
@@ -138,8 +139,9 @@
                 present?
                 (boolean
                  (seq
-                  (ddb/eavt-datoms
-                   db endpoint-eid attribute (conj prefix eid))))]
+                  (endpoint-pair/checked-datoms
+                   (ddb/relationship-identity-datoms
+                    db endpoint-eid attribute (conj prefix eid nil)))))]
             (recur (inc index)
                    (conj! decisions present?)
                    (+ fetched (if present? 1 0)))))))))

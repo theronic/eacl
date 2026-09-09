@@ -1,14 +1,23 @@
 (ns eacl.datomic.schema
   (:require [clojure.walk :as walk]
             [datomic.api :as d]
+            [eacl.caveats.schema :as caveat-schema]
+            [eacl.caveats.definition :as caveat-definition]
             [eacl.datomic.impl.indexed :as impl.indexed]
+            [eacl.datomic.db :as ddb]
+            [eacl.datomic.storage :as target-storage]
+            [eacl.datomic.qualifier-functions :as qualifier-functions]
+            [eacl.relationships.upgrade :as upgrade]
             [eacl.relationships.storage :as relationship-storage]
+            [eacl.relationships.legacy-v7 :as legacy-v7]
+            [eacl.relationships.endpoint-pair :as endpoint-pair]
             [eacl.schema.expression :as expression]
             [eacl.schema.expression-limits :as expression-limits]
             [eacl.schema.expression-persistence :as expression-persistence]
             [eacl.schema.expression-policy :as expression-policy]
             [eacl.schema.expression-resolver :as expression-resolver]
             [eacl.schema.model :as model]
+            [eacl.schema.relation-allowance :as relation-allowance]
             [eacl.schema.replacement-plan :as replacement-plan]))
 
 ; should these Malli specs be in a separate namespace, e.g. specs?
@@ -43,7 +52,8 @@
 
 (def schema-version-attr-definition
   "Schema-generation stamp. write-schema! asserts a fresh squuid here in the
-  same transaction as any definition change. A connection-backed EACL client
+  same transaction as any definition change. Staged Caveat-reference creation
+  also advances it to serialize against definition removal. A connection-backed EACL client
   reads it once at construction and replaces its one cached generation when
   write-schema! is invoked through that client. Do not edit EACL definitions
   outside write-schema!."
@@ -122,22 +132,25 @@
     {:lang "clojure"
      :params '[db resource-type relation-eid subject-type]
      :code
-     '(if (or
+     (walk/postwalk-replace
+      {'endpoint-value-constructor endpoint-pair/constructor-form}
+      '(let [endpoint-value endpoint-value-constructor]
+         (if (or
            (seq
             (datomic.api/index-range
              db
-             :eacl.v7.relationship/subject-type+relation+resource-type+resource
-             [subject-type relation-eid resource-type 0]
-             [subject-type relation-eid resource-type Long/MAX_VALUE]))
+             :eacl.v8.relationship/subject-type+relation+resource-type+resource+qualifier
+             (endpoint-value subject-type relation-eid resource-type 0 nil)
+             (endpoint-value subject-type relation-eid resource-type Long/MAX_VALUE Long/MAX_VALUE)))
            ;; Healthy relationships have both tuple halves. Check the reverse
            ;; index too so relation removal cannot strand a reverse-only tuple
            ;; after an interrupted legacy write or manual data corruption.
            (seq
             (datomic.api/index-range
              db
-             :eacl.v7.relationship/resource-type+relation+subject-type+subject
-             [resource-type relation-eid subject-type 0]
-             [resource-type relation-eid subject-type Long/MAX_VALUE])))
+             :eacl.v8.relationship/resource-type+relation+subject-type+subject+qualifier
+             (endpoint-value resource-type relation-eid subject-type 0 nil)
+             (endpoint-value resource-type relation-eid subject-type Long/MAX_VALUE Long/MAX_VALUE))))
         (throw
          (ex-info
           "Cannot delete an EACL relation that is used by relationships."
@@ -146,7 +159,7 @@
            :relation-eid relation-eid
            :resource-type resource-type
            :subject-type subject-type}))
-        [])})})
+        [])))})})
 
 (def v7-compatible-schema
   [; :eacl/id is now optional.
@@ -167,7 +180,7 @@
    assert-relation-unused-fn-definition
 
    {:db/ident       :eacl/storage-version
-    :db/doc         "EACL relationship storage-model major version (7 = tuple relationships). Stamped by eacl.migrations.v6-to-v7 on completed migration; eacl.datomic.core/make-client refuses to start against unmigrated v6 relationship data without it."
+    :db/doc         "Relationship storage ABI: 8 = five-slot qualifier-reference endpoint pairs. Written only by explicit bootstrap or a verified migration; clients require completed storage 8."
     :db/valueType   :db.type/long
     :db/cardinality :db.cardinality/one
     :db/index       true}
@@ -247,24 +260,18 @@
     :db/cardinality :db.cardinality/one
     :db/index       true}
 
-   ;; v7 Relationships: forward and reverse tuple indexes only.
+   ;; v8 Relationships: forward and reverse tuple indexes only.
    {:db/ident       relationship-storage/forward-attribute
-    :db/doc         "EACL v7 relationship tuple from subject to resource."
+    :db/doc         "EACL v8 relationship tuple from subject to resource."
     :db/valueType   :db.type/tuple
-    :db/tupleTypes  [:db.type/keyword
-                     :db.type/ref
-                     :db.type/keyword
-                     :db.type/ref]
+    :db/tupleTypes  relationship-storage/tuple-types
     :db/cardinality :db.cardinality/many
     :db/index       true}
 
    {:db/ident       relationship-storage/reverse-attribute
-    :db/doc         "EACL v7 reverse relationship tuple from resource to subject."
+    :db/doc         "EACL v8 reverse relationship tuple from resource to subject."
     :db/valueType   :db.type/tuple
-    :db/tupleTypes  [:db.type/keyword
-                     :db.type/ref
-                     :db.type/keyword
-                     :db.type/ref]
+    :db/tupleTypes  relationship-storage/tuple-types
     :db/cardinality :db.cardinality/many
     :db/index       true}])
 
@@ -275,13 +282,23 @@
   (filterv
    #(not (contains? expression-persistence/legacy-flat-attributes
                     (:db/ident %)))
-   v7-compatible-schema))
+   (into v7-compatible-schema
+         (concat [(second upgrade/metadata-schema) target-storage/basis-guard qualifier-functions/assert-facts]
+                 caveat-schema/datom-schema))))
+
+(defn install!
+  "Explicitly installs and bootstraps fresh Relationship storage 8. Existing
+  v7 databases must use eacl.datomic.migrations.relationships-v7-to-v8/migrate! instead."
+  [conn]
+  @(d/transact conn v8-schema)
+  (target-storage/bootstrap! conn)
+  conn)
 
 (def v7-schema
   "Compatibility name for the former all-in-one installer. New v8 databases
-  should transact `v8-schema`; released-v7 databases already contain the flat
+  should call `install!`; released-v7 databases already contain the flat
   attributes required by the explicit permission migration."
-  v7-compatible-schema)
+  (legacy-v7/source-schema v7-compatible-schema))
 
 (def ^:private authoritative-permission-attribute-idents
   #{:eacl/id
@@ -375,7 +392,7 @@
     (count missing)))
 
 (defn count-relationships-using-relation
-  "Counts v7 forward relationship tuples that reference the given relation."
+  "Counts current forward relationship tuples that reference the given relation."
   [db {:eacl.relation/keys [resource-type relation-name subject-type] :as relation}]
   {:pre [(keyword? resource-type)
          (keyword? relation-name)
@@ -390,14 +407,14 @@
                0
                (d/index-range db
                               relationship-storage/forward-attribute
-                              [subject-type relation-eid resource-type 0]
-                              [subject-type relation-eid resource-type Long/MAX_VALUE]))
+                              (endpoint-pair/forward-value subject-type relation-eid resource-type 0)
+                              (endpoint-pair/forward-value subject-type relation-eid resource-type Long/MAX_VALUE Long/MAX_VALUE)))
        (reduce (fn [n _] (inc n))
                0
                (d/index-range db
                               relationship-storage/reverse-attribute
-                              [resource-type relation-eid subject-type 0]
-                              [resource-type relation-eid subject-type Long/MAX_VALUE]))))))
+                              (endpoint-pair/reverse-value resource-type relation-eid subject-type 0)
+                              (endpoint-pair/reverse-value resource-type relation-eid subject-type Long/MAX_VALUE Long/MAX_VALUE)))))))
 
 (defn relationship-present-for-relation?
   "A bounded endpoint-index presence decision used only by speculative
@@ -410,24 +427,26 @@
       (first
        (d/index-range db
                       relationship-storage/forward-attribute
-                      [subject-type relation-eid resource-type 0]
-                      [subject-type relation-eid resource-type Long/MAX_VALUE]))
+                      (endpoint-pair/forward-value subject-type relation-eid resource-type 0)
+                      (endpoint-pair/forward-value subject-type relation-eid resource-type Long/MAX_VALUE Long/MAX_VALUE)))
       (first
        (d/index-range db
                       relationship-storage/reverse-attribute
-                      [resource-type relation-eid subject-type 0]
-                      [resource-type relation-eid subject-type Long/MAX_VALUE]))))))
+                      (endpoint-pair/reverse-value resource-type relation-eid subject-type 0)
+                      (endpoint-pair/reverse-value resource-type relation-eid subject-type Long/MAX_VALUE Long/MAX_VALUE)))))))
 
 (defn read-relations
-  "Enumerates all EACL Relation schema entities in DB and returns pull maps."
+  "Canonical Relation definitions, including named Caveat alternatives."
   [db]
-  (d/q '[:find [(pull ?relation [:eacl/id
-                                 :eacl.relation/subject-type
-                                 :eacl.relation/resource-type
-                                 :eacl.relation/relation-name]) ...]
-         :where
-         [?relation :eacl.relation/relation-name ?relation-name]]
-       db))
+  (let [pattern (cond-> [:eacl/id :eacl.relation/subject-type
+                         :eacl.relation/resource-type :eacl.relation/relation-name]
+                  (d/entid db :eacl.relation/caveats)
+                  (into [:eacl.relation/allows-unqualified?
+                         {:eacl.relation/caveats [:eacl.caveat/name]}]))]
+    (mapv relation-allowance/canonicalize
+          (d/q '[:find [(pull ?relation pattern) ...]
+                 :in $ pattern
+                 :where [?relation :eacl.relation/relation-name]] db pattern))))
 
 (defn read-permissions
   "Enumerates all EACL permission schema entities in DB and returns maps."
@@ -443,14 +462,34 @@
          [?perm :eacl.permission/permission-name]]
        db))
 
+(defn read-caveats [db]
+  (let [entities (if (d/entid db :eacl.caveat/name) (d/q '[:find [(pull ?c [:eacl.caveat/name :eacl.caveat/parameters-payload
+                               :eacl.caveat/expression-source :eacl.caveat/profile-version]) ...]
+            :where [?c :eacl.caveat/name]] db) [])]
+    (doseq [entity entities] (caveat-definition/decode-entity entity))
+    entities))
+
+(defn- caveat-references [db name]
+  (if-let [eid (d/entid db [:eacl.caveat/name name])]
+    (d/q '[:find [(pull ?q [:db/id :eacl.relationship-qualifier/caveat-context]) ...]
+               :in $ ?c
+               :where [?q :eacl.relationship-qualifier/caveat ?c]] db eid)
+    []))
+
+(defn read-authorization-schema
+  "Reads permission structure without compiling undemanded Caveat programs."
+  [db]
+  (let [permissions (read-permissions db)]
+    (expression-persistence/validate-entities permissions)
+    {:relations (read-relations db) :permissions permissions}))
+
 (defn read-schema
   "Enumerates all EACL permission schema entities in DB and returns maps."
   ; todo: unparse into SpiceDB string schema if desired.
   [db & [_format]]
-  (let [permissions (read-permissions db)]
-    (expression-persistence/validate-entities permissions)
-    {:relations   (read-relations db)
-     :permissions permissions}))
+  (let [schema (read-authorization-schema db)
+        caveats (read-caveats db)]
+    (cond-> schema (seq caveats) (assoc :caveats caveats))))
 
 (defn- read-schema-unchecked
   "Migration-only physical schema read. Normal readers must use read-schema so
@@ -679,6 +718,12 @@
       :expressions expressions
       :expression-metadata metadata})))
 
+(defn- stored-relation-caveats [db relation]
+  (relation-allowance/stored-caveats
+   {:entid #(d/entid db %) :entity #(ddb/entity-data db %)
+    :rows #(ddb/relationship-identity-datoms db %1 %2 %3)
+    :scan #(ddb/avet-tuple-prefix db %1 %2)} relation))
+
 (defn- plan-schema-candidate
   [db schema-string new-schema-map
    {:keys [allow-empty-schema? validate-existing? orphan-policy]
@@ -692,7 +737,8 @@
            (and (empty? (:definitions new-schema-map))
                 (not allow-empty-schema?)
                 (or (seq (:relations existing-schema))
-                    (seq (:permissions existing-schema))))
+                    (seq (:permissions existing-schema))
+                    (seq (:caveats existing-schema))))
             (throw
              (ex-info
               (str "Refusing to replace a non-empty schema with zero definitions."
@@ -703,6 +749,7 @@
                {:relations (count (:relations existing-schema))
                 :permissions (count (:permissions existing-schema))}})))
         deltas (compare-schema existing-schema new-schema-map)
+        _ (relation-allowance/validate-existing! (:relations deltas) #(stored-relation-caveats db %))
         semantic
         (replacement-plan/plan
          {:deltas deltas
@@ -711,13 +758,20 @@
           #(count-relationships-using-relation db %)
           :relationship-present?
           #(relationship-present-for-relation? db %)})
-        {:keys [relations permissions]} deltas
-        relation-retractions (:retractions relations)
+        {:keys [relations permissions caveats]} deltas
+        _ (caveat-definition/validate-replacements! caveats #(caveat-references db %))
+        relation-retractions (relation-allowance/entity-deletions relations)
         permission-retractions
         (expression-persistence/entity-deletions permissions)
+        caveat-addition-entities
+        (mapv #(assoc % :db/id (d/tempid :db.part/user)) (:additions caveats))
+        caveat-refs (into {} (map (juxt :eacl.caveat/name :db/id)) caveat-addition-entities)
         relation-addition-entities
         (mapv (fn [relation]
-                (assoc relation :db/id (d/tempid :db.part/user)))
+                (cond-> (assoc relation :db/id (d/tempid :db.part/user))
+                  (contains? relation :eacl.relation/caveats)
+                  (update :eacl.relation/caveats
+                          #(mapv (fn [[_ name :as ref]] (get caveat-refs name ref)) %))))
               (:additions relations))
         relation-initial-stamps
         (mapv (fn [relation]
@@ -736,27 +790,37 @@
         tx-data
         (vec
          (concat
+          caveat-addition-entities
+          (relation-allowance/attribute-retractions relations)
           relation-addition-entities
           relation-initial-stamps
           (:additions permissions)
+          (for [caveat (caveat-definition/entity-deletions caveats)]
+            [:db.fn/retractEntity [:eacl.caveat/name (:eacl.caveat/name caveat)]])
           (for [relation relation-retractions]
             [:db.fn/retractEntity [:eacl/id (:eacl/id relation)]])
           (for [permission permission-retractions]
             [:db.fn/retractEntity [:eacl/id (:eacl/id permission)]])
           [schema-stamp-entity]))
         relation-commit-guards
-        (mapv
-         (fn [relation]
-           [:eacl.fn/assert-relation-unused
-            (:eacl.relation/resource-type relation)
-            (d/entid db [:eacl/id (:eacl/id relation)])
-            (:eacl.relation/subject-type relation)])
-         relation-retractions)
+        (into
+         (mapv (fn [relation]
+                 [:eacl.fn/assert-relation-unused
+                  (:eacl.relation/resource-type relation)
+                  (d/entid db [:eacl/id (:eacl/id relation)])
+                  (:eacl.relation/subject-type relation)]) relation-retractions)
+         (map (fn [{:keys [before]}]
+                (let [eid (d/entid db [:eacl/id (:eacl/id before)])]
+                  [:db.fn/cas eid :eacl/relation-version
+                   (:eacl/relation-version (ddb/entity-data db eid)) "datomic.tx"])))
+         (relation-allowance/changes relations))
         no-op? (not (some seq
                           [(:additions relations)
                            (:retractions relations)
                            (:additions permissions)
-                           (:retractions permissions)]))
+                           (:retractions permissions)
+                           (:additions caveats)
+                           (:retractions caveats)]))
         effective-tx-data (if no-op? [] tx-data)]
     (assoc semantic
            :tx-data effective-tx-data
@@ -781,7 +845,7 @@
          (:expression-limits options))
         new-schema-map
         (expression-persistence/candidate-schema
-         (expression-resolver/validate-schema schema-string expression-limits))]
+         (expression-resolver/validate-schema schema-string expression-limits (select-keys options [:allow-caveats?])))]
     (binding [expression-persistence/*expression-limits* expression-limits]
       (plan-schema-candidate db schema-string new-schema-map options))))
 
@@ -886,7 +950,7 @@
        (let [new-schema-map
              (expression-persistence/candidate-schema
               (expression-resolver/validate-schema
-               schema-string expression-limits))]
+               schema-string expression-limits (select-keys opts [:allow-caveats?])))]
          (write-schema-candidate!
           conn schema-string new-schema-map opts known-schema-version))))))
 

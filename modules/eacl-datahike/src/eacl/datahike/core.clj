@@ -12,9 +12,13 @@
             [eacl.datahike.backend :as datahike-backend]
             [eacl.datahike.db :as ddb]
             [eacl.datahike.impl :as impl]
+            [eacl.datahike.qualifiers :as qualifiers]
             [eacl.datahike.migrations.v7-to-v8 :as v7-to-v8]
             [eacl.datahike.schema :as schema]
+            [eacl.datahike.storage :as target-storage]
+            [eacl.relationships.upgrade :as storage-upgrade]
             [eacl.relationships.storage :as relationship-storage]
+            [eacl.relationships.staged :as staged]
             [eacl.schema.expression-policy :as expression-policy]))
 
 (def cursor->token cursor/cursor->token)
@@ -112,6 +116,11 @@
 
 (def ^:private api
   {:backend-id :datahike
+   :writer-max-attempts 8
+   :writer-contention? staged/prepared-contention?
+   :qualified-writer #'qualifiers/writer
+   :qualified-publication-capability #'qualifiers/publication-capability
+   :qualified-plan #'qualifiers/plan
    :db d/db
    :entid ddb/entid
    :default-entid->object-id (fn [db eid] (:eacl/id (d/entity db eid)))
@@ -136,11 +145,13 @@
    ;; the impl suites) and REPL redefinition visible through the shared
    ;; orchestration.
    :schema {:read-schema #'schema/read-schema
+            :read-authorization-schema #'schema/read-authorization-schema
             :generation #'schema/current-schema-generation
             :plan-replacement #'schema/plan-schema-replacement
             :write-schema! #'schema/write-schema!}
    :impl {:validate-relationship-operation!
           #'impl/validate-relationship-operation!
+          :relationship-publication-input #'impl/relationship-publication-input
           :relationship-relation-id #'impl/relationship-relation-id
           :relation-coordinate relation-coordinate
           :tx-update-relationship #'impl/tx-update-relationship
@@ -209,39 +220,14 @@
    (orchestration/refresh-metrics! client opts)))
 
 (defn make-client
-  "Builds an EACL acl over a datahike conn.
-
-  `:auto-migrate-v7` is consumed by the explicit permission-storage
-  compatibility gate. Every remaining option belongs to the uniform EACL
-  client contract.
-
-  Options (unknown keys throw :eacl/invalid-config - a silently ignored key
-  means silently wrong ID coercion, audit 5):
-  - :entid->object-id  (fn [db eid] external-id) - canonical.
-  - :object-id->lookup-ref (fn [external-id] lookup-ref). Default: [:eacl/id id].
-  - :cache - omitted creates a bounded client-private basis
-    cache; eacl.cache/no-cache disables it; a config map bounds it.
-    Exact hits require complete basis identity; complete native generation
-    proofs may lift unchanged answers into causally later ordinary bases in
-    the same lifecycle. Authorization
-    mutations must use EACL APIs or intact EACL-produced transaction data.
-  - :cursor-ttl-seconds - optional cursor token expiry; default nil (tokens never expire).
-  - :identity-immutable? - whether one internal object's public identity is
-    immutable for this source lifecycle. The built-in :eacl/id codec defaults
-    true; set false when IDs may be reassigned so cursors stay exact-basis-bound.
-    Custom codecs must set true explicitly to enable proof-equivalent cursors.
-  - :internal-cursor->spice / :spice-cursor->internal - advanced cursor coercion overrides."
+  "Builds an EACL v8 client over explicitly initialized Relationship storage 8.
+  Storage and permission upgrades must be invoked before construction."
   [conn config-opts]
-  (let [expression-limits
-        (expression-policy/normalize-client-limits
-         (:expression-limits config-opts))]
-    (v7-to-v8/assert-permission-storage-compatible!
-     conn {:auto-migrate-v7 (:auto-migrate-v7 config-opts)
-           :expression-limits expression-limits})
-    (orchestration/make-client
-     api conn (-> config-opts
-                  (dissoc :auto-migrate-v7)
-                  (assoc :expression-limits expression-limits)))))
+  (storage-upgrade/reject-auto-migration! config-opts)
+  (target-storage/assert-compatible! (d/db conn))
+  (let [expression-limits (expression-policy/normalize-client-limits (:expression-limits config-opts))]
+    (v7-to-v8/assert-permission-storage-compatible! conn {:expression-limits expression-limits})
+    (orchestration/make-client api conn (assoc config-opts :expression-limits expression-limits))))
 
 (defn db
   "Returns the immutable Datahike DB held by an EACL-created snapshot."
@@ -254,3 +240,15 @@
   ([] (schema/create-conn))
   ([extra-schema] (schema/create-conn extra-schema))
   ([extra-schema config] (schema/create-conn extra-schema config)))
+
+(defn export-authenticated-cache-snapshot
+  "Exports count/byte-bounded authenticated cache bytes using the primary keyring."
+  [client bounds]
+  (require-datahike-client! client "export-authenticated-cache-snapshot")
+  (orchestration/export-authenticated-cache-snapshot client bounds))
+
+(defn restore-authenticated-cache-snapshot!
+  "Restores optional authenticated cache bytes. Unavailable keys are cache misses."
+  [client token bounds]
+  (require-datahike-client! client "restore-authenticated-cache-snapshot!")
+  (orchestration/restore-authenticated-cache-snapshot! client token bounds))

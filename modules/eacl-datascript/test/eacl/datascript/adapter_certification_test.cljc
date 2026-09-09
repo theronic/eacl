@@ -148,7 +148,7 @@
         (datascript-backend/source
          conn
          {:native-source-id :adapter-reuse-test
-          :source-lifecycle :adapter-reuse-test})
+          :source-lifecycle #uuid "3eeedc46-f1d0-53a1-b1a9-c0c3c89ec81d"})
         first-selected (source/acquire! live-source :current)
         first-adapter (source/adapter first-selected)
         _ (source/release! first-selected)

@@ -446,7 +446,7 @@
   {:backend :amplification-request-context
    :source-id ::source
    :branch nil
-   :source-lifecycle ::lifecycle
+   :source-lifecycle #uuid "ed7fe2aa-2d67-5ee3-9029-5cec76fec379"
    :basis-kind :ordinary
    :revision 7
    :exact-locator 7

@@ -242,13 +242,13 @@
                     relationship-storage/forward-attribute value])
                  values)
             [[:db/add subject-a relationship-storage/forward-attribute
-              [:user (inc relation-eid) :document resource-a]]
+              [:user (inc relation-eid) :document resource-a nil]]
              [:db/add subject-a relationship-storage/forward-attribute
-              [:user relation-eid :folder resource-a]]
+              [:user relation-eid :folder resource-a nil]]
              [:db/add subject-b relationship-storage/forward-attribute
-              [:user relation-eid :document resource-a]]
+              [:user relation-eid :document resource-a nil]]
              [:db/add resource-a relationship-storage/reverse-attribute
-              [:document relation-eid :user subject-a]]]))
+              [:document relation-eid :user subject-a nil]]]))
         db (ds/db conn)
         eavt-values
         (fn [direction cursor]
@@ -295,10 +295,10 @@
         {:keys [user-eid account-eid relation-eid forward reverse]}
         (relationship-state db)]
     (is (= [[user-eid
-             [[:user relation-eid :account account-eid]]]]
+             [[:user relation-eid :account account-eid nil]]]]
            [[(:e (first forward)) (mapv :v forward)]]))
     (is (= [[account-eid
-             [[:account relation-eid :user user-eid]]]]
+             [[:account relation-eid :user user-eid nil]]]]
            [[(:e (first reverse)) (mapv :v reverse)]]))
     (is (= 2 (+ (count forward) (count reverse))))
     (is (= 1

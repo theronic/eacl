@@ -1,15 +1,20 @@
 (ns eacl.datalevin.schema
   (:require [clojure.string :as str]
             [datalevin.core :as ds]
+            [eacl.caveats.schema :as caveat-schema]
+            [eacl.caveats.definition :as caveat-definition]
             [eacl.datalevin.db :as ddb]
             [eacl.datalevin.fork :as fork]
+            [eacl.datalevin.storage :as target-storage]
             [eacl.relationships.storage :as relationship-storage]
             [eacl.schema.expression-persistence :as expression-persistence]
             [eacl.schema.expression-policy :as expression-policy]
             [eacl.schema.expression-resolver :as expression-resolver]
-            [eacl.schema.model :as model]))
+            [eacl.schema.model :as model]
+            [eacl.schema.relation-allowance :as relation-allowance]))
 
 (def datalevin-schema
+  (merge target-storage/metadata-schema caveat-schema/datalevin-schema
   {:eacl/id {:db/valueType :db.type/string
              :db/unique :db.unique/identity}
    :eacl/schema-string {:db/valueType :db.type/string}
@@ -50,16 +55,14 @@
 
    relationship-storage/forward-attribute
    {:db/valueType :db.type/tuple
-    :db/tupleTypes [:db.type/keyword :db.type/ref
-                    :db.type/keyword :db.type/ref]
+    :db/tupleTypes relationship-storage/tuple-types
     :db/cardinality :db.cardinality/many
     :db/index true}
    relationship-storage/reverse-attribute
    {:db/valueType :db.type/tuple
-    :db/tupleTypes [:db.type/keyword :db.type/ref
-                    :db.type/keyword :db.type/ref]
+    :db/tupleTypes relationship-storage/tuple-types
     :db/cardinality :db.cardinality/many
-    :db/index true}})
+    :db/index true}}))
 
 (defn merge-schema
   ([] datalevin-schema)
@@ -79,7 +82,7 @@
 (defn- definition-attribute?
   [attribute]
   (or (= :eacl/schema-string attribute)
-      (contains? #{"eacl.relation" "eacl.permission"}
+      (contains? #{"eacl.relation" "eacl.permission" "eacl.caveat"}
                  (namespace attribute))))
 
 (defn- expected-write-policy
@@ -102,10 +105,14 @@
        :commit-generation-attributes
        #{:eacl.datalevin/schema-generation
          :eacl.datalevin/schema-write-fence
-         :eacl.datalevin/relation-generation}
+         :eacl.datalevin/relation-generation
+         :eacl.storage/migration-generation}
        :stamp-rules
        (into
-        [{:when-attribute relationship-storage/forward-attribute
+        [{:when-attribute :eacl.storage/migration-state
+          :stamp-attribute :eacl.storage/migration-generation
+          :stamp-entity [:constant schema-eid]}
+         {:when-attribute relationship-storage/forward-attribute
           :stamp-attribute :eacl.datalevin/relation-generation
           :stamp-entity [:tuple-position 1]}
          {:when-attribute relationship-storage/reverse-attribute
@@ -155,7 +162,12 @@
   ([dir extra-schema store-options]
    ;; Qualification and bootstrap belong to make-client. Merely opening a
    ;; connection must not submit an unadmitted protected transaction.
-   (ds/get-conn dir (merge-schema extra-schema) store-options)))
+   (let [conn (ds/get-conn dir (merge-schema extra-schema) store-options)
+         found (target-storage/evidence (ds/db conn))]
+     (when (and (nil? (:version found)) (nil? (:state found))
+                (not (:legacy? found)) (not (:v6? found)))
+       (target-storage/bootstrap! conn))
+     conn)))
 
 (def ^:private physical-schema-keys
   #{:db/valueType :db/cardinality :db/unique :db/index
@@ -176,7 +188,8 @@
   "Installs missing EACL attributes on a quiesced embedded connection and
   rejects any incompatible definition. Installs the storage write policy and
   returns the persisted source UUID plus the per-open writer token."
-  [conn]
+  ([conn] (ensure-physical-schema! conn nil))
+  ([conn migration-token]
   (let [existing-policy (fork/write-policy conn)
         actual (ds/schema conn)
         drift
@@ -243,7 +256,8 @@
         (let [expected-policy (expected-write-policy conn)
               policy-result
               (try
-                (fork/install-write-policy! conn expected-policy)
+                (fork/install-write-policy! conn expected-policy
+                                            (when migration-token {:datalevin/write-token migration-token}))
                 (catch #?(:clj Throwable :cljs :default) error
                   (throw
                    (ex-info
@@ -268,7 +282,7 @@
            :schema-eid (ds/entid (ds/db conn) [:eacl/id "schema-string"])
            :write-token (:write-token policy-result)
            :write-policy (:policy policy-result)
-           :fork-capabilities (:capabilities policy-result)})))))
+           :fork-capabilities (:capabilities policy-result)}))))))
 
 (def relation-pull
   [:eacl/id :eacl.relation/subject-type
@@ -293,10 +307,18 @@
           attributes)))
 
 (defn read-relations
+  "Canonical Relation definitions, including named Caveat alternatives."
   [db]
-  (mapv #(eager-entity db (:e %) relation-pull)
-        (ddb/avet-datoms
-         db :eacl.relation/resource-type+relation-name+subject-type)))
+  (mapv (fn [row]
+          (let [relation (eager-entity db (:e row)
+                                       (into relation-pull relation-allowance/attributes))
+                relation (cond-> relation
+                           (contains? relation :eacl.relation/caveats)
+                           (update :eacl.relation/caveats
+                                   (fn [refs]
+                                     (mapv #(select-keys % [:eacl.caveat/name]) refs))))]
+            (relation-allowance/canonicalize relation)))
+        (ddb/avet-datoms db :eacl.relation/resource-type+relation-name+subject-type)))
 
 (defn read-permissions
   [db]
@@ -304,15 +326,38 @@
         (ddb/avet-datoms
          db :eacl.permission/resource-type+permission-name)))
 
-(defn read-schema
-  [snapshot-or-db & [_format]]
+(defn read-caveats [db]
+  (let [entities (if (contains? (ds/schema db) :eacl.caveat/name) (mapv #(eager-entity db (:e %) caveat-definition/attributes)
+        (ddb/avet-datoms db :eacl.caveat/name)) [])]
+    (doseq [entity entities] (caveat-definition/decode-entity entity))
+    entities))
+
+(defn- caveat-references [db name]
+  (if-let [eid (ds/entid db [:eacl.caveat/name name])]
+    (ds/q '[:find [(pull ?q [:db/id :eacl.relationship-qualifier/caveat-context]) ...]
+               :in $ ?c
+               :where [?q :eacl.relationship-qualifier/caveat ?c]] db eid)
+    []))
+
+(defn read-authorization-schema
+  "Reads permission structure without compiling undemanded Caveat programs."
+  [snapshot-or-db]
   (ddb/with-db
    snapshot-or-db
    (fn [db]
      (let [permissions (read-permissions db)]
        (expression-persistence/validate-entities permissions)
-       {:relations (read-relations db)
-        :permissions permissions}))))
+       {:relations (read-relations db) :permissions permissions}))))
+
+(defn read-schema
+  [snapshot-or-db & [_format]]
+  (ddb/with-db
+   snapshot-or-db
+   (fn [db]
+     (let [schema (read-authorization-schema db)
+           caveats (read-caveats db)]
+       (cond-> schema
+         (seq caveats) (assoc :caveats caveats))))))
 
 (defn prepare-cache-coherence!
   "Initializes missing physical schema/relation generations and the schema
@@ -491,6 +536,141 @@
         :else
         (throw throwable)))))
 
+(defn- stored-relation-caveats [db relation]
+  (relation-allowance/stored-caveats
+   {:entid #(ds/entid db %) :entity #(ddb/entity-data db %)
+    :rows #(ddb/relationship-identity-datoms db %1 %2 %3)
+    :scan #(ddb/qualified-relation-datoms db %1 %2)} relation))
+
+(defn- plan-schema-write
+  "Pure schema validation and commit guards from one owned read snapshot."
+  [db schema-string
+   {:keys [allow-empty-schema? expression-limits allow-caveats?]}
+   known-schema-generation policy-installed?]
+  (let [expression-limits
+        (expression-policy/normalize-client-limits expression-limits)
+        new-schema-map  (expression-persistence/candidate-schema
+                         (expression-resolver/validate-schema
+                          schema-string expression-limits {:allow-caveats? allow-caveats?}))
+        current-generation (current-schema-generation db)
+        schema-write-fence (current-schema-write-fence db)
+        _               (when-not (and current-generation
+                                       schema-write-fence)
+                          (throw
+                           (ex-info
+                            "Datalevin schema writes require prepared generation evidence."
+                            {:type :eacl.cache/generation-unprepared
+                             :eacl/error :eacl.cache/generation-unprepared
+                             :backend :datalevin
+                             :policy-installed? policy-installed?
+                             :missing
+                             (cond-> []
+                               (nil? current-generation)
+                               (conj :eacl.datalevin/schema-generation)
+
+                               (nil? schema-write-fence)
+                               (conj :eacl.datalevin/schema-write-fence))})))
+        existing-schema (binding [expression-persistence/*expression-limits*
+                                  expression-limits]
+                          (read-schema db))
+        _               (when (and (empty? (:definitions new-schema-map))
+                                   (not allow-empty-schema?)
+                                   (or (seq (:relations existing-schema))
+                                       (seq (:permissions existing-schema))
+                                       (seq (:caveats existing-schema))))
+                          (throw (ex-info (str "Refusing to replace a non-empty schema with zero definitions."
+                                               " Pass {:allow-empty-schema? true} to write-schema! if this is intentional.")
+                                          {:type :eacl.schema/empty-schema-guard :eacl/error :eacl.schema/empty-schema-guard
+                                           :existing {:relations (count (:relations existing-schema))
+                                                      :permissions (count (:permissions existing-schema))}})))
+        deltas          (compare-schema existing-schema new-schema-map)
+        _ (relation-allowance/validate-existing! (:relations deltas) #(stored-relation-caveats db %))
+        {:keys [relations permissions caveats]} deltas
+        _ (caveat-definition/validate-replacements! caveats #(caveat-references db %))
+        relation-retractions   (relation-allowance/entity-deletions relations)
+        permission-retractions
+        (expression-persistence/entity-deletions permissions)]
+    (doseq [rel relation-retractions]
+      (let [cnt (count-relationships-using-relation db rel)]
+        (when (pos? cnt)
+          (throw (ex-info (str "Cannot delete relation " (:eacl.relation/relation-name rel)
+                               " because it is used by " cnt " relationships.")
+                          {:type :eacl.schema/relation-in-use
+                           :eacl/error :eacl.schema/relation-in-use
+                           :relation rel
+                           :count cnt})))))
+    (let [relation-additions
+          (mapv #(assoc % :eacl.datalevin/relation-generation :db/current-tx)
+                (:additions relations))
+          schema-eid (ds/entid db [:eacl/id "schema-string"])
+          schema-generation
+          (if (= ::read-current-generation known-schema-generation)
+            current-generation
+            known-schema-generation)
+          relation-commit-guards
+          (mapv
+           (fn [relation]
+             (let [relation-eid
+                   (ds/entid db [:eacl/id (:eacl/id relation)])
+                   relation-generation
+                   (some-> (ds/datoms db :eav relation-eid
+                                      :eacl.datalevin/relation-generation)
+                           first
+                           :v)]
+               (when-not relation-generation
+                 (throw
+                  (ex-info
+                   "Relation removal requires prepared native generations."
+                   {:type :eacl.cache/generation-unprepared :eacl/error :eacl.cache/generation-unprepared
+                    :backend :datalevin
+                    :relation-id (:eacl/id relation)})))
+               [:db.fn/cas relation-eid :eacl.datalevin/relation-generation
+                relation-generation relation-generation]))
+           (:retractions relations))
+          tx-data
+          (vec
+           (concat
+            [[:db.fn/cas schema-eid :eacl.datalevin/schema-write-fence
+              schema-write-fence schema-write-fence]]
+            relation-commit-guards
+            (:additions caveats)
+            (relation-allowance/attribute-retractions relations)
+            relation-additions
+            (:additions permissions)
+            (for [caveat (caveat-definition/entity-deletions caveats)
+                  :let [eid (ds/entid db [:eacl.caveat/name (:eacl.caveat/name caveat)])]
+                  :when eid]
+              [:db/retractEntity eid])
+            (for [rel relation-retractions
+                  :let [eid (ds/entid db [:eacl/id (:eacl/id rel)])]
+                  :when eid]
+              [:db/retractEntity eid])
+            (for [perm permission-retractions
+                  :let [eid (ds/entid db [:eacl/id (:eacl/id perm)])]
+                  :when eid]
+              [:db/retractEntity eid])
+            [{:db/id schema-eid
+              :eacl/id "schema-string"
+              :eacl/schema-string schema-string}
+             [:db/add schema-eid :eacl.datalevin/schema-generation
+              :db/current-tx]
+             [:db/add schema-eid :eacl.datalevin/schema-write-fence
+              :db/current-tx]]))
+          stored-string
+          (some-> (ds/entity db [:eacl/id "schema-string"])
+                  :eacl/schema-string)
+          changed?
+          (or (not= stored-string schema-string)
+              (some seq
+                    [(:additions relations)
+                     (:retractions relations)
+                     (:additions permissions)
+                     (:retractions permissions)
+                     (:additions caveats)
+                     (:retractions caveats)]))]
+      {:deltas deltas :tx-data tx-data :schema-generation schema-generation
+       :changed? (boolean changed?)})))
+
 (defn write-schema!
   "Parses, validates, diffs and transacts a SpiceDB schema string.
   Throws :eacl.schema/parse-error on unparseable input (a failed parse must
@@ -502,134 +682,27 @@
   ([conn schema-string options]
    (write-schema! conn schema-string options ::read-current-generation))
   ([conn schema-string
-    {:keys [allow-empty-schema? expression-limits]}
+    {:keys [allow-empty-schema? expression-limits allow-caveats?]}
     known-schema-generation]
    (write-schema! conn schema-string
                   {:allow-empty-schema? allow-empty-schema?
-                   :expression-limits expression-limits}
+                   :expression-limits expression-limits :allow-caveats? allow-caveats?}
                   known-schema-generation nil))
   ([conn schema-string
-    {:keys [allow-empty-schema? expression-limits]}
+    {:keys [allow-empty-schema? expression-limits allow-caveats?]}
     known-schema-generation
     write-token]
-   (let [expression-limits
-         (expression-policy/normalize-client-limits expression-limits)
-         new-schema-map  (expression-persistence/candidate-schema
-                           (expression-resolver/validate-schema
-                            schema-string expression-limits))
-         db              (ds/db conn)
-         current-generation (current-schema-generation db)
-         schema-write-fence (current-schema-write-fence db)
-         _               (when-not (and current-generation
-                                        schema-write-fence)
-                           (throw
-                            (ex-info
-                             "Datalevin schema writes require prepared generation evidence."
-                             {:type :eacl.cache/generation-unprepared
-                              :eacl/error :eacl.cache/generation-unprepared
-                              :backend :datalevin
-                              :policy-installed? (boolean (fork/write-policy conn))
-                              :missing
-                              (cond-> []
-                                (nil? current-generation)
-                                (conj :eacl.datalevin/schema-generation)
-
-                                (nil? schema-write-fence)
-                                (conj :eacl.datalevin/schema-write-fence))})))
-         existing-schema (binding [expression-persistence/*expression-limits*
-                                   expression-limits]
-                           (read-schema db))
-         _               (when (and (empty? (:definitions new-schema-map))
-                                    (not allow-empty-schema?)
-                                    (or (seq (:relations existing-schema))
-                                        (seq (:permissions existing-schema))))
-                           (throw (ex-info (str "Refusing to replace a non-empty schema with zero definitions."
-                                                " Pass {:allow-empty-schema? true} to write-schema! if this is intentional.")
-                                           {:type :eacl.schema/empty-schema-guard :eacl/error :eacl.schema/empty-schema-guard
-                                            :existing {:relations (count (:relations existing-schema))
-                                                       :permissions (count (:permissions existing-schema))}})))
-         deltas          (compare-schema existing-schema new-schema-map)
-         {:keys [relations permissions]} deltas
-         relation-retractions   (:retractions relations)
-         permission-retractions
-         (expression-persistence/entity-deletions permissions)]
-     (doseq [rel relation-retractions]
-       (let [cnt (count-relationships-using-relation db rel)]
-         (when (pos? cnt)
-           (throw (ex-info (str "Cannot delete relation " (:eacl.relation/relation-name rel)
-                                " because it is used by " cnt " relationships.")
-                           {:type :eacl.schema/relation-in-use
-                            :eacl/error :eacl.schema/relation-in-use
-                            :relation rel
-                            :count cnt})))))
-     (let [relation-additions
-           (mapv #(assoc % :eacl.datalevin/relation-generation :db/current-tx)
-                 (:additions relations))
-           schema-eid (ds/entid db [:eacl/id "schema-string"])
-           schema-generation
-           (if (= ::read-current-generation known-schema-generation)
-             current-generation
-             known-schema-generation)
-           relation-commit-guards
-           (mapv
-            (fn [relation]
-              (let [relation-eid
-                    (ds/entid db [:eacl/id (:eacl/id relation)])
-                    relation-generation
-                    (some-> (ds/datoms db :eav relation-eid
-                                       :eacl.datalevin/relation-generation)
-                            first
-                            :v)]
-                (when-not relation-generation
-                  (throw
-                   (ex-info
-                    "Relation removal requires prepared native generations."
-                    {:type :eacl.cache/generation-unprepared :eacl/error :eacl.cache/generation-unprepared
-                     :backend :datalevin
-                     :relation-id (:eacl/id relation)})))
-                [:db.fn/cas relation-eid :eacl.datalevin/relation-generation
-                 relation-generation relation-generation]))
-            relation-retractions)
-           tx-data
-           (vec
-            (concat
-             [[:db.fn/cas schema-eid :eacl.datalevin/schema-write-fence
-               schema-write-fence schema-write-fence]]
-             relation-commit-guards
-             relation-additions
-             (:additions permissions)
-             (for [rel relation-retractions
-                   :let [eid (ds/entid db [:eacl/id (:eacl/id rel)])]
-                   :when eid]
-               [:db/retractEntity eid])
-             (for [perm permission-retractions
-                   :let [eid (ds/entid db [:eacl/id (:eacl/id perm)])]
-                   :when eid]
-               [:db/retractEntity eid])
-             [{:db/id schema-eid
-               :eacl/id "schema-string"
-               :eacl/schema-string schema-string}
-              [:db/add schema-eid :eacl.datalevin/schema-generation
-               :db/current-tx]
-              [:db/add schema-eid :eacl.datalevin/schema-write-fence
-               :db/current-tx]]))
-           stored-string
-           (some-> (ds/entity db [:eacl/id "schema-string"])
-                   :eacl/schema-string)
-           changed?
-           (or (not= stored-string schema-string)
-               (some seq
-                     [(:additions relations)
-                      (:retractions relations)
-                      (:additions permissions)
-                      (:retractions permissions)]))
-           report
-           (if changed?
-             (transact-schema! conn tx-data schema-generation write-token)
-             {:db-before db
-              :db-after db
-              :tx-data []
-              :no-op? true})]
-       (assoc deltas
-              :eacl.schema/db-after (:db-after report)
-              :eacl.schema/no-op? (boolean (:no-op? report)))))))
+   (let [snapshot (ds/open-read-snapshot conn)
+         {:keys [deltas tx-data schema-generation changed?]}
+         (try
+           (ds/with-read-snapshot
+             snapshot
+             #(plan-schema-write % schema-string
+                                 {:allow-empty-schema? allow-empty-schema?
+                                  :expression-limits expression-limits :allow-caveats? allow-caveats?}
+                                 known-schema-generation (boolean (fork/write-policy conn))))
+           (finally (ds/close-read-snapshot! snapshot)))
+         report (when changed? (transact-schema! conn tx-data schema-generation write-token))]
+     (assoc deltas
+            :eacl.schema/db-after (if report (:db-after report) (ds/db conn))
+            :eacl.schema/no-op? (not changed?)))))

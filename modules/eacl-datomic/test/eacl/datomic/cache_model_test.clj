@@ -36,7 +36,10 @@
 (defn- without-cache-provenance
   [value]
   (if (map? value)
-    (dissoc value :cached? :cache-basis)
+    ;; Separate live requests may mint different time-scoped cursor bytes.
+    ;; Compare authorization and page bounds; cursor validity has its own suite.
+    (cond-> (dissoc value :cached? :cache-basis)
+      (:page-info value) (update :page-info dissoc :start-cursor :end-cursor))
     value))
 
 (defn- assert-same-answers!
@@ -98,7 +101,7 @@
           ;; divergence from automatic managed coherence.
           seed (range 5)]
     (testing (str "automatic managed coherence, seed " seed)
-      (with-mem-conn [conn schema/v7-schema]
+      (with-mem-conn [conn schema/v8-schema]
         (let [random (java.util.Random. seed)
               cached (core/make-client
                       conn

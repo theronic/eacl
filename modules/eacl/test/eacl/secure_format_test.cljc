@@ -30,13 +30,16 @@
                (assoc options :cursor-ttl-seconds 10))))))
 
 (def portable-cursor-vector
+  "eacl_c7_OmN1cnJlbnQ.AAECAwQFBgcICQoL.RmZwbCL-cll8YcfhYojpblXMCqvoFwbXGeRgJhh4AY43zEQRyLHkweQiaRBEdVLtrCseqeoYB35G0gFUEwXuY4y6pmxZxdtuS1XW0jGmkVw7oGwF1oXzVM0WyEdaAz83vl6sy9__7V2vd-XhiXSYOgb1ifc3AoXhaqnI6tc4Gl_F.xCyMfH3VVh_tE0E1foY_pX1n01e4XPKw7joiNunUg74")
+
+(def previous-storage-cursor-vector
   "eacl_c5_OmN1cnJlbnQ.AAECAwQFBgcICQoL.QZ_P3mknLrCiPflRU2H_hccCTQDt3aST6krVrhIEy_I4dnWIfbanUmV8cfHj6sDjMhIN8Cd0lHIwkYS96UxCLc_WdfnW2VPzKBMSBiUyisCbhT9UFcFddkxT5ucySUPkLI31YQ68regKJar5aOo90d9lE3m6f7zG_vos_8kHIuEb.sOgle-nVuH1EijEmdIzlDQKGcUjJmxvyjlgYMDrjkUQ")
 
 (def legacy-portable-cursor-vector
   "eacl_c4_OmN1cnJlbnQ.ezpjdXJzb3IgezpraW5kIDpyZWxhdGlvbnNoaXBzLCA6b2Zmc2V0IDIsIDpzY29wZSBbOnJlYWQgezpzdWJqZWN0L2lkICJ1MSJ9XSwgOnYgOX0sIDpleHBpcmVzLWF0IDEwNSwgOmlzc3VlZC1hdCAxMDAsIDp2ZXJzaW9uIDR9.977hLzhIglQl_tClD4faSO8IvVpkEFUatzI9hAFDHfY")
 
 (def portable-cache-vector
-  "eacl_ce3_ezpraWQgOmN1cnJlbnQsIDpwYXlsb2FkICJlenBqYjIxd2RYUmxaQzFoZENCN09tZHlZWEJvSURkOUxDQTZaR1Z3Wlc1a1pXNWplUzF6WTI5d1pTQjdPbkpsYkdGMGFXOXVjeUJiTVRGZExDQTZjMk5vWlcxaElGdGJPbVJ2WTNWdFpXNTBJRHAyYVdWM1hWMTlMQ0E2YTJWNUlIczZjMlZ0WVc1MGFXTXRhMlY1SUZzNlkyRnVQeUFpZFRFaVhYMHNJRHByYVc1a0lEcGliMjlzWldGdUxDQTZjRzl5ZEdGaWJHVXRkbVZ5YzJsdmJpQXhMQ0E2Y0hKdmIyWWdlenB5Wld4aGRHbHZibk1nZXpFeElDSnlNU0o5TENBNmMyTm9aVzFoSUNKek1TSjlMQ0E2ZG1Gc2FXUmhkR1ZrTFdGMElIczZaM0poY0dnZ04zMHNJRHAyWVd4MVpTQjBjblZsTENBNmRtVnljMmx2YmlBemZRIiwgOnRhZyAiNEk0ZmxKQUZGcjZVczFGQnZiVl9uWDZ6ekczaDVEWlM1d3ExVjBQRUxPWSIsIDp2IDF9")
+  "eacl_ce3_ezpraWQgOmN1cnJlbnQsIDpwYXlsb2FkICJlenBqYjIxd2RYUmxaQzFoZENCN09tZHlZWEJvSURkOUxDQTZaR1Z3Wlc1a1pXNWplUzF6WTI5d1pTQjdPbkpsYkdGMGFXOXVjeUJiTVRGZExDQTZjMk5vWlcxaElGdGJPbVJ2WTNWdFpXNTBJRHAyYVdWM1hWMTlMQ0E2YTJWNUlIczZjMlZ0WVc1MGFXTXRhMlY1SUZzNlkyRnVQeUFpZFRFaVhYMHNJRHByYVc1a0lEcGliMjlzWldGdUxDQTZjRzl5ZEdGaWJHVXRkbVZ5YzJsdmJpQXhMQ0E2Y0hKdmIyWWdlenB5Wld4aGRHbHZibk1nZXpFeElDSnlNU0o5TENBNmMyTm9aVzFoSUNKek1TSjlMQ0E2ZG1Gc2FXUmhkR1ZrTFdGMElIczZaM0poY0dnZ04zMHNJRHAyWVd4MVpTQjBjblZsTENBNmRtVnljMmx2YmlBemZRIiwgOnRhZyAiUHRvR1FhOEhCUlZCYzRBV1dteC1GdDg4NWJIYld5ZWRmNHFPRWZRcklyZyIsIDp2IDJ9")
 
 (defn- error-data
   [f]
@@ -50,6 +53,52 @@
   [value]
   (let [replacement (if (= "A" (subs value 0 1)) "B" "A")]
     (str replacement (subs value 1))))
+
+(deftest raw-format-key-identifiers-have-one-admission-rule
+  (doseq [kid [7 ["key"] {:key "name"} #{:key} ""]]
+    (let [raw {:current-kid kid :keyring {kid current-key}}]
+      (is (= :unknown-key-id
+             (:reason (error-data #(secure/signing-context raw "test/key-id")))))
+      (is (= :security-key-unavailable
+             (:reason (error-data #(cursor/cursor->token {:v 1} raw)))))))
+  (doseq [kid [:key "key"]]
+    (let [raw {:current-kid kid :keyring {kid current-key}}
+          value {:v 1}]
+      (is (= value (cursor/token->cursor (cursor/cursor->token value raw) raw))))))
+
+(deftest raw-cursor-key-id-must-fit-the-decoder-byte-bound
+  ;; Quoted EDN adds two bytes; each of these BMP characters adds three.
+  (let [fits (str (apply str (repeat 340 "界")) "aa")
+        oversized (str fits "a")
+        raw {:current-kid fits :keyring {fits current-key}}
+        value {:v 1}]
+    (is (= 1024 (count (secure/utf8-bytes (secure/encode-canonical fits)))))
+    (is (= value (cursor/token->cursor (cursor/cursor->token value raw) raw)))
+    (is (= :too-large
+           (:reason (error-data #(cursor/cursor->token
+                                  value {:current-kid oversized :keyring {oversized current-key}})))))
+    (let [segments (str/split (cursor/cursor->token value raw) #"\." -1)]
+      (doseq [kid [oversized (str oversized "a")]]
+        (let [segment (secure/b64url-encode (secure/utf8-bytes (secure/encode-canonical kid)))
+              token (str cursor/cursor-prefix segment "." (str/join "." (rest segments)))]
+          (is (<= (count segment) 1368) "the coarse frame bound alone admits these bytes")
+          (is (= :malformed-token
+                 (:reason (error-data #(cursor/token->cursor token raw))))))))))
+
+(deftest invalid-key-id-cannot-pass-authentication-or-a-codec-cache-hit
+  (let [raw {:current-kid 7 :keyring {7 current-key}
+             :cursor-codec-cache (cursor/codec-cache 8)}
+        format-options (merge raw {:domain "test/key-id" :prefix "test_key_"})
+        [cursor-token signed-token]
+        ;; Deliberately omit admission while creating correctly authenticated
+        ;; inputs, including a populated cursor cache. Restore it before reads.
+        (with-redefs [secure/key-by-id get]
+          [(cursor/cursor->token {:v 1} raw)
+           (secure/encode-authenticated format-options {:v 1})])]
+    (is (= :security-key-unavailable
+           (:reason (error-data #(cursor/token->cursor cursor-token raw)))))
+    (is (= :security-key-unavailable
+           (:reason (error-data #(secure/decode-authenticated format-options signed-token)))))))
 
 (defn- tamper-authenticator
   [prefix token]
@@ -300,19 +349,19 @@
 (deftest causal-token-round-trip-and-rejection-test
   (let [payload {:backend :datascript
                  :source-id "family"
-                 :source-lifecycle "secure-format-test"
+                 :source-lifecycle #uuid "bbce986c-1b7c-56c8-8998-848073ace299"
                  :branch nil
                  :revision 7
                  :exact-locator nil}
         encoded (token/issue options payload)]
     (is (= (merge payload
-                  {:version 4}
+                  {:version 5}
                   (select-keys (token/token-data options encoded)
                                [:issued-at :expires-at]))
            (token/token-data options
                              {:backend :datascript
                               :source-id "family"
-                              :source-lifecycle "secure-format-test"
+                              :source-lifecycle #uuid "bbce986c-1b7c-56c8-8998-848073ace299"
                               :branch nil}
                              encoded)))
     (is (= :scope-mismatch
@@ -322,7 +371,7 @@
                options
                {:backend :datascript
                 :source-id "other"
-                :source-lifecycle "secure-format-test"
+                :source-lifecycle #uuid "bbce986c-1b7c-56c8-8998-848073ace299"
                 :branch nil}
                encoded)))))
     (is (= :expired
@@ -437,7 +486,7 @@
         (cursor/cursor->token value (assoc options :current-kid :old))]
     (is (= value (cursor/token->cursor old-token options))
         "the retained old key decrypts a cursor after the current kid rotates")
-    (is (= :authentication-failed
+    (is (= :security-key-unavailable
            (:reason
             (error-data
              #(cursor/token->cursor
@@ -975,13 +1024,10 @@
            (cursor/token->cursor
             portable-cursor-vector
             vector-options)))
-    (is (= :malformed-token
-           (:reason
-            (error-data
-             #(cursor/token->cursor
-               legacy-portable-cursor-vector
-               vector-options))))
-        "the removed authenticated-plaintext cursor format is not decoded")
+    (doseq [old-cursor [legacy-portable-cursor-vector previous-storage-cursor-vector]]
+      (is (= :legacy-source-lifecycle
+             (:reason (error-data #(cursor/token->cursor old-cursor vector-options))))
+          "pre-storage-8 cursor formats are rejected without restarting pagination"))
     (is (= portable-cache-vector
            (secure/encode-authenticated
             cache-options
@@ -1045,3 +1091,41 @@
       (is (= (sign (reference left right)) (sign (comparator left right)))
           (str "ordering differs for " left " and " right)))
     (is (= (sort reference corpus) (sort comparator corpus)))))
+
+(deftest compiler-tree-digests-preserve-structure-without-whole-value-wire-limits
+  (let [digest #(secure/canonical-tree-digest "compiler-tree-test" %)
+        values [nil false true 0 1 "0" :map :sequence
+                [] {} #{} [nil] [[]] [[:map 0]] [:map 0]
+                [0 [1 2]] [[0 1] 2] [[0] [1 2]]
+                {:a 1 :b 2} {:a 2 :b 1} #{1 2} [1 2]]]
+    (is (= (count values) (count (set (map digest values)))))
+    (is (= (digest (array-map :a [1 2] :b #{3 4}))
+           (digest (array-map :b (sorted-set 4 3) :a '(1 2)))))
+    (is (not= (digest {:a 1})
+              (secure/canonical-tree-digest "another-domain" {:a 1})))
+    (let [large (vec (range 20000))]
+      (is (string? (digest large)))
+      (is (not= (digest large) (digest (assoc large 19999 -1))))
+      ;; Internal compiler aggregates do not widen the public wire boundary.
+      (is (= :too-many-entries
+             (:reason (try (secure/encode-canonical large) nil
+                           (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+                             (ex-data error)))))))))
+
+(deftest utf8-size-matches-every-bmp-scalar-and-surrogate-boundaries
+  (doseq [code (range 65536)
+          :when (or (< code 0xD800) (> code 0xDFFF))]
+    (let [s #?(:clj (str (char code)) :cljs (.fromCharCode js/String code))]
+      (is (= (count (secure/utf8-bytes s)) (secure/utf8-size s)) (str code))))
+  (doseq [high [0xD800 0xD801 0xDBFE 0xDBFF]
+          low [0xDC00 0xDC01 0xDFFE 0xDFFF]]
+    (let [s #?(:clj (str (char high) (char low)) :cljs (.fromCharCode js/String high low))]
+      (is (= 4 (secure/utf8-size s)))
+      (is (= (count (secure/utf8-bytes (str "aé" s "中")))
+             (secure/utf8-size (str "aé" s "中"))))))
+  (doseq [units [[0xD800] [0xDBFF] [0xDC00] [0xDFFF] [0xD800 0x61]
+                 [0xD800 0xD800] [0xDC00 0xD800] [0x61 0xDFFF]]]
+    (let [s #?(:clj (apply str (map char units)) :cljs (.apply (.-fromCharCode js/String) nil (to-array units)))]
+      (is (= :invalid-unicode
+             (:reason (try (secure/utf8-size s) nil
+                           (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error (ex-data error)))))))))

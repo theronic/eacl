@@ -13,6 +13,7 @@
             [eacl.cache.standard-lru :as lru]
             [eacl.backend.v8 :as backend]
             [eacl.continuation :as continuation]
+            [eacl.client.orchestration :as orchestration]
             [eacl.core :as eacl :refer [->Relationship spice-object]]
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
@@ -49,7 +50,7 @@
    }")
 
 (def ^:private portable-source-lifecycle
-  "datomic-recursive-cache-v4-test")
+  #uuid "ad88cec0-5036-52a7-a54c-dba9558ce482")
 
 (defn- account-id [n]
   (str "account-" n))
@@ -169,7 +170,7 @@
         data'))))
 
 (deftest datomic-validates-execution-contract-before-backend-or-cache-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client conn {:security-key "execution-order00000000000000000"})
           query {:subject (spice-object :user (user-id 0))
                  :permission :read
@@ -192,7 +193,7 @@
         (is (= before (core/cache-stats client)))))))
 
 (deftest datomic-recursive-cursor-binds-normalized-traversal-limits-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [token-key "cursor-limit-contract00000000000"
           roomy
           (core/make-client
@@ -220,7 +221,7 @@
         (is (= :query-mismatch (:reason data)))))))
 
 (deftest datomic-demand-and-complete-evaluation-have-identical-page-order-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [token-key "execution-parity0000000000000000"
           demand-client (core/make-client conn {:security-key token-key})
           query {:subject (spice-object :user (user-id 0))
@@ -262,9 +263,9 @@
             "explicit completion changes cache policy, not page work: the stable engine is demand-bounded in every evaluation mode")))))
 
 (deftest recursive-page-order-is-stable-across-scan-wave-boundaries-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [token-key "page-boundary-scan-wave000000000"
-          lifecycle "page-boundary-scan-wave-source"
+          lifecycle #uuid "dab9724f-edde-567c-85d7-a629308b85bc"
           cached-client
           (core/make-client conn {:security-key token-key
                                   :source-lifecycle lifecycle})
@@ -298,7 +299,7 @@
               (str (name label) " continuation emits every result once")))))))
 
 (deftest complete-point-membership-uses-generated-logical-not-numeric-order-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client conn {:security-key "logical-membership00000000000000"})
           user (spice-object :user "logical-user")
           low (spice-object :account "logical-low")
@@ -331,7 +332,7 @@
           "demand and explicit completion must return the same Boolean"))))
 
 (deftest datomic-deadline-is-typed-and-never-becomes-denial-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client conn {:security-key "execution-deadline00000000000000"})
           query {:subject (spice-object :user (user-id 0))
                  :permission :read
@@ -356,7 +357,7 @@
         (is (not (contains? data :allowed?)))))))
 
 (deftest forward-recursive-pagination-resumes-retries-and-recomputes-misses-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [token-key "recursive-forward-cache000000000"
           cached-client (core/make-client conn {:security-key token-key
                                                 :source-lifecycle
@@ -432,7 +433,7 @@
             "bounded prefix replay retains at most the requested window")))))
 
 (deftest reverse-recursive-pagination-resumes-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client conn {:security-key "recursive-reverse-cache000000000"})
           query {:resource (spice-object :account (account-id 4))
                  :permission :read
@@ -458,7 +459,7 @@
               "reverse scans resume correctly across page boundaries"))))))
 
 (deftest recursive-cursor-falls-back-to-exact-snapshot-after-relevant-write-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [token-key "recursive-historical-cache000000"
           cached-client (core/make-client conn {:security-key token-key
                                                 :source-lifecycle
@@ -503,7 +504,7 @@
             "a new enumeration observes the relationship write")))))
 
 (deftest exact-cursor-fallback-never-violates-newer-freshness-floor-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client
                   conn
                   {:security-key "recursive-freshness-floor0000000"})
@@ -556,7 +557,7 @@
   ;; Continuation proofs are dependency-scoped — schema stamp plus the
   ;; closure's relation stamps — so transactions touching nothing in the
   ;; {reader, parent} closure leave the proof equal and continue on current.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client
                   conn
                   {:security-key "recursive-unrelated0000000000000"})
@@ -603,13 +604,13 @@
                 (binding [engine/*recursive-traversal-stats* fresh-stats]
                   (eacl/lookup-resources client query))]
             (is (= (:data page1) (:data fresh-page1)))
-            (is (true? (:cached? fresh-page1))
+            (is (= (not orchestration/*qualified-authorization-enabled?*) (:cached? fresh-page1))
                 "the completed demand answer is reusable under the unchanged scalar proof")
-            (is (zero? (get @fresh-stats :derived-grants 0))
+            (is (= (not orchestration/*qualified-authorization-enabled?*) (zero? (get @fresh-stats :derived-grants 0)))
                 "a managed answer hit performs no recursive traversal")))))))
 
 (deftest recursive-denotations-are-client-private-across-clients-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [token-key "recursive-namespace-isolation000"
           client-a
           (core/make-client
@@ -653,7 +654,7 @@
               "an uncached repeat re-derives exactly the same bounded work"))))))
 
 (deftest reverse-continuation-side-state-is-bounded-and-private-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client
           (core/make-client
            conn
@@ -676,7 +677,7 @@
         (is (<= (:entries stats) (:max-entries stats)))))))
 
 (deftest recursive-cursor-remains-on-exact-snapshot-when-live-objects-disappear-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client conn {:security-key "recursive-deleted-boundary000000"})
           subject (spice-object :user (user-id 0))
           query {:subject subject
@@ -709,7 +710,7 @@
             (is (nil? (get-in recovered [:page-info :cursor-recovery])))))))))
 
 (deftest alternate-cache-resolves-its-own-denotation-for-a-foreign-cursor-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [token-key "recursive-shared-proof0000000000"
           first-client
           (core/make-client
@@ -739,7 +740,7 @@
             "an alternate cache resolves the complete denotation once instead of trusting foreign state")))))
 
 (deftest recursive-continuation-does-not-retain-opaque-runtime-values-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client
           (core/make-client
            conn
@@ -776,7 +777,7 @@
             "forward scans resume correctly across page boundaries")))))
 
 (deftest uncached-client-safely-serves-a-borrowed-cursor-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [token-key "recursive-rejected-cache00000000"
           client (core/make-client conn {:security-key token-key
                                          :source-lifecycle
@@ -804,7 +805,7 @@
             "it re-resolves the denotation instead of trusting any cached state")))))
 
 (deftest complete-recursive-enumeration-is-equal-with-or-without-cache-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [token-key "recursive-linear-walk00000000000"
           cached-client (core/make-client conn {:security-key token-key})
           query {:subject (spice-object :user (user-id 0))
@@ -823,7 +824,7 @@
             "denotation reuse does no more work than uncached recomputation")))))
 
 (deftest page-token-without-configured-ttl-remains-valid-past-five-minutes-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client
                   conn
                   {:security-key "recursive-no-expiry0000000000000"})
@@ -849,7 +850,7 @@
   ;; cursor-dependency-validity: expiry is a computed input of the verified
   ;; continuation decision, rejected by the kernel rather than pre-empted at
   ;; decode. The public error is unchanged.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client
                   conn
                   {:security-key "recursive-expired000000000000000"

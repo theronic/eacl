@@ -20,7 +20,7 @@
 (deftest protocol-completeness-tests
   ;; Audit §13: write-relationship!/delete-relationship! were declared on the
   ;; protocol but unimplemented -> AbstractMethodError.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (spiceomic/make-client
                   conn
                   {})
@@ -71,7 +71,7 @@
                  (:tree-root response))))))))
 
 (deftest strict-object-id-resolution-tests
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (spiceomic/make-client conn {})]
       (eacl/write-schema! client "definition user {}
          definition account {
@@ -113,7 +113,7 @@
             (is (= {:type :user :id "ghost-user"} (:object (ex-data e)))))))))
 
   (testing "make-client config validation (audit §5)"
-    (with-mem-conn [conn schema/v7-schema]
+    (with-mem-conn [conn schema/v8-schema]
       (let [setup (spiceomic/make-client conn {})]
         (eacl/write-schema! setup "definition user {}
            definition account {
@@ -158,7 +158,7 @@
            (spice-object :team "dev-team" :member)))))
 
 (deftest spicedb-tests
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (testing "->user means (partial spice-object :user). Creates a SpiceObject record with {:keys [type id relation]}"
       (def my-user (->user "ben"))
       (def joe's-user (->user "joe"))
@@ -574,7 +574,7 @@
 ;; todo: test that shows behaviour of read-relationships when subject or resource is missing.
 
 (deftest consistency-selection-tests
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (spiceomic/make-client
                   conn
                   {})]

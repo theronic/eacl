@@ -10,6 +10,7 @@
    [datomic.api :as d]
    [datascript.core :as ds]
    [eacl.cache :as shared-cache]
+   [eacl.client.orchestration :as orchestration]
    [eacl.core :as eacl]
    [eacl.datahike.core :as datahike]
    [eacl.datascript.backend :as datascript-backend]
@@ -405,10 +406,10 @@
                     ["document-1" "document-2"]]
                    [:public-cache-enabled (ids selected)]
                    [:public-cache-disabled (ids fresh)]]}))))
-        (is (true? (:cached? selected))
-            "a completed demand answer lifts across an unrelated basis under the scalar proof")
+        (is (= (not orchestration/*qualified-authorization-enabled?*) (:cached? selected))
+            "qualified answers require an exact basis; legacy answers may lift under scalar proof")
         (is (= traversal-before-selected traversal-after-selected)
-            "the managed demand hit performs no indexed traversal"))
+            "retained structural data avoids another indexed traversal"))
       (assert-public-authorization!
        label
        cached
@@ -507,7 +508,7 @@
        calls)))
 
   (testing "Datomic"
-    (with-mem-conn [conn datomic-schema/v7-schema]
+    (with-mem-conn [conn datomic-schema/v8-schema]
       (let [calls (atom {})
             common
             {:security-key
@@ -902,7 +903,7 @@
       (assert-recursive-generated! client limited-clients)))
 
   (testing "Datomic"
-    (with-mem-conn [conn datomic-schema/v7-schema]
+    (with-mem-conn [conn datomic-schema/v8-schema]
       (let [common
             {:cache shared-cache/no-cache
              :security-key

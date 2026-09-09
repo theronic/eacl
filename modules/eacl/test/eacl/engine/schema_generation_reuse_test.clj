@@ -12,7 +12,7 @@
    :source {:backend :test
             :source-id :schema-generation-test
             :branch nil
-            :source-lifecycle "schema-generation-test/initial"}
+            :source-lifecycle #uuid "b55e43c8-6e18-5431-a7ad-d959b24c89b8"}
    :adapter {:backend :test
              :fingerprint :schema-generation-test-v1
              :identity-contract :immutable-v1

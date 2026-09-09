@@ -66,7 +66,7 @@
   (testing "the Datomic-only answer-kind registry is gone"
     (is (var-absent? 'eacl.datomic.core/answer-cache-kinds)))
   (testing "the write-only provider options are gone from client opts"
-    (with-mem-conn [conn schema/v7-schema]
+    (with-mem-conn [conn schema/v8-schema]
       (let [client (core/make-client conn {:security-key "audit-test0000000000000000000000"})]
         (is (not (contains? (:runtime client) :shared-cache-store)))
         (is (not (contains? (:runtime client) :lookup-cache-store)))))))

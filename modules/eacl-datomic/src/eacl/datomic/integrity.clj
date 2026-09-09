@@ -3,7 +3,9 @@
 
   Nothing in this namespace runs on EACL's authorization hot path. Callers
   choose when to pay for a database scan or a schema-version read."
-  (:require [eacl.client.orchestration :as orchestration]
+  (:require [eacl.datomic.qualifiers :as qualifiers]
+            [eacl.relationships.qualifier-integrity :as qualifier-integrity]
+            [eacl.client.orchestration :as orchestration]
             [eacl.core :as eacl]
             [eacl.datomic.impl :as impl]
             [eacl.datomic.impl.indexed :as indexed]
@@ -88,3 +90,13 @@
                       :batch-size batch-size})))
    (map #(impl/guard-schema-version db (repair-tx-data %))
         (partition-all batch-size (dangling-relationship-halves db)))))
+
+(defn qualifier-proof-input
+  "Captures offline qualifier, ownership, source, version, and Relation proof inputs."
+  [snapshot]
+  (qualifier-integrity/proof-input (qualifiers/read-api) snapshot))
+
+(defn qualifier-report
+  ([snapshot] (qualifier-report snapshot {}))
+  ([snapshot options]
+   (qualifier-integrity/report (qualifier-proof-input snapshot) options)))

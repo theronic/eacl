@@ -26,6 +26,9 @@
   scan at the canonical head (`fetch-values`), which is the preserved seam
   for any future concurrency change."
   (:require [eacl.backend.v8 :as backend]
+            [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.qualification :as qualification]
+            [eacl.relationships.edge :as edge]
             [eacl.request.counters :as request-counters]))
 
 (def default-physical-chunk-size 64)
@@ -42,6 +45,7 @@
 (def default-max-transitions 4000000)
 (def default-max-values 4000000)
 (def default-max-stack 1000000)
+(def default-max-evidence-size 16777216)
 
 (def ^:no-doc run-option-keys
   "Every reducer run option a traversal entry point forwards verbatim.
@@ -49,15 +53,16 @@
   page, count, probe, and least-path routes alike."
   [:adapter :fetch-fn :plan :subject-type :cut-point!
    :physical-chunk-size :sidecar-cap :result-sink :result-window-size
-   :max-admissions :max-commands :max-transitions :max-values :max-stack])
+   :max-admissions :max-commands :max-transitions :max-values :max-stack
+   :qualification :candidate-evidence-fn :result-policy :max-evidence-size])
 
 (defrecord ^:private ReducerState
-  [stack admitted admissions transitions commands fetched-values fetch-fn
-   sidecar sidecar-order sidecar-order-index sidecar-clock
-   current-sidecar-values sidecar-cap physical-chunk-size
-   max-admissions max-commands max-transitions max-values max-stack
-   maximum-sidecar-buffers maximum-sidecar-values maximum-stack discovered
-   base-discovered result-sink result-window-size result-index results])
+           [stack admitted admissions transitions commands fetched-values fetch-fn
+            sidecar sidecar-order sidecar-order-index sidecar-clock
+            current-sidecar-values sidecar-cap physical-chunk-size
+            max-admissions max-commands max-transitions max-values max-stack
+            maximum-sidecar-buffers maximum-sidecar-values maximum-stack discovered
+            base-discovered result-sink result-window-size result-index results qualified])
 
 (defn- replace-state
   "Constructs one immutable reducer-state revision. Keeping the mutable fields
@@ -80,7 +85,8 @@
    (.-max_transitions state) (.-max_values state) (.-max_stack state)
    maximum-sidecar-buffers maximum-sidecar-values maximum-stack discovered
    (.-base_discovered state)
-   (.-result_sink state) (.-result_window_size state) result-index results))
+   (.-result_sink state) (.-result_window_size state) result-index results
+   (.-qualified state)))
 
 (defn- schedule-state
   [^ReducerState state stack admitted admissions maximum-stack]
@@ -252,15 +258,99 @@
     (schedule-state state stack admitted (inc (:admissions state))
                     (max (:maximum-stack state) (count stack)))))
 
+(declare schedule-qualified)
+
+(defn- evidence-size
+  "Conservative retained-size units, including atom strings. Count shared
+   subtrees again so aliasing cannot understate the bound. Ordinary values
+   occupy no sparse evidence storage."
+  [value]
+  (if (true? value)
+    0
+    (loop [pending [(evidence/value value)] size 32]
+      (if (empty? pending)
+        size
+        (let [node (peek pending) pending (pop pending)]
+          (cond (string? node) (recur pending (+ size 16 (* 4 (count node))))
+                (vector? node) (recur (into pending node) (+ size 24 (* 8 (count node))))
+                :else (recur pending (+ size 8))))))))
+
+(defn- weighted-schedule?
+  [state residual item]
+  (when-let [qualified (:qualified state)]
+    (or (seq (:weights qualified)) (seq (:pending qualified))
+        (:revision residual) (:revision item)
+        (and item (not (true? (:evidence item true)))))))
+
 (defn- schedule-item
   "Specialized zero/one-successor admission without a temporary collection."
   [state residual item]
-  (if item
-    (let [id (work-id item)]
-      (if (contains? (:admitted state) id)
-        (commit-zero state residual)
-        (commit-one state residual item id)))
-    (commit-zero state residual)))
+  (if (weighted-schedule? state residual item)
+    (schedule-qualified state residual (when item [item]))
+    (if item
+      (let [id (work-id item)]
+        (if (contains? (:admitted state) id)
+          (commit-zero state residual)
+          (commit-one state residual item id)))
+      (commit-zero state residual))))
+
+(defn- queued-identity [item]
+  ;; A queued slot must not retain an obsolete prefix after coalescing. The
+  ;; pending table owns the sole latest work item and its evidence.
+  {:admission-id (work-id item)})
+
+(defn- schedule-qualified
+  "Stages monotone evidence updates before touching the admitted transient.
+   A queued identity keeps its position; only its latest prefix is executed.
+   Timeless true admissions need no retained evidence entry."
+  [state residual items]
+  (let [qualified (:qualified state)
+        pending (cond-> (:pending qualified)
+                  (:revision residual) (assoc (work-id residual) residual))
+        staged
+        (reduce
+         (fn [{:keys [weights pending new-ids queued changes weight-size] :as stage} item]
+           (if (nil? item)
+             stage
+             (let [incoming (evidence/throw-if-fault! (:evidence item true))
+                   id (work-id item)
+                   seen? (or (contains? (:admitted state) id) (contains? new-ids id))
+                   previous (if seen? (get weights id true) false)
+                   joined (evidence/combine :union previous incoming)]
+               (if (or (evidence/no? incoming) (= previous joined))
+                 stage
+                 (let [revision (+ (:admissions state) changes 1)
+                       item (cond-> (assoc item :revision revision)
+                              (or (evidence/has? joined) (not= joined incoming)) (dissoc :direct-evidence)
+                              (contains? item :bound-eid) (assoc :bound-eid nil)
+                              (true? joined) (dissoc :evidence)
+                              (not (true? joined)) (assoc :evidence joined))]
+                   {:weights (if (true? joined) (dissoc weights id) (assoc weights id joined))
+                    :pending (assoc pending id item)
+                    :new-ids (if seen? new-ids (conj new-ids id))
+                    :queued (if (contains? pending id) queued (conj queued id))
+                    :changes (inc changes)
+                    :weight-size (+ weight-size (evidence-size joined)
+                                    (- (if (contains? weights id) (evidence-size previous) 0)))})))))
+         {:weights (:weights qualified) :weight-size (:weight-size qualified)
+          :pending pending :new-ids #{} :queued [] :changes 0}
+         items)
+        depth (+ (count (:stack state)) (if residual 1 0) (count (:queued staged)))]
+    (when (> (+ (:admissions state) (:changes staged)) (:max-admissions state))
+      (limit-failure! :max-admissions state {:staged (:changes staged)}))
+    (when (> depth (:max-stack state))
+      (limit-failure! :max-stack state {:staged (count (:queued staged))}))
+    (when (> (+ (:weight-size staged) (:result-size qualified)) (:max-evidence-size qualified))
+      (limit-failure! :max-evidence-size state {:staged (:weight-size staged)}))
+    (let [stack (cond-> (:stack state)
+                  residual (conj (if (:revision residual) (queued-identity residual) residual)))
+          stack (into stack (map (fn [id] {:admission-id id})) (rseq (:queued staged)))
+          admitted (reduce conj! (:admitted state) (:new-ids staged))]
+      (assoc (schedule-state state stack admitted
+                             (+ (:admissions state) (:changes staged))
+                             (max (:maximum-stack state) depth))
+             :qualified (assoc qualified :weights (:weights staged) :pending (:pending staged)
+                               :weight-size (:weight-size staged))))))
 
 (defn ^:no-doc schedule
   "Admits fresh work exactly once and pushes it after the residual: the
@@ -273,39 +363,42 @@
   [{:keys [admitted] :as state} residual new-work]
   ;; Zero and one successor dominate live traces. They do not allocate the
   ;; batch-local transient set/vector used by the general fan-out oracle.
-  (let [items (seq new-work)]
-    (cond
-      (nil? items)
-      (commit-zero state residual)
+  (if (or (weighted-schedule? state residual nil)
+          (and (:qualified state) (some #(not (true? (:evidence % true))) new-work)))
+    (schedule-qualified state residual new-work)
+    (let [items (seq new-work)]
+      (cond
+        (nil? items)
+        (commit-zero state residual)
 
-      (nil? (next items))
-      (schedule-item state residual (first items))
+        (nil? (next items))
+        (schedule-item state residual (first items))
 
-      :else
-      (let [fresh
-            (loop [items items
-                   seen (transient #{})
-                   fresh (transient [])]
-              (if items
-                (let [item (first items)]
-                  (if (nil? item)
-                    (recur (next items) seen fresh)
-                    (let [id (work-id item)]
-                      (if (or (contains? admitted id)
-                              (contains? seen id))
-                        (recur (next items) seen fresh)
-                        (recur (next items) (conj! seen id)
-                               (conj! fresh [item id]))))))
-                (persistent! fresh)))
-            _ (check-schedule-limits! state residual (count fresh))
-            stack (cond-> (:stack state)
-                    residual (conj residual))
-            stack (into stack (map first) (rseq fresh))
-            admitted (reduce (fn [acc [_ id]] (conj! acc id))
-                             admitted fresh)]
-        (schedule-state state stack admitted
-                        (+ (:admissions state) (count fresh))
-                        (max (:maximum-stack state) (count stack)))))))
+        :else
+        (let [fresh
+              (loop [items items
+                     seen (transient #{})
+                     fresh (transient [])]
+                (if items
+                  (let [item (first items)]
+                    (if (nil? item)
+                      (recur (next items) seen fresh)
+                      (let [id (work-id item)]
+                        (if (or (contains? admitted id)
+                                (contains? seen id))
+                          (recur (next items) seen fresh)
+                          (recur (next items) (conj! seen id)
+                                 (conj! fresh [item id]))))))
+                  (persistent! fresh)))
+              _ (check-schedule-limits! state residual (count fresh))
+              stack (cond-> (:stack state)
+                      residual (conj residual))
+              stack (into stack (map first) (rseq fresh))
+              admitted (reduce (fn [acc [_ id]] (conj! acc id))
+                               admitted fresh)]
+          (schedule-state state stack admitted
+                          (+ (:admissions state) (count fresh))
+                          (max (:maximum-stack state) (count stack))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; One-value scan release with bounded disposable buffers
@@ -463,6 +556,10 @@
 
 (declare item-scan-descriptor)
 
+(defn- buffer-id [item]
+  (let [id (work-id item)]
+    (if-let [revision (:revision item)] [id revision] id)))
+
 (defn- release-one
   "Releases exactly one ordered scan value for `item`, preferring the
   retained buffer and refetching from the authoritative bound otherwise.
@@ -473,7 +570,7 @@
         ;; Sparse/empty endpoints never retain a buffer. Avoid constructing
         ;; and hashing a sidecar identity until either a buffer exists or this
         ;; fetch actually needs retention.
-        identity (when (pos? (count sidecar)) (work-id item))
+        identity (when (pos? (count sidecar)) (buffer-id item))
         entry (when identity (get sidecar identity))
         index (:index entry 0)]
     (if (and entry (< index (count (:values entry))))
@@ -482,8 +579,9 @@
             more? (:more-physical? entry)
             state (advance-buffer state identity entry next-index)]
         [state value (when (or (< next-index (count (:values entry))) more?)
-                       (assoc item :bound-eid value))])
-      (let [descriptor (or descriptor (item-scan-descriptor item))
+                       (assoc item :bound-eid (edge/endpoint value)))])
+      (let [descriptor (cond-> (or descriptor (item-scan-descriptor item))
+                         (:qualified state) (assoc :include-qualifier? true))
             [state values more?] (fetch-values state descriptor
                                                (:bound-eid item))]
         (if (zero? (count values))
@@ -493,11 +591,11 @@
                 retain? (and (pos? (:sidecar-cap state))
                              (or (< next-index (count values)) more?))
                 identity (if (and retain? (nil? identity))
-                           (work-id item)
+                           (buffer-id item)
                            identity)
                 state (retain-buffer state identity values next-index more?)]
             [state value (when (or (< next-index (count values)) more?)
-                           (assoc item :bound-eid value))]))))))
+                           (assoc item :bound-eid (edge/endpoint value)))]))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Transitions
@@ -574,6 +672,8 @@
         resource->subjects (backend/scan-invoker adapter :resource->subjects)]
     (fn [{:keys [operation bound-eid] :as descriptor}]
       (let [options (cond-> {:direction :asc}
+                      (true? (:include-qualifier? descriptor))
+                      (assoc :include-qualifier? true)
                       (:limit descriptor)
                       (assoc :limit (:limit descriptor))
                       bound-eid (assoc :bound-eid bound-eid
@@ -628,9 +728,26 @@
       (schedule-item state residual nil)
       ;; `value->successors` remains as a mutation-test seam. Production scan
       ;; kinds have exactly one successor and use the allocation-free path.
-      (if value->successors
-        (schedule state residual (value->successors value))
-        (schedule-item state residual (scan-successor item value))))))
+      (if-let [qualified (:qualified state)]
+        (let [relation (when (edge/qualifier-id value)
+                         (:relation-eid (or descriptor (item-scan-descriptor item))))
+              value-evidence (evidence/throw-if-fault!
+                              (qualification/qualify (:request qualified) relation value))
+              joined (evidence/combine :arrow (:evidence item true) value-evidence)
+              successor (when-not (evidence/no? joined)
+                          (cond-> (scan-successor item (edge/endpoint value))
+                            (not (true? joined)) (assoc :evidence joined)
+                            (and (not (evidence/has? joined))
+                                 (true? (:evidence item true))
+                                 (contains? #{:seed-relation :reverse-direct} (:kind item)))
+                            (assoc :direct-evidence
+                                   {:rule (:rule item) :evidence value-evidence
+                                    :resource-eid (if (= :seed-relation (:kind item))
+                                                    (edge/endpoint value) (:resource-eid item))})))]
+          (schedule-item state residual successor))
+        (if value->successors
+          (schedule state residual (value->successors value))
+          (schedule-item state residual (scan-successor item value)))))))
 
 (defn- emit
   [state eid]
@@ -665,6 +782,57 @@
     {:kind :grant :rule consumer :resource-eid eid}
     :arrow-permission
     {:kind :consumer :rule consumer :resource-eid eid :bound-eid nil}))
+
+(defn- inherit-evidence [item successors]
+  (let [value (:evidence item true)]
+    (if (true? value) successors
+        (map #(assoc % :evidence value) successors))))
+
+(defn- stage-result-evidence
+  "Bounds the emitted evidence pool before the collecting transient changes.
+   Window compaction discards annotations with the same backing-vector cut."
+  [state qualified eid value]
+  (let [retain? (and (not (true? value)) (not= :count (:result-sink state)))
+        entries (:result-evidence qualified)
+        entries (cond-> entries retain? (assoc eid value))
+        size (+ (:result-size qualified) (if retain? (evidence-size value) 0))
+        limit (:result-window-size state)
+        compact? (and (= :window (:result-sink state))
+                      (>= (inc (:result-index state)) limit)
+                      (> (- (inc (count (:results state))) (:result-index state)) limit))
+        entries (if compact?
+                  (select-keys entries (conj (subvec (:results state) limit) eid)) entries)
+        size (if compact? (reduce + 0 (map evidence-size (vals entries))) size)]
+    (when (> (+ size (:weight-size qualified)) (:max-evidence-size qualified))
+      (limit-failure! :max-evidence-size state {:staged size}))
+    (assoc qualified :result-evidence entries :result-size size)))
+
+(defn- emit-qualified
+  [state item eid]
+  (if (and (true? (:evidence item true)) (nil? (:revision item))
+           (or (not= :window (:result-sink state))
+               (empty? (get-in state [:qualified :result-evidence]))))
+    (emit state eid)
+    (if-let [qualified (:qualified state)]
+      (if (contains? (:processed qualified) eid)
+        state
+        (let [incoming (:evidence item true)
+              value (if (evidence/has? incoming)
+                      incoming
+                      (evidence/throw-if-fault! ((:candidate-evidence-fn qualified) eid item)))
+              conditional? (= :conditional-permission (evidence/permissionship value))
+              include? (or (evidence/has? value)
+                           (and (= :detailed (:result-policy qualified)) conditional?))
+            ;; Only revisitable roots need a delivered/filtered identity.
+              qualified (cond-> qualified
+                          (:revision item) (update :processed conj eid)
+                          (and include? conditional?)
+                          (-> (update :conditional-count inc)
+                              (assoc :last-conditional-at (inc (:discovered state)))))
+              qualified (if include? (stage-result-evidence state qualified eid value) qualified)
+              state (if include? (emit state eid) state)]
+          (assoc state :qualified qualified)))
+      (emit state eid))))
 
 (defn- grant-successors
   "Consumers of a grant at `node` for entity `eid`: self-permission
@@ -732,8 +900,8 @@
       (let [node (:node rule)
             eid (:resource-eid item)
             state (cond-> state
-                    (= node root) (emit eid))]
-        (schedule state nil (grant-successors plan node eid)))
+                    (= node root) (emit-qualified item eid))]
+        (schedule state nil (inherit-evidence item (grant-successors plan node eid))))
 
       :consumer
       (scan-transition state item nil nil)
@@ -741,8 +909,9 @@
       ;; ---- reverse ----
       :reverse-goal
       (schedule state nil
-                (reverse-goal-work plan subject-type (:node rule)
-                                   (:resource-eid item)))
+                (inherit-evidence item
+                                  (reverse-goal-work plan subject-type (:node rule)
+                                                     (:resource-eid item))))
 
       :reverse-direct
       (scan-transition state item nil nil)
@@ -757,7 +926,7 @@
       (scan-transition state item nil nil)
 
       :reverse-subject
-      (emit state (:subject-eid item)))))
+      (emit-qualified state item (:subject-eid item)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Entry points
@@ -769,6 +938,7 @@
   sinks do not construct a full result history. Limits are checked before
   their transition commits."
   [{:keys [adapter fetch-fn physical-chunk-size sidecar-cap result-sink
+           qualification candidate-evidence-fn result-policy max-evidence-size
            result-window-size
            max-admissions max-commands max-transitions
            max-values max-stack]
@@ -779,7 +949,15 @@
          max-transitions default-max-transitions
          max-values default-max-values
          max-stack default-max-stack
-         result-sink :collect}}]
+         result-sink :collect max-evidence-size default-max-evidence-size}
+    :as options}]
+  (when (and qualification (not (fn? candidate-evidence-fn)))
+    (throw (ex-info "Qualified discovery requires complete candidate evidence."
+                    {:type :eacl.reducer/missing-candidate-evaluator})))
+  (when (and (contains? options :result-policy)
+             (not (contains? #{:definite :detailed} result-policy)))
+    (throw (ex-info "Invalid discovery result policy."
+                    {:type :eacl.reducer/invalid-result-policy})))
   (map->ReducerState
    {:stack []
     :admitted (transient #{})
@@ -808,6 +986,13 @@
     :result-sink result-sink
     :result-window-size result-window-size
     :result-index 0
+    :qualified (when qualification
+                 {:request qualification :candidate-evidence-fn candidate-evidence-fn
+                  :scope (delay (qualification/exact-reuse-identity qualification))
+                  :result-policy (or result-policy :definite)
+                  :weights {} :weight-size 0 :max-evidence-size max-evidence-size
+                  :pending {} :processed #{} :conditional-count 0
+                  :result-evidence {} :result-size 0})
     :results (case result-sink
                :collect (transient [])
                :window []
@@ -830,8 +1015,11 @@
                           {:max-transitions (:max-transitions state)}))
         (when cut-point! (cut-point! state))
         (let [item (peek (:stack state))
+              id (:admission-id item)
+              item (if id (get-in state [:qualified :pending id] item) item)
               state (transition-state state (pop (:stack state))
-                                      (inc (:transitions state)))]
+                                      (inc (:transitions state)))
+              state (if id (update-in state [:qualified :pending] dissoc id) state)]
           (recur (step context state item)))))))
 
 (defn ^:no-doc finish
@@ -861,6 +1049,11 @@
                        :completed (- (count admitted)
                                      (count (:stack state))))
                 (dissoc :fetch-fn))
+      (:qualified state)
+      (assoc :result-evidence (select-keys (get-in state [:qualified :result-evidence]) results)
+             :definite-count (- (:discovered state) (get-in state [:qualified :conditional-count]))
+             :conditional-count (get-in state [:qualified :conditional-count])
+             :last-conditional? (= (:discovered state) (get-in state [:qualified :last-conditional-at])))
       (zero? (:base-discovered state)) (dissoc :base-discovered))))
 
 ;; ---------------------------------------------------------------------------
@@ -879,7 +1072,12 @@
   identities, stack, deterministic counters, and the scalar discovered
   count — no delivered results, no buffers, no configuration."
   [finished-state]
-  (select-keys finished-state semantic-state-keys))
+  (cond-> (select-keys finished-state semantic-state-keys)
+    (:qualified finished-state)
+    (assoc :qualified (-> (:qualified finished-state)
+                          (select-keys [:weights :weight-size :pending :processed :conditional-count
+                                        :last-conditional-at :result-policy])
+                          (assoc :scope @(get-in finished-state [:qualified :scope]))))))
 
 (def ^:dynamic *observer-stats*
   "When bound to an atom, each completed run bulk-reports its work deltas
@@ -933,6 +1131,17 @@
                        (:fetched-values before 0))})
   final-state)
 
+(defn checkpoint-scope-valid?
+  "A qualified checkpoint is reusable only in the same complete request
+   scope and result policy. Ordinary checkpoints carry no qualified state."
+  [options checkpoint-state]
+  (let [qualified (:qualified checkpoint-state)]
+    (and (= (boolean qualified) (boolean (:qualification options)))
+         (or (nil? qualified)
+             (and (= (:scope qualified)
+                     (qualification/exact-reuse-identity (:qualification options)))
+                  (= (:result-policy qualified) (:result-policy options :definite)))))))
+
 (defn resume
   "Continues a history-free state to `target` absolute discovered results
   under fresh runtime options. Emissions from before the checkpoint are
@@ -940,10 +1149,16 @@
   [{:keys [plan subject-type target cut-point!] :as options}
    checkpoint-state]
   (let [context {:plan plan :root (:root plan) :subject-type subject-type}
+        qualified (:qualified checkpoint-state)
+        _ (when-not (checkpoint-scope-valid? options checkpoint-state)
+            (throw (ex-info "Qualified discovery checkpoint scope changed."
+                            {:type :eacl.reducer/checkpoint-scope-mismatch})))
         state (-> (initial-state options)
                   (merge (select-keys checkpoint-state semantic-state-keys))
                   (assoc :admitted (transient (:admitted checkpoint-state))
-                         :base-discovered (:discovered checkpoint-state)))
+                         :base-discovered (:discovered checkpoint-state))
+                  (cond-> qualified
+                    (update :qualified merge (dissoc qualified :scope))))
         before (select-keys state
                             [:admissions :commands :transitions
                              :fetched-values])]

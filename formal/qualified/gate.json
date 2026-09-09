@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "models": [
+    "QualifiedEvidence.dfy",
+    "QualifiedTemporal.dfy",
+    "QualifiedReuse.dfy"
+  ],
+  "verificationTimeLimitSeconds": 15,
+  "proofResourceLimit": 5000000
+}

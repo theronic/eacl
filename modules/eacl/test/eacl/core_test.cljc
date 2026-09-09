@@ -8,6 +8,39 @@
   (swap! calls conj [operation request])
   response)
 
+(deftest boolean-compatibility-requires-definite-grants-and-preserves-operational-errors
+  (let [respond (atom (constantly nil))
+        target (reify eacl/IAuthorizationReader
+                 (-check-permission [_ _] (@respond)))
+        requests [#(eacl/can? target {})
+                  #(eacl/can? target {} :view {})
+                  #(eacl/can? target {} :view {} :fully-consistent)]]
+    (doseq [[decision expected]
+            [[{:allowed? true} true]
+             [{:allowed? true :permissionship :has-permission} true]
+             [{:allowed? false :permissionship :no-permission} false]
+             [{:allowed? false :permissionship :conditional-permission} false]
+             [{:allowed? true :permissionship :conditional-permission} false]
+             [{:allowed? :conditional} false]
+             [{:allowed? nil} false]]
+            request requests]
+      (reset! respond (constantly decision))
+      (is (= expected (request))))
+    (doseq [request requests]
+      (reset! respond #(throw (ex-info "Qualified failure"
+                                       {:type :eacl.authorization/evaluation-failure})))
+      (is (false? (request))))
+    (doseq [type [:eacl.execution/cancelled :eacl.execution/deadline-exceeded
+                  :eacl.execution/resource-limit-exceeded :eacl.caveat/invalid
+                  :backend/failure]
+            request requests]
+      (let [error (ex-info "Must propagate" {:type type})]
+        (reset! respond #(throw error))
+        (is (identical? error
+                        (try (request) nil
+                             (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) caught
+                               caught))))))))
+
 (defrecord RecordingSnapshot [calls released basis token]
   eacl/IAuthorizationReader
   (-check-permission [_ request]

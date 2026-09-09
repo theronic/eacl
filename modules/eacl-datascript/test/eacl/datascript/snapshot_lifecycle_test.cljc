@@ -31,7 +31,9 @@
 (defn- fixture
   []
   (let [conn (datascript/create-conn)
-        client (datascript/make-client conn {:cache cache/no-cache})
+        ;; These contracts isolate basis/lifecycle changes. Dedicated qualified
+        ;; cursor tests exercise differing captured times.
+        client (datascript/make-client conn {:cache cache/no-cache :clock (constantly 100)})
         user (eacl/spice-object :user "user")
         account (eacl/spice-object :account "account")]
     (eacl/write-schema! client schema)
@@ -136,7 +138,7 @@
      :basis-kind :ordinary
      :revision 1
      :exact-locator 1
-    :backend-snapshot-id {:runtime-lifecycle-test 1}}
+     :backend-snapshot-id {:runtime-lifecycle-test 1}}
     :adapter-fingerprint :runtime-lifecycle-test
     :identity-contract :runtime-lifecycle-test}})
 
@@ -256,10 +258,11 @@
                           :permission :admin
                           :cache? false})})))
         counts (request-counters/snapshot ledger)]
-    (is (= {:allowed? true
-            :cached? false
-            :cache-basis nil
-            :evaluation :demand}
+    (is (= (cond-> {:allowed? true
+                    :cached? false
+                    :cache-basis nil
+                    :evaluation :demand}
+             orchestration/*qualified-authorization-enabled?* (assoc :permissionship :has-permission))
            (:uncached-decision value)))
     (is (= [false true]
            (mapv :cached? (:cached-decisions value))))
@@ -316,7 +319,7 @@
                  conn
                  #(eacl/write-schema! acl schema))]
     (is (eacl/acl? acl))
-    (is (zero? (:db-calls construction)))
+    (is (= 1 (:db-calls construction)) "One bounded storage admission read.")
     (is (empty? (:provider-calls construction)))
     (is (= :eacl/unsupported-capability
            (:type (ex-data (:failure failure)))))
@@ -484,7 +487,7 @@
            (:forbidden-operation-errors value)))
     (is (empty?
          (set/intersection
-          #{:conn :writer :selected-snapshot
+          #{:conn :writer :qualified-writer :transact! :selected-snapshot
             :acquire-current! :acquire-authoritative!
             :acquire-at-least! :acquire-exact!}
           (set (filter keyword? reachable)))))
@@ -492,7 +495,7 @@
          (fn [value]
            (some #(identical? value %) forbidden-identities))
          reachable))
-    (is (= #{:backend-id :schema :impl
+    (is (= #{:backend-id :schema :impl :entid :qualified-plan :qualified-publication-capability
              :basis-adapter :basis-adapter-config-keys
              :native-with :normalize-report-datom
              :schema-storage-datom? :transaction-datom?
@@ -521,7 +524,7 @@
       (is (true? (eacl/can? selected user :admin account)))
       (is (pos? (+ (get (datascript/cache-stats client) :exact-entries 0)
                    (get (datascript/cache-stats client) :managed-entries 0))))
-      (datascript/expire-cache! client "rotated-lifecycle")
+      (datascript/expire-cache! client #uuid "66e4b5a3-749b-5561-a843-f59a26a2aaab")
       (is (zero? (+ (get (datascript/cache-stats client) :exact-entries 0)
                     (get (datascript/cache-stats client) :managed-entries 0))))
       (is (true? (eacl/can? selected user :admin account))
@@ -631,7 +634,7 @@
      [source/source-lifecycle
       (fn [basis-source]
         (when (compare-and-set! rotated? false true)
-          (datascript/expire-cache! client "selection-race-l1"))
+          (datascript/expire-cache! client #uuid "8eb216ce-8667-5870-b4c7-6e2ce28ea810"))
         (original-source-lifecycle basis-source))
       request-context/make-context
       (fn [input]
@@ -641,8 +644,8 @@
     (let [after (runtime-cache-lifecycle client)
           captured-runtime (:runtime @context-input)]
       (is @rotated?)
-      (is (= "selection-race-l1" (:source-lifecycle after)))
-      (is (= "selection-race-l1"
+      (is (= #uuid "8eb216ce-8667-5870-b4c7-6e2ce28ea810" (:source-lifecycle after)))
+      (is (= #uuid "8eb216ce-8667-5870-b4c7-6e2ce28ea810"
              (get-in @context-input
                      [:basis-identity :source-lifecycle])))
       (is (identical? (:basis-cache-store after)
@@ -715,9 +718,9 @@
         client
         (datascript/make-client conn {:cache {:max-entries 16}})
         before (runtime-cache-lifecycle client)]
-    (datascript/expire-cache! client "full-rotation-l1")
+    (datascript/expire-cache! client #uuid "f3cda585-dac4-5036-bfc9-7381248b16c9")
     (let [after (runtime-cache-lifecycle client)]
-      (is (= "full-rotation-l1" (:source-lifecycle after)))
+      (is (= #uuid "f3cda585-dac4-5036-bfc9-7381248b16c9" (:source-lifecycle after)))
       (is (not (identical? (:source-incarnation before)
                            (:source-incarnation after))))
       (doseq [[child old-value] (lifecycle-children before)]
@@ -733,7 +736,7 @@
         context
         (assoc (late-publication-context (:source-lifecycle before))
                :cache-lifecycle old-cache-lifecycle)]
-    (datascript/expire-cache! client "late-publication-l1")
+    (datascript/expire-cache! client #uuid "0cf237e8-c71b-5b5d-9d48-e8e64f70f4d3")
     (is (= true
            (:value
             (cache/resolve-basis!
@@ -812,7 +815,7 @@
         error
         (error-data
          #(orchestration/restore-cache-snapshot!
-           client (assoc snapshot :format :eacl.cache/basis-snapshot-v1)
+           client (assoc snapshot :format :eacl.cache/unknown-future-format)
            bounds))]
     (is (= :eacl/incompatible-cache-snapshot (:type error)))
     (is (identical? before (runtime-cache-lifecycle client)))))
@@ -966,11 +969,13 @@
         (datascript/make-client
          conn
          {:cache {:max-entries 32}
+          :cursor-ttl-seconds 3600
           :aggregate-limits {:candidate-window 10}})
         strict
         (datascript/make-client
          conn
          {:cache {:max-entries 32}
+          :cursor-ttl-seconds 3600
           :aggregate-limits {:candidate-window 2}})
         query
         {:resource/type :document
@@ -1014,18 +1019,24 @@
         before (runtime-cache-lifecycle client)
         restore-calls (atom 0)
         intervening (atom nil)
-        original-restore cache/restore-basis-snapshot!
+        ;; Capture the CLJS arity implementation: its dispatch wrapper consults
+        ;; the redefined global var and would recursively call this mock.
+        original-restore #?(:clj cache/restore-basis-snapshot!
+                            :cljs (.-cljs$core$IFn$_invoke$arity$4 cache/restore-basis-snapshot!))
         result
         (with-redefs
          [cache/restore-basis-snapshot!
-          (fn [store candidate-snapshot candidate-bounds]
-            (swap! restore-calls inc)
-            (let [result
-                  (original-restore
-                   store candidate-snapshot candidate-bounds)]
-              (orchestration/clear-answer-cache! client)
-              (reset! intervening (runtime-cache-lifecycle client))
-              result))]
+          (fn
+            ([store candidate-snapshot candidate-bounds]
+             (original-restore store candidate-snapshot candidate-bounds nil))
+            ([store candidate-snapshot candidate-bounds expected-lineage]
+             (swap! restore-calls inc)
+             (let [result
+                   (original-restore
+                    store candidate-snapshot candidate-bounds expected-lineage)]
+               (orchestration/clear-answer-cache! client)
+               (reset! intervening (runtime-cache-lifecycle client))
+               result)))]
           (orchestration/restore-cache-snapshot! client snapshot bounds))
         after (runtime-cache-lifecycle client)]
     (is (= {:restored? true :entry-count 0} result))
@@ -1051,7 +1062,7 @@
     (try
       (orchestration/clear-answer-cache! client)
       (orchestration/restore-cache-snapshot! client snapshot bounds)
-      (datascript/expire-cache! client "telemetry-disabled-lifecycle")
+      (datascript/expire-cache! client #uuid "2e21a161-0f89-5bbd-885b-1a19293e073c")
       (is (zero? @observer-mutations)
           "disabled telemetry performs no cumulative observer mutation")
       (let [stats (datascript/cache-stats client)]
@@ -1074,7 +1085,9 @@
                 result
                 (cache/resolve-basis!
                  store
-                 (late-publication-context (:source-lifecycle lifecycle))
+                 (update-in (late-publication-context (:source-lifecycle lifecycle))
+                            [:exact-basis-key :basis-identity]
+                            merge (source/source-scope (:source client)))
                  {:operation :can? :id oversized-id}
                  (constantly true))]
             (is (true? (:value result)))
@@ -1100,7 +1113,7 @@
     (publish!)
     ;; Full expiry has the same detached-store accounting obligation.
     (is (nil? (datascript/expire-cache!
-               client "oversized-key-lifecycle-expiry")))
+               client #uuid "8afe5f8c-0215-589e-8025-08ca105775be")))
     (publish!)
     (is (nil? (orchestration/clear-answer-cache! client)))
     (is (zero? (:entries
@@ -1133,7 +1146,7 @@
                     (cache/basis-cache-stats after-store))))
         (cache/record-proof-diagnostic! after-store diagnostic)
         (is (= [diagnostic] @reports)))
-      (datascript/expire-cache! client "proof-health-full-expiry")
+      (datascript/expire-cache! client #uuid "3e124ed0-8991-5234-a3d9-0fa3a492f1bb")
       (is (false? (:managed-lifting-disabled?
                    (cache/basis-cache-stats
                     (:basis-cache-store
@@ -1172,18 +1185,24 @@
         winner (atom nil)
         source-lifecycle
         (:source-lifecycle (runtime-cache-lifecycle client))
-        original-restore cache/restore-basis-snapshot!
+        ;; Capture the CLJS arity implementation: its dispatch wrapper consults
+        ;; the redefined global var and would recursively call this mock.
+        original-restore #?(:clj cache/restore-basis-snapshot!
+                            :cljs (.-cljs$core$IFn$_invoke$arity$4 cache/restore-basis-snapshot!))
         error
         (with-redefs
          [cache/restore-basis-snapshot!
-          (fn [store candidate-snapshot candidate-bounds]
-            (swap! restore-calls inc)
-            (let [result
-                  (original-restore
-                   store candidate-snapshot candidate-bounds)]
-              (datascript/expire-cache! client source-lifecycle)
-              (reset! winner (runtime-cache-lifecycle client))
-              result))]
+          (fn
+            ([store candidate-snapshot candidate-bounds]
+             (original-restore store candidate-snapshot candidate-bounds nil))
+            ([store candidate-snapshot candidate-bounds expected-lineage]
+             (swap! restore-calls inc)
+             (let [result
+                   (original-restore
+                    store candidate-snapshot candidate-bounds expected-lineage)]
+               (datascript/expire-cache! client source-lifecycle)
+               (reset! winner (runtime-cache-lifecycle client))
+               result)))]
           (error-data
            #(orchestration/restore-cache-snapshot!
              client snapshot bounds)))]
@@ -1457,7 +1476,7 @@
       (let [error (ex-info "injected foreign failure"
                            {:type :test/foreign-failure})]
         (with-redefs
-         [engine/can? (fn [& _] (throw error))]
+         [engine/check-evidence (fn [& _] (throw error))]
           (assert-one-release!
            (observed-failure
             conn #(eacl/can? client user :admin account))
@@ -1466,7 +1485,7 @@
       (let [token (eacl/cancellation-token)]
         (with-redefs
          [execution/check!
-         (fail-execution-stage
+          (fail-execution-stage
            :consistency-selected
            (ex-info
             "EACL authorization execution was cancelled."
@@ -1501,7 +1520,7 @@
             (datascript/make-client conn {:cache {}})]
         (with-redefs
          [execution/check!
-         (fail-execution-stage
+          (fail-execution-stage
            :cache-publication
            (ex-info "injected cache publication failure"
                     {:type :test/cache-publication-failure}))]

@@ -54,7 +54,7 @@ cursor identity.
 The public clients wrap that edge in their own authenticated-encryption envelopes and
 pin the exact basis, query scope and schema generation there: the Datomic
 client's `eacl4_` AEAD page token and the shared Datahike/DataScript
-client's `eacl_c5_` Relay envelope (`eacl.relay`, `eacl.cursor`). Their
+client's `eacl_c6_` Relay envelope (`eacl.relay`, `eacl.cursor`). Their
 rejections surface under the public `:eacl.pagination/*` keys
 (`invalid-cursor`, `stale-cursor`, `wrong-cursor-kind`,
 `complete-evaluation-required`) and their limits under
@@ -130,11 +130,14 @@ the standalone token uses the `:eacl.page/*` keys in parentheses:
 Keys for the standalone token: supply `:security-key` (≥ 32 bytes); the
 process-local random default is warned about and does not survive restarts
 or load balancing. The public clients take their key material from their
-own client options (`:security-key` / page-token keyrings). Public portable
+own client options (`:security-key`, `:security-keyring`, or the live
+`:security-keyring-controller`). Public portable
 cursors use random 96-bit nonces with independently derived AES-256-CTR and
 HMAC-SHA-256 keys; rotate an authenticated-encryption key before 2^32 cursor
-encryptions, retaining an old verification key only for the intended cursor
-lifetime. EACL does not maintain the invocation count.
+encryptions. Default cursors never expire: retain their old keys indefinitely
+for lossless resume. A finite TTL applies only to newly issued cursors. EACL
+does not maintain the invocation count. Follow the [live rotation runbook](security-keyrings.md)
+to distribute before activation and retire only after the required overlap.
 
 ## Point checks
 

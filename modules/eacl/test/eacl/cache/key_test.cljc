@@ -18,7 +18,7 @@
     :backend-snapshot-id {:basis 19}}})
 
 (deftest domain-key-is-versioned-and-opaque
-  (is (= [:eacl.cache/key-v2 :continuation [:tenant-a 7 :cursor-3]]
+  (is (= [:eacl.cache/key-v3 :continuation [:tenant-a 7 :cursor-3]]
          (cache-key/domain-key :continuation [:tenant-a 7 :cursor-3])))
   (doseq [bad-domain [nil "continuation" 1]
           :let [error (try
@@ -41,7 +41,7 @@
         exact-subproblem
         (cache-key/exact-denotation-key
          (assoc base-identity :tier :denotation))]
-    (is (= :eacl.cache/key-v2 (first exact-answer)))
+    (is (= :eacl.cache/key-v3 (first exact-answer)))
     (is (= 6 (count (nth exact-answer 2))))
     (is (= :exact (second (nth exact-answer 2))))
     (is (= :managed (second (nth managed-answer 2))))

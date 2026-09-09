@@ -398,16 +398,16 @@
 
 (def ^:private test-lineage
   {:source-scope
-   {:backend :datascript :source-id "continuation-test" :branch nil}
-   :source-lifecycle "continuation-test"})
+   {:backend :datascript :source-id #uuid "e0ce343f-f75d-56e5-a83a-8ed9ae28fc34" :branch nil}
+   :source-lifecycle #uuid "e0ce343f-f75d-56e5-a83a-8ed9ae28fc34"})
 
 (defn- identity-for-test-adapter
   [adapter]
   (merge
    {:backend :datascript
-    :source-id "continuation-test"
+    :source-id #uuid "e0ce343f-f75d-56e5-a83a-8ed9ae28fc34"
     :branch nil
-    :source-lifecycle "continuation-test"
+    :source-lifecycle #uuid "e0ce343f-f75d-56e5-a83a-8ed9ae28fc34"
     :basis-kind (backend/invoke adapter :basis-kind)
     :backend-snapshot-id (backend/invoke adapter :snapshot-id)}
    (backend/invoke adapter :native-revision)))
@@ -415,7 +415,7 @@
 (deftest checkpoint-key-is-frame-scoped-not-revision-scoped-test
   (let [{:keys [fixture conn client]}
         (seeded-caching-client :folder-chain)
-        opts (adapter-opts conn {:source-lifecycle "continuation-test"})
+        opts (adapter-opts conn {:source-lifecycle #uuid "e0ce343f-f75d-56e5-a83a-8ed9ae28fc34"})
         root [(:resource-type fixture) (:permission fixture)]
         adapter-1 (datascript-backend/basis-adapter (ds/db conn) opts)
         identity-1 (identity-for-test-adapter adapter-1)
@@ -472,7 +472,7 @@
   ;; are distinct JVM objects; the flat derived-artifact LRU must return one plan.
   (let [{:keys [conn]} (seed-fixture-client!
                         (fixture-for :explorer-acyclic))
-        opts (adapter-opts conn {:source-lifecycle "plan-rewrap-test"})
+        opts (adapter-opts conn {:source-lifecycle #uuid "0f660e5b-97fc-5a25-beb4-1eb086e38666"})
         stable-plan v8/stable-plan
         registry (derived-schema/store)
         adapter-1 (datascript-backend/basis-adapter (ds/db conn) opts)
@@ -482,7 +482,7 @@
            {:backend :datascript
             :source-id :plan-rewrap-test
             :branch nil
-            :source-lifecycle "plan-rewrap-test"
+            :source-lifecycle #uuid "0f660e5b-97fc-5a25-beb4-1eb086e38666"
             :basis-kind (backend/invoke adapter :basis-kind)
             :backend-snapshot-id (backend/invoke adapter :snapshot-id)}
            (backend/invoke adapter :native-revision)))
@@ -509,7 +509,7 @@
                             (fixture-for :explorer-acyclic))
         {client-r :client} (seed-fixture-client!
                             (fixture-for :explorer-recursive))]
-    (is (= "eacl/initial"
+    (is (= #uuid "00000000-0000-0000-0000-000000000000"
            (get-in client-a [:runtime :source-lifecycle])
            (get-in client-r [:runtime :source-lifecycle])))))
 
@@ -1027,3 +1027,25 @@
         "keyset pages compose exactly with no server-side state")
     (is (= puts-before (:puts (continuation/stats store)))
         "acyclic pagination publishes nothing to the continuation store")))
+
+(deftest checkpoint-state-is-partitioned-and-validated-by-series-key
+  (let [{:keys [conn]} (seed-fixture-client! (fixture-for :explorer-acyclic))
+        adapter (datascript-backend/basis-adapter (ds/db conn) (adapter-opts conn {}))
+        store (continuation/make-store {})
+        context (fn [read-kid mint-kid]
+                  (continuation/private-context
+                   store adapter :lookup-resources {:query {:q 1}}
+                   {:request-lineage test-lineage :security-kid read-kid :minting-security-kid mint-kid}))
+        old (context :old :old) new (context :new :new) transition (context :old :new)
+        checkpoint {:ordinal 2 :boundary 42 :pending [7] :state {:transitions 10 :admitted #{1 2} :stack []}}]
+    ((:put! old) [:k] checkpoint)
+    (is (= checkpoint (dissoc ((:get old) [:k]) :security-kid)))
+    (is (nil? ((:get new) [:k])))
+    (is (= checkpoint (dissoc ((:get transition) [:k]) :security-kid)))
+    ((:put! transition) [:k] checkpoint)
+    (is (= checkpoint (dissoc ((:get new) [:k]) :security-kid)))
+    (is (= #{:old :new} (set (map (comp :security-kid second) (lru/entries (:storage store))))))
+    (let [[key value] (first (filter #(= :old (:security-kid (second %))) (lru/entries (:storage store))))]
+      (lru/replace-if! (:storage store) key value (assoc value :security-kid :new))
+      (is (nil? ((:get old) [:k]))))
+    (is (= 1 (get-in (continuation/stats store) [:miss-reasons :security-key-mismatch])))))

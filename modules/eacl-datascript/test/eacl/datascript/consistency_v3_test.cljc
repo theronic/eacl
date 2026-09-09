@@ -5,6 +5,7 @@
             [eacl.backend.v8 :as backend]
             [eacl.cache :as cache]
             [eacl.contract-support :as contract]
+            [eacl.client.orchestration :as orchestration]
             [eacl.core :as eacl]
             [eacl.datascript.backend :as datascript-backend]
             [eacl.datascript.core :as datascript]
@@ -26,7 +27,7 @@
 (def relationship
   (eacl/->Relationship user :reader document))
 
-(def ^:private source-lifecycle "datascript-consistency-v4-test")
+(def ^:private source-lifecycle #uuid "2d6c6563-c2c5-5be3-bbec-8c32a095cf19")
 
 (defn- reusable-subproblem-hits
   [stats]
@@ -166,12 +167,12 @@
           (finally
             (eacl/release! snapshot))))
       (let [stats (datascript/cache-stats client)]
-        (is (true? (:managed-lifting-disabled? stats)))
-        (is (= 1 (:proof-contract-violations stats)))
-        (is (= {:relation-generation-above-revision 1}
+        (is (= (not orchestration/*qualified-authorization-enabled?*) (:managed-lifting-disabled? stats)))
+        (is (= (if orchestration/*qualified-authorization-enabled?* 0 1) (:proof-contract-violations stats)))
+        (is (= (if orchestration/*qualified-authorization-enabled?* {} {:relation-generation-above-revision 1})
                (:proof-contract-violation-reasons stats))))
-      (is (= 1 (count @reports)))
-      (is (= :relation-generation-above-revision
+      (is (= (if orchestration/*qualified-authorization-enabled?* 0 1) (count @reports)))
+      (is (= (when-not orchestration/*qualified-authorization-enabled?* :relation-generation-above-revision)
              (:reason (first @reports)))))))
 
 (deftest explicit-cache-expiry-installs-a-fresh-lifecycle-test
@@ -295,7 +296,9 @@
     (is (false? (:cached? original-page-2)))
     (ds/transact! conn [{:eacl/id "unrelated-completed-answer-write"}])
     (let [recovered-page-2
-          (eacl/lookup-resources authorization original-page-2-query)
+          (if orchestration/*qualified-authorization-enabled?*
+            (error-data #(eacl/lookup-resources authorization original-page-2-query))
+            (eacl/lookup-resources authorization original-page-2-query))
           fresh-page-1
           (eacl/lookup-resources authorization query)
           fresh-page-2-query
@@ -306,16 +309,18 @@
           (eacl/lookup-resources authorization fresh-page-2-query)]
       (testing "an unrelated write leaves the dependency proof equal: the
                 continuation is reused without recovery"
-        (is (= [(second documents)] (:data recovered-page-2)))
-        (is (nil? (get-in recovered-page-2
-                          [:page-info :cursor-recovery])))
-        (is (true? (:cached? recovered-page-2))))
+        (if orchestration/*qualified-authorization-enabled?*
+          (is (= :eacl.pagination/stale-cursor (:type recovered-page-2)))
+          (do
+            (is (= [(second documents)] (:data recovered-page-2)))
+            (is (nil? (get-in recovered-page-2 [:page-info :cursor-recovery])))
+            (is (true? (:cached? recovered-page-2))))))
       (testing "a newly signed cursor for the same boundary also reuses it"
         (is (not=
              (:after original-page-2-query)
              (:after fresh-page-2-query)))
         (is (= [(second documents)] (:data fresh-page-2)))
-        (is (true? (:cached? fresh-page-2)))))))
+        (is (= (not orchestration/*qualified-authorization-enabled?*) (:cached? fresh-page-2)))))))
 
 (deftest repeated-relationship-page-uses-completed-answer-cache-test
   (let [conn (datascript/create-conn)
@@ -434,7 +439,7 @@
       (ds/reset-conn! conn pre-write)
       (ds/transact! conn [{:eacl/id "unrelated"}])
       (datascript/expire-cache! client
-                                "datascript-consistency-reset-v4-test")
+                                #uuid "c0875242-f003-559f-8f05-b0b412161477")
       (is (= :eacl.consistency/incomparable-scope
              (:type
               (error-data
@@ -554,9 +559,9 @@
     (is (false? (:cached? first-page)))
     (is (true? (:cached? exact-hit)))
     (ds/transact! conn [{:eacl/id "unrelated"}])
-    (is (true?
-         (:cached?
-          (eacl/lookup-resources authorization query))))
+    (is (= (not orchestration/*qualified-authorization-enabled?*)
+           (:cached?
+            (eacl/lookup-resources authorization query))))
     (eacl/delete-relationship! authorization relationship)
     (is (= :eacl.consistency/exact-snapshot-unavailable
            (:type

@@ -39,6 +39,11 @@ Generated sources, binaries, solver output, and downloaded tools live under
 ignored `target/`. They are reproducible build output and must never be edited
 as source.
 
+`dafny/UuidLifecycle.dfy` and `tla/EaclUuidLifecycle.tla` cover native UUID
+representation, complete lineage, and publication/restore lifetimes. See
+[the production refinement map](verification/uuid-lifecycle-refinement.md) for
+call sites, executable negative controls, and explicit host assumptions.
+
 ## Commands
 
 Run `bin/formal bootstrap` once, then the individual verification/build/model

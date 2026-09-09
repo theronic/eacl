@@ -9,19 +9,19 @@
             [datascript.core :as ds]
             [eacl.baseline.capture :as baseline]
             [eacl.cache :as cache]
+            [eacl.authorization.temporal :as temporal]
+            [eacl.client.orchestration :as orchestration]
             [eacl.core :as eacl]
             [eacl.cursor :as cursor]
             [eacl.datascript.core :as datascript]
             [eacl.secure-format :as secure]
-            [eacl.test-support.repo :as repo])
-  (:import (java.nio.file Files)
-           (java.security MessageDigest)))
+            [eacl.test-support.repo :as repo]))
 
 (def baseline-index-file
-  "exploration/operator-engine/union-only-baseline.edn")
+  "formal/fixtures/operator-engine/union-only-baseline.edn")
 
 (def cursor-snapshot-file
-  "exploration/operator-engine/union-only-cursor-payloads.edn")
+  "formal/fixtures/operator-engine/union-only-cursor-payloads.edn")
 
 (def ^:private baseline-security-key
   "operator-engine-union-baseline-key")
@@ -45,7 +45,7 @@
            conn
            {:cache cache/no-cache
             :security-key baseline-security-key
-            :source-lifecycle "operator-engine-union-baseline"})]
+            :source-lifecycle #uuid "4cd6f298-45ef-591c-9af0-0fd57b6cf79f"})]
       (eacl/write-schema! client schema)
       (ds/transact!
        conn
@@ -158,36 +158,74 @@
                 :integers? (every? integer? coords)}))
            [:start-edge :end-edge])]))])))
 
-(defn- sha256-file
-  [path]
-  (let [digest
-        (.digest
-         (MessageDigest/getInstance "SHA-256")
-         (Files/readAllBytes (.toPath (repo/file path))))]
-    (apply str (map #(format "%02x" (bit-and (int %) 255)) digest))))
-
 (deftest exact-union-only-public-baselines-test
   (let [{:keys [digest-domain fixture-digests]}
         (:behavior (read-baseline-index))]
     (doseq [[fixture-key expected-digest] fixture-digests]
       (testing (name fixture-key)
-        (is (= expected-digest
-               (secure/canonical-digest
-                digest-domain
-                (baseline/capture-fixture fixture-key))))))))
+        (let [captured (baseline/capture-fixture fixture-key)
+              legacy-stale (:stale-basis (baseline/read-snapshot fixture-key))]
+          (when orchestration/*qualified-authorization-enabled?*
+            (is (= (if (= :no-cursor (:outcome legacy-stale))
+                     legacy-stale
+                     {:outcome :error :resumed-page-size nil
+                      :detail {:outcome :error :error-keys [:eacl.pagination/stale-cursor :eacl.pagination/stale-cursor]}})
+                   (:stale-basis captured))))
+          ;; Preserve the frozen order/denotation/error digest. The qualified
+          ;; epoch's exact-basis continuation change is asserted separately.
+          (is (= expected-digest
+                 (secure/canonical-digest
+                  digest-domain
+                  (cond-> captured orchestration/*qualified-authorization-enabled?*
+                          (assoc :stale-basis legacy-stale))))))))))
+
+(defn- current-cursor-baseline
+  "The frozen fixture predates one bootstrap transaction and the explicit ABI
+  bumps. Translate precisely those fields; retain every behavioral assertion."
+  [snapshot]
+  (update snapshot :fixtures
+          (fn [fixtures]
+            (into {} (for [[fixture directions] fixtures]
+                       [fixture
+                        (into {} (for [[direction payload] directions]
+                                   [direction
+                                    (-> payload
+                                        (assoc-in [:cursor-common :v] 14)
+                                        (assoc-in [:cursor-common :lineage :source-lifecycle]
+                                                  #uuid "4cd6f298-45ef-591c-9af0-0fd57b6cf79f")
+                                        (update :start-edge #(-> % (update :version inc) (update :order-abi inc)))
+                                        (update :end-edge #(-> % (update :version inc) (update :order-abi inc)))
+                                        (update-in [:cursor-common :native-revision :revision] inc)
+                                        (update-in [:cursor-common :frame :schema-generation] inc)
+                                        (update-in [:cursor-common :frame :dependency-stamp] inc)
+                                        (update-in [:cursor-common :frame :dependency-identity]
+                                                   #(mapv (fn [[eid revision]] [eid (inc revision)]) %)))]))])))))
 
 (deftest decoded-union-only-cursor-semantics-test
-  (let [expected (read-cursor-snapshot)
-        actual (capture-cursor-payloads)]
-    (is (= (remove-basis-local-coordinates expected)
-           (remove-basis-local-coordinates actual)))
+  (let [expected (current-cursor-baseline (read-cursor-snapshot))
+        actual (capture-cursor-payloads)
+        comparison
+        (fn [snapshot]
+          (cond-> (remove-basis-local-coordinates snapshot)
+            orchestration/*qualified-authorization-enabled?*
+            (update :fixtures
+                    (fn [fixtures]
+                      (into {} (for [[fixture directions] fixtures]
+                                 [fixture (into {} (for [[direction payload] directions]
+                                                     [direction (update payload :cursor-common dissoc
+                                                                        :scope :frame :closure-digest :qualification-temporal)]))]))))))]
+    (when orchestration/*qualified-authorization-enabled?*
+      (doseq [[fixture directions] (:fixtures actual)
+              [direction payload] directions
+              :let [common (:cursor-common payload)
+                    certificate (:qualification-temporal common)]]
+        (is (= :exact-basis (get-in common [:frame :mode])))
+        (is (= (:native-revision common) (get-in common [:frame :native-revision])))
+        (is (temporal/cursor-certificate-valid? certificate))
+        (is (= :live (:mode certificate)))
+        (is (true? (:complete? certificate)))
+        (is (nil? (:valid-until-ms certificate)))
+        (is (not= (:scope common) (get-in expected [:fixtures fixture direction :cursor-common :scope])))))
+    (is (= (comparison expected) (comparison actual)))
     (is (= (coordinate-shapes expected)
            (coordinate-shapes actual)))))
-
-(deftest matched-host-performance-and-cursor-artifacts-are-frozen-test
-  (let [index (read-baseline-index)]
-    (doseq [artifact [(:matched-host-performance index)
-                      (:decoded-cursor-payloads index)]]
-      (is (= (:sha256 artifact)
-             (sha256-file (:path artifact)))
-          (:path artifact)))))

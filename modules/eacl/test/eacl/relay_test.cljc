@@ -3,9 +3,11 @@
             :refer [deftest is testing]]
             [eacl.backend.v8 :as backend]
             [eacl.backend.source :as source]
+            [eacl.cache :as cache]
             [eacl.core :as eacl]
             [eacl.cursor :as cursor]
             [eacl.execution :as execution]
+            [eacl.exact-integer :as exact-integer]
             [eacl.proof-frame :as proof-frame]
             [eacl.relay :as relay]
             [eacl.request.context :as request-context]
@@ -43,7 +45,7 @@
   {:backend :relay-test
    :source-id "relay-source"
    :branch nil
-   :source-lifecycle "relay-lifecycle"
+   :source-lifecycle #uuid "9609a096-a7e9-559c-8ef6-0f6baf065aa1"
    :basis-kind :ordinary
    :revision revision
    :exact-locator revision
@@ -116,7 +118,7 @@
         envelope
         (cursor/token->cursor
          (get-in page [:page-info :end-cursor]))]
-    (is (= 13 (:v envelope)))
+    (is (= 14 (:v envelope)))
     (is (= (request-context/lineage-for-basis (basis-identity 10))
            (:lineage envelope)))
     (is (= {:schema-generation 3
@@ -168,7 +170,7 @@
           :operations
           {:source-scope
            (constantly {:source-id "relay-source" :branch nil})
-           :source-lifecycle (constantly "relay-lifecycle")
+           :source-lifecycle (constantly #uuid "9609a096-a7e9-559c-8ef6-0f6baf065aa1")
            :acquire-current! (fn [] (acquisition current))
            :acquire-authoritative! (fn [] (acquisition current))
            :acquire-at-least! (fn [& _] (acquisition current))
@@ -309,6 +311,77 @@
      :result-eid "document-1"}
     :has-next-page? true
     :has-previous-page? false}})
+
+(defn- coordinate-page [kind coords]
+  (assoc lookup-page :page-info
+         {:end-cursor {:kind kind :coords coords}
+          :has-next-page? true :has-previous-page? false}))
+
+(deftest coordinate-cursors-round-trip-without-changing-safe-integers-test
+  (doseq [kind [:least-path-edge :operator-least-path-edge]
+          coords [[0 1 exact-integer/minimum exact-integer/maximum]
+                  #?(:clj [1 4611681620380877832 4611681620380877833
+                           Long/MIN_VALUE Long/MAX_VALUE]
+                     :cljs [1 2 3])]]
+    (let [snapshot (adapter 1 nil true)
+          page (coordinate-page kind coords)
+          public-page (relay/externalize-page snapshot {} :lookup-resources lookup-query page)
+          token (get-in public-page [:page-info :end-cursor])
+          wire-edge (:edge (cursor/token->cursor token))
+          restored (relay/internalize-page-query
+                    snapshot {} :lookup-resources (assoc lookup-query :after token))
+          prepared (relay/prepare-page-query
+                    snapshot {:defer-cursor-edge-internalization? true}
+                    :lookup-resources (assoc lookup-query :after token))]
+      (is (cache/cursor-cache-data? wire-edge))
+      (is (= (mapv #(if (exact-integer/exact? %) % (str %)) coords)
+             (:coords wire-edge)))
+      (is (= (get-in page [:page-info :end-cursor]) (:after restored)))
+      (is (= (:after restored)
+             (:after (relay/internalize-prepared-page-query snapshot (:query prepared))))))))
+
+(deftest coordinate-cursors-reject-malformed-and-unrepresentable-decimals-test
+  (let [snapshot (adapter 1 nil true)
+        page (relay/externalize-page snapshot {} :lookup-resources lookup-query
+                                     (coordinate-page :least-path-edge [1 2]))
+        envelope (cursor/token->cursor (get-in page [:page-info :end-cursor]))]
+    (doseq [coordinate (concat ["01" "+1" "-0" "1.0" "1e20" " 1" ""
+                               "9223372036854775808" "-9223372036854775809"
+                               "9007199254740991" ["4611681620380877832"]]
+                              #?(:clj []
+                                 :cljs ["4611681620380877832" "4611681620380877833"]))]
+      (let [token (cursor/cursor->token (assoc-in envelope [:edge :coords] [1 coordinate]))
+            error (try
+                    (relay/internalize-page-query
+                     snapshot {} :lookup-resources (assoc lookup-query :after token))
+                    nil
+                    (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+                      (ex-data error)))]
+        (is (= :eacl.pagination/invalid-cursor (:type error)) (pr-str coordinate))))))
+
+(deftest recursive-cover-cursors-preserve-native-identity-test
+  (doseq [id [42 #?(:clj Long/MAX_VALUE :cljs exact-integer/maximum)]]
+    (let [snapshot (adapter 1 nil true)
+          edge {:kind :operator-recursive-edge
+                :cover-edge {:kind :stable-edge :result-eid id}}
+          page (assoc-in lookup-page [:page-info :end-cursor] edge)
+          public-page (relay/externalize-page snapshot {} :lookup-resources lookup-query page)
+          token (get-in public-page [:page-info :end-cursor])
+          wire-edge (:edge (cursor/token->cursor token))]
+      (is (= (if (exact-integer/exact? id) id (str id))
+             (get-in wire-edge [:cover-edge :result-eid])))
+      (is (= edge (:after (relay/internalize-page-query
+                          snapshot {} :lookup-resources (assoc lookup-query :after token))))))))
+
+#?(:cljs
+   (deftest coordinate-cursors-do-not-serialize-rounded-javascript-integers-test
+     (let [error (try
+                   (relay/externalize-page
+                    (adapter 1 nil true) {} :lookup-resources lookup-query
+                    (coordinate-page :least-path-edge [(inc exact-integer/maximum)]))
+                   nil
+                   (catch :default error (ex-data error)))]
+       (is (= :eacl.pagination/unsupported-cursor-identity (:type error))))))
 
 (deftest page-externalization-builds-one-snapshot-context-test
   ;; Every context build reads :native-revision exactly once, so the op count is
@@ -586,6 +659,17 @@
                    error
                  (:reason (ex-data error)))))
           (pr-str changed-query)))))
+
+(deftest raw-adapter-cursors-require-the-same-adapter-lifetime-test
+  (let [left (adapter 1 nil true) right (adapter 1 nil true)
+        page (relay/externalize-page left {} :lookup-resources lookup-query lookup-page)
+        token (get-in page [:page-info :end-cursor])]
+    (is (not= (backend/unmanaged-lifecycle left) (backend/unmanaged-lifecycle right)))
+    (is (= left (:adapter (relay/prepare-page-query left {} :lookup-resources
+                                                   (assoc lookup-query :after token)))))
+    (is (some? (try (relay/prepare-page-query right {} :lookup-resources
+                                            (assoc lookup-query :after token))
+                    nil (catch #?(:clj Exception :cljs :default) e (ex-data e)))))))
 
 (deftest cursor-is-bound-to-normalized-traversal-limits-test
   (let [snapshot (adapter 1 nil true)

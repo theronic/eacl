@@ -36,7 +36,7 @@
 
 (deftest generated-authority-is-the-only-production-engine-test
   #_{:clj-kondo/ignore [:unresolved-symbol]}
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [default-selection
           (get-in (core/make-client conn {}) [:runtime :decision-kernel])
           error
@@ -86,7 +86,7 @@
   ;; param is missing — satisfied it while every consumer treated the value as
   ;; absent, degrading the read to the global index scan the guard exists to
   ;; prevent.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [{:keys [db]} (seed-acyclic! conn 3)]
       (doseq [k [:subject/id :resource/id :subject/type :resource/type :resource/relation]]
         (let [data (ex-data-of #(impl/read-relationships db {k nil :first 5}))]
@@ -101,7 +101,7 @@
                (:eacl/error (ex-data-of #(impl/read-relationships db {:first 5})))))))))
 
 (deftest missing-relation-filter-does-not-scan-relationship-tuples-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [{:keys [db]} (seed-acyclic! conn 3)
           seeks (atom 0)
           seek-datoms d/seek-datoms]
@@ -119,7 +119,7 @@
             "an empty relation-definition set proves the result is empty")))))
 
 (deftest relationship-pages-use-the-shared-index-edge-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [{:keys [db]} (seed-acyclic! conn 3)
           query {:resource/type :account :first 1}
           page-1 (impl/read-relationships db query)
@@ -150,7 +150,7 @@
 (deftest nil-page-cursors-are-rejected-test
   ;; :after nil used to mean "start over", so a client looping on a page-info
   ;; that carried a nil cursor silently restarted at page 1 forever.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [{:keys [db u]} (seed-acyclic! conn 5)
           query {:subject (spice-object :user u) :permission :admin :resource/type :account}]
       (is (= :eacl.pagination/invalid-cursor
@@ -164,7 +164,7 @@
 
 (deftest empty-pages-advertise-no-further-pages-test
   ;; has-next-page? true alongside a nil end-cursor is a loop with no exit.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [{:keys [db u]} (seed-acyclic! conn 4)
           query   {:subject (spice-object :user u) :permission :admin :resource/type :account}
           all     (idx/lookup-resources db (assoc query :first 10))
@@ -188,7 +188,7 @@
           (is (false? (get-in past [:page-info :has-previous-page?]))))))))
 
 (deftest page-info-cursor-invariant-holds-across-a-full-walk-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [{:keys [db u]} (seed-acyclic! conn 7)
           query {:subject (spice-object :user u) :permission :admin :resource/type :account}]
       (doseq [page-size [1 2 3]]
@@ -210,7 +210,7 @@
 (deftest impl-can-map-arity-test
   ;; The map arity forwarded to a 2-arity impl.indexed/can? that does not
   ;; exist, so it threw ArityException on every call.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [{:keys [db u]} (seed-acyclic! conn 1)
           a (d/entid db [:eacl/id "a-0"])]
       (is (true? (impl/can? db {:subject    (spice-object :user u)
@@ -228,7 +228,7 @@
   ;; Both writers used to check absence against the same immutable db and then
   ;; submit idempotent cardinality-many adds. Both calls returned success even
   ;; though :create promises exactly one winner and one conflict.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (schema/write-schema! conn acyclic-schema)
     @(d/transact conn [{:eacl/id "u"} {:eacl/id "a"}])
     (let [client-a (core/make-client conn {})
@@ -265,7 +265,7 @@
                  (set results))))))))
 
 (deftest write-errors-are-typed-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [{:keys [db u]} (seed-acyclic! conn 1)
           a   (d/entid db [:eacl/id "a-0"])
           rel (Relationship (spice-object :user "u") :owner (spice-object :account "a-0"))]
@@ -307,7 +307,7 @@
   ;; count-resources used to page with :first max-page-size and :after, and
   ;; each page replayed the whole prefix — O(N^2), and it tripped
   ;; :max-derived-grants long before a large grant set was counted.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [{:keys [db u]} (seed-recursive! conn 60)
           query {:subject (spice-object :user u) :permission :read :resource/type :folder}]
       (is (= 61 (:count (idx/count-resources db query))) "root + 60 children")
@@ -338,7 +338,7 @@
             (is (= :derived-grants (:limit-kind data)))))))))
 
 (deftest recursive-traversal-limits-are-configurable-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (seed-recursive! conn 40)
     (testing "a client can raise the ceiling"
       (let [tight (core/make-client conn {:recursive-traversal-limits {:max-derived-grants 3}})
@@ -370,7 +370,7 @@
             (pr-str bad))))))
 
 (deftest recursive-last-and-count-subjects-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [{:keys [db u]} (seed-recursive! conn 5)
           root  (d/entid db [:eacl/id "root"])
           leaf  (d/entid db [:eacl/id "f-0"])
@@ -404,7 +404,7 @@
                                                                  :subject/relation :member})))))))))
 
 (deftest bounded-counts-stop-before-a-full-recursive-traversal-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [{:keys [db u]} (seed-recursive! conn 60)
           root   (d/entid db [:eacl/id "root"])
           client (core/make-client conn {})

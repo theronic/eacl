@@ -5,7 +5,8 @@
   the replay ledger, cooperative cancellation through the page path,
   topology capability validation, anchored point checks and exhaustion
   counts against the frozen baselines, and the binding local perf gate."
-  (:require [clojure.string :as string]
+  (:require [clojure.edn :as edn]
+            [clojure.string :as string]
             [clojure.test :refer [deftest is testing]]
             [datascript.core :as ds]
             [eacl.backend.v8 :as backend]
@@ -19,7 +20,8 @@
             [eacl.engine.stable-reducer :as reducer]
             [eacl.engine.stable-route :as route]
             [eacl.engine.v8 :as engine]
-            [eacl.execution :as execution]))
+            [eacl.execution :as execution]
+            [eacl.test-support.repo :as repo]))
 
 (defn- seeded
   [fixture-key]
@@ -35,6 +37,8 @@
                   (fn [snapshot internal-id]
                     (:eacl/id (ds/entity snapshot internal-id)))})]
     {:fixture fixture :db db :adapter adapter
+     :basis-identity {:backend :datascript :source-id (str (random-uuid)) :branch nil
+                      :source-lifecycle #uuid "00000000-0000-0000-0000-000000000000"}
      :plan (sealed-plan/seal-plan adapter [(:resource-type fixture)
                                            (:permission fixture)])}))
 
@@ -167,6 +171,7 @@
         context (execution/normalize {} :lookup-resources
                                      {:cancellation-token token})
         options {:adapter (:adapter env) :plan (:plan env)
+                 :basis-identity (:basis-identity env)
                  :direction :forward
                  :anchor [:user "super-user"] :subject-type :user
                  :page-size 5
@@ -187,6 +192,7 @@
                                       :lookup-resources
                                       {:cancellation-token token})
         options {:adapter (:adapter env) :plan (:plan env)
+                 :basis-identity (:basis-identity env)
                  :direction :forward
                  :anchor [:user "super-user"] :subject-type :user
                  :page-size 5
@@ -213,6 +219,7 @@
                    (execution/normalize {:execution-timeout-ms 5}
                                         :lookup-resources {:first 5}))
         options {:adapter (:adapter env) :plan (:plan env)
+                 :basis-identity (:basis-identity env)
                  :direction :forward
                  :anchor [:user "super-user"] :subject-type :user
                  :page-size 5
@@ -363,15 +370,11 @@
                        :count-limit 2}))))))))))
 
 (deftest local-perf-gate-test
-  ;; Task 8.5, CLJ half: the binding local budgets against the frozen
-  ;; current-engine perf baseline. Warm medians compare compute against
-  ;; compute-or-cache: the absolute 0.25 ms grace covers the difference
-  ;; between the new engine's full recompute and the legacy engine's
-  ;; cache-assisted repeats; allocation is bounded against the legacy
-  ;; public-engine full-compute envelope.
-  (let [frozen (read-string (slurp (str capture/snapshot-dir "/perf-clj-datascript.edn")))
-        legacy-warm-ms (get-in frozen [:acyclic-2k-servers
-                                       :super-user-first-page-20 :median-ms])
+  ;; Preserve the existing latency, allocation, and work limits as authored
+  ;; inputs; this gate measures the current implementation on every run.
+  (let [budgets (:physical-route
+                 (edn/read-string
+                  (slurp (repo/file "docs/benchmarks/operator-engine-budgets.edn"))))
         env (seeded :explorer-acyclic)
         subject-eid (ds/entid (:db env) [:eacl/id "super-user"])
         run #(reducer/run-forward {:adapter (:adapter env) :plan (:plan env)
@@ -399,20 +402,20 @@
       ;; the binding per-push regression controls; precise latency claims
       ;; are produced by the benchmark protocol on reference hardware.
       (if (System/getenv "CI")
-        (is (<= median-ms 5.0)
+        (is (<= median-ms (:ci-median-ms budgets))
             (str "median " median-ms " ms exceeds the CI envelope"))
-        (is (<= median-ms (+ legacy-warm-ms 0.5))
-            (str "median " median-ms " ms vs legacy warm " legacy-warm-ms))))
+        (is (<= median-ms (:local-median-ms budgets))
+            (str "median " median-ms " ms exceeds " (:local-median-ms budgets)))))
     (testing "allocation within the legacy full-compute envelope"
       ;; legacy public-engine first pages allocated 1.6-7.3 MB
       ;; (BENCHMARK_PROTOCOL); the gate binds 1.5x the lower envelope edge
-      (is (<= allocated (* 1.5 1600000))
+      (is (<= allocated (:allocated-bytes budgets))
           (str "allocated " allocated " bytes")))
     (testing "no linear scaling with unvisited branches"
       ;; the dense first page must not touch every server: commands stay
       ;; far below the 36-server denotation x 4 permission paths
       (let [finished (run)]
-        (is (< (:commands finished) 40))))))
+        (is (< (:commands finished) (:exclusive-command-limit budgets)))))))
 
 (deftest exhaustive-runs-are-unbounded-test
   ;; Mutation control for the retired finite exhaustion target: an exact

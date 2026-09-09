@@ -1,6 +1,7 @@
 (ns eacl.backend.v8-test
   (:require [#?(:clj clojure.test :cljs cljs.test)
             :refer [deftest is testing]]
+            [eacl.authorization.data :as qualification-data]
             [eacl.backend.v8 :as backend]
             [eacl.cache.derived-schema :as derived-schema]
             [eacl.cache.key :as cache-key]
@@ -81,6 +82,71 @@
     (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
       (ex-data error))))
 
+(deftest compact-scan-and-direct-guards-preserve-endpoint-order
+  (let [make (fn [values]
+               (backend/make-adapter
+                {:id :test :runtime-guards? true :capabilities {}
+                 :operations (assoc (operation-map)
+                                    :subject->resources (fn [& _] values)
+                                    :direct-edge (fn [& _] [2 100]))}))
+        values [1 [2 100] 3]
+        adapter (make values)
+        options {:direction :asc :include-qualifier? true}
+        scan! (backend/scan-invoker adapter :subject->resources)]
+    (is (= values (scan! :user 10 20 :doc options)))
+    (is (= values (backend/reduce-scan adapter :subject->resources
+                                         [:user 10 20 :doc options] [] {:step conj})))
+    (is (= [2 100] (backend/invoke adapter :direct-edge :user 10 20 :doc 2)))
+    (is (= :eacl/backend-contract-violation
+           (:eacl/error (error-data #(scan! :user 10 20 :doc {})))))
+    (doseq [bad [[[2 100] [2 101]] [[3 100] 1] [[]] [[2 nil]]]]
+      (is (= :eacl/backend-contract-violation
+             (:eacl/error (error-data #((backend/scan-invoker (make bad) :subject->resources)
+                                        :user 10 20 :doc options)))))
+      (is (= :eacl/backend-contract-violation
+             (:eacl/error (error-data #(backend/reduce-scan (make bad) :subject->resources
+                                                               [:user 10 20 :doc options] [] {:step conj}))))))))
+
+(deftest native-entity-id-guards-retain-the-host-integer-range-test
+  (let [maximum #?(:clj Long/MAX_VALUE :cljs js/Number.MAX_SAFE_INTEGER)
+        make (fn [id]
+               (backend/make-adapter
+                {:id :test :runtime-guards? true :capabilities {}
+                 :operations (assoc (operation-map)
+                                    :object-id->internal (constantly id)
+                                    :subject->resources (fn [& _] [id])
+                                    :direct-edge (fn [& _] [id id]))}))
+        adapter (make maximum)]
+    (is (= maximum (backend/invoke adapter :object-id->internal "object")))
+    (is (= [maximum] (backend/invoke adapter :subject->resources :user 1 2 :doc {})))
+    (is (= [maximum] (backend/reduce-scan adapter :subject->resources
+                                         [:user 1 2 :doc {}] [] {:step conj})))
+    (is (= [maximum maximum] (backend/invoke adapter :direct-edge :user 1 2 :doc maximum)))
+    (doseq [invalid [-1 1.5 "1" #?(:clj (inc' Long/MAX_VALUE)
+                                   :cljs (inc js/Number.MAX_SAFE_INTEGER))]]
+      (is (= :eacl/backend-contract-violation
+             (:type (error-data #(backend/invoke (make invalid) :object-id->internal "object"))))))))
+
+(deftest qualification-data-capability-is-paired-and-guarded
+  (let [make (fn [capabilities operation guards?]
+               (backend/make-adapter
+                {:id :test :runtime-guards? guards? :capabilities capabilities
+                 :operations (cond-> (operation-map)
+                               operation (assoc :qualification-data operation))}))
+        capabilities {:qualification #{qualification-data/capability}}
+        packet {:entity {:db/id 1 :private/field "secret"} :version 7 :fact-count 1}]
+    (doseq [guards? [true false]]
+      (is (some? (error-data #(make capabilities nil guards?))))
+      (is (some? (error-data #(make {} (constantly packet) guards?)))))
+    (is (some? (error-data #(make {:qualification #{:unknown-contract}} (constantly packet) true))))
+    (is (= packet (backend/invoke (make capabilities (constantly packet) true) :qualification-data 1)))
+    (doseq [invalid [(assoc packet :extra true) (assoc packet :fact-count 4097)
+                    (assoc packet :version -1) (assoc packet :entity [])]]
+      (let [error (error-data #(backend/invoke (make capabilities (constantly invalid) true)
+                                              :qualification-data 1))]
+        (is (= :eacl/backend-contract-violation (:eacl/error error)))
+        (is (not (re-find #"secret" (pr-str error))))))))
+
 #?(:clj
    (deftest default-schema-warning-dedupe-is-concurrent-and-bounded-test
      (let [warning-var
@@ -145,7 +211,7 @@
            [{:conn ::connection} :conn]
            [{:source ::source} :source]
            [{:writer ::writer} :writer]
-           [{:source-lifecycle "leaked"} :source-lifecycle]]]
+           [{:source-lifecycle #uuid "c8dc503f-b396-58e8-bb56-31133ceb969f"} :source-lifecycle]]]
     (let [data
           (error-data
            #(backend/validate-adapter-config!
@@ -192,6 +258,12 @@
 (deftest validated-v8-adapter-test
   (let [adapter (test-adapter)]
     (is (backend/adapter? adapter))
+    (is (= 8 (::backend/version adapter)
+           (:adapter-version (::backend/fingerprint adapter))
+           (:engine-version engine/derived-schema-cache-abi)
+           (:backend-adapter-version engine/derived-schema-cache-abi)))
+    (is (not (backend/adapter? (assoc adapter ::backend/version (inc backend/adapter-version)))))
+    (is (not (backend/adapter? (dissoc adapter ::backend/traversal-execution))))
     (is (= :test (backend/backend-id adapter)))
     (is (backend/supports? adapter :consistency :fully-consistent))
     (is (not (backend/supports? adapter :consistency :at-exact-snapshot)))
@@ -230,7 +302,7 @@
              {:backend :test
               :source-id :one
               :branch nil
-              :source-lifecycle "test/initial"
+              :source-lifecycle #uuid "2bc796bc-3644-5ebf-b129-6ad973575a98"
               :basis-kind :ordinary
               :revision generation
               :exact-locator generation
@@ -249,7 +321,7 @@
            {:backend :test
             :source-id :one
             :branch nil
-            :source-lifecycle "test/initial"
+            :source-lifecycle #uuid "2bc796bc-3644-5ebf-b129-6ad973575a98"
             :basis-kind :ordinary
             :revision 99
             :exact-locator 99
@@ -326,7 +398,7 @@
        (backend/certification-obligations
         :subject->resources)
        :strict-order))
-  (is (= #{:schema-generation :direct-match-many?}
+  (is (= #{:schema-generation :direct-match-many? :direct-edge :qualification-data}
          backend/optional-snapshot-operations))
   (is (every?
        (backend/certification-obligations :schema-generation)
@@ -477,7 +549,8 @@
                    #(apply backend/invoke adapter operation args))))]
         (doseq [[operation implementation args obligation]
                 [[:object-id->internal
-                  (fn [& _] (inc backend/maximum-exact-integer)) [:external]
+                  (fn [& _] #?(:clj (inc' Long/MAX_VALUE)
+                                :cljs (inc backend/maximum-exact-integer))) [:external]
                   :exact-integer]
                  [:order-hint
                   (fn [& _] (dec backend/minimum-exact-integer))
@@ -847,7 +920,7 @@
   [semantic]
   (cache-key/exact-denotation-key
    {:tier :denotation
-    :source-lifecycle {:source :projection-test :lifecycle :one}
+    :source-lifecycle #uuid "cb7f5992-d14c-5aa9-b1de-7b5e45cedc1f"
     :abi :projection-test-v2
     :semantic semantic
     :reuse [:projection-test-basis 1]}))
@@ -1040,3 +1113,9 @@
                          (update :reverse inc))
                      @calls)
                   "direct projection helpers do not retain host-owned scan chunks"))))))))
+
+(deftest qualified-publication-contract-is-closed-and-unambiguous
+  (doseq [contract [#{:atomic-inline-v1} #{:atomic-prepared-v1} #{}]]
+    (is (= contract (:qualified-publication (backend/normalize-capabilities :test {:qualified-publication contract})))))
+  (doseq [contract [#{:unknown} #{:atomic-inline-v1 :atomic-prepared-v1} [:atomic-inline-v1]]]
+    (is (some? (error-data #(backend/normalize-capabilities :test {:qualified-publication contract}))))))

@@ -2,6 +2,8 @@
   (:require [clojure.test :refer [deftest is testing]]
             [datahike.api :as d]
             [eacl.contract-support :as contract]
+            [eacl.authorization.qualification-test :as qualification]
+            [eacl.relationships.safe-retraction-contract :as control-contract]
             [eacl.core :as eacl]
             [eacl.datahike.core :as core]
             [eacl.datahike.db :as ddb]
@@ -294,3 +296,21 @@
      client
      (mapv (fn [[u a]] (eacl/->Relationship u :owner a)) unrelated))
     (is (= before (expansion-size)))))
+
+(deftest qualified-control-roles-are-protected-in-every-mode-test
+  (doseq [[label config _] modes]
+    (testing label
+      (let [conn (schema/create-conn nil config)
+            config (:config (d/db conn))]
+        (try
+          (d/transact conn [{:db/ident :test/component :db/valueType :db.type/ref
+                            :db/cardinality :db.cardinality/one :db/isComponent true}])
+          (safe-datahike/prepare! conn)
+          (control-contract/exercise!
+           {:client (core/make-client conn {:clock (constantly 99)
+                                           :caveat-evaluator (qualification/portable-evaluator (atom 0))})
+            :snapshot #(d/db conn) :transact! #(d/transact conn %)
+            :entid ddb/entid :rows #(ddb/avet-datoms %1 %2)
+            :facts ddb/entity-facts :revision :max-tx
+            :retract! #(d/transact conn (safe-datahike/retract-entity-tx-data (d/db conn) %))})
+          (finally (d/release conn) (d/delete-database config)))))))

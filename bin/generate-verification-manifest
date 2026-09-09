@@ -72,6 +72,8 @@
                       (str/ends-with? (.getName %) ".tla")
                       (str/ends-with? (.getName %) ".cfg")
                       (source-extension? %)))
+    (files-under "formal/caveats" #(.isFile %))
+    (files-under "formal/qualified" #(.isFile %))
     (files-under "formal/policy" #(.isFile %))
     (files-under "formal/baselines" #(.isFile %))
     (files-under

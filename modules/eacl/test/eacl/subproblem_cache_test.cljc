@@ -3,6 +3,8 @@
   (:require [eacl.cache.key :as cache-key]
             [eacl.cache.standard-lru :as lru]
             [eacl.execution :as execution]
+            [eacl.security.imports :as imports]
+            [eacl.security.keyring :as keyring]
             [eacl.subproblem-cache :as subproblem]
             #?(:clj [clojure.test :refer [deftest is testing]]
                :cljs [cljs.test])))
@@ -32,7 +34,7 @@
   [revision]
   (fn [semantic]
     (let [identity {:tier :denotation
-                    :source-lifecycle {:source :primary :lifecycle :one}
+                    :source-lifecycle #uuid "8ac290d0-0257-515a-b9b3-20d547d651a0"
                     :abi :test-authorization-v2
                     :semantic semantic
                     :reuse [:basis revision]}]
@@ -41,7 +43,7 @@
 (defn- storage-key
   [tier semantic]
   (let [identity {:tier tier
-                  :source-lifecycle {:source :primary :lifecycle :one}
+                  :source-lifecycle #uuid "8ac290d0-0257-515a-b9b3-20d547d651a0"
                   :abi :test-authorization-v2
                   :semantic semantic
                   :reuse [:basis 1]}]
@@ -434,7 +436,7 @@
             (subproblem/publish!
              store :answer (storage-key :answer :p1001)
              accept-any-publication
-             {:format :eacl.cache/completed-answer-v2
+             {:format :eacl.cache/completed-answer-v3
               :value p1001
               :cache-basis {:basis 1}
               :computed-revision 1
@@ -444,7 +446,7 @@
             (subproblem/publish!
              store :answer (storage-key :answer :p10000)
              accept-any-publication
-             {:format :eacl.cache/completed-answer-v2
+             {:format :eacl.cache/completed-answer-v3
               :value p10000
               :cache-basis {:basis 1}
               :computed-revision 1
@@ -583,7 +585,7 @@
              :entries [{:tier :answer
                         :key (storage-key :answer :large-page)}
                        :value
-                       {:format :eacl.cache/completed-answer-v2
+                       {:format :eacl.cache/completed-answer-v3
                         :value (page 1001)
                         :cache-basis {:basis 1}
                         :computed-revision 1
@@ -618,3 +620,35 @@
             (ex-data error)))]
     (is (= :eacl/invalid-config (:type operation-error)))
     (is (= [:weight-fn] (:unknown-keys operation-error)))))
+
+(deftest conditional-publication-does-not-overwrite-a-concurrent-replacement
+  (let [store (subproblem/store small-options)
+        key (storage-key :answer :temporal-race)
+        tier (get-in store [:tiers :answer])
+        old {:time 1} concurrent {:time 3} candidate {:time 2}]
+    (subproblem/publish! store :answer key accept-any-publication old)
+    (let [result (subproblem/publish!
+                  store :answer key
+                  {:valid? map?
+                   :replace? (fn [prior next]
+                               (is (identical? old prior))
+                               (is (identical? candidate next))
+                               (is (lru/replace-if! tier key old concurrent))
+                               true)}
+                  candidate)]
+      (is (false? (:published? result)))
+      (is (= concurrent (:value (subproblem/lookup! store :answer key)))))))
+
+(deftest fresh-computation-replaces-an-ineligible-import
+  (let [store (subproblem/store small-options)
+        key (storage-key :answer :imported)
+        ring (keyring/keyring {:keys {:old (vec (range 32))} :active-kid :old})]
+    (subproblem/publish! store :answer key accept-any-publication {:revision 9})
+    (subproblem/mark-imported! store ring :old)
+    (imports/run
+     #(do
+        (is (nil? (subproblem/lookup-eligible! store :answer key (fn [v] (< (:revision v) 5)))))
+        (is (false? (imports/derived?)))
+        (is (:published? (subproblem/publish! store :answer key accept-any-publication {:revision 2})))))
+    (is (= {:revision 2} (:value (subproblem/lookup! store :answer key))))
+    (is (= 1 (count (subproblem/resident-tier-entries store :answer))))))

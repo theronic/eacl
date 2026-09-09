@@ -62,7 +62,7 @@
        :client
        (datalevin-eacl/make-client
         datalevin-conn
-        {:source-lifecycle (str "differential-" seed)
+        {:source-lifecycle (java.util.UUID. 0 (inc seed))
          :revision-watermark watermark
          :advance-revision-watermark! #(swap! watermark max %)
          :security-key key})

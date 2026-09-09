@@ -3,23 +3,28 @@
              :refer [deftest is testing]]
             [clojure.string :as str]
             [datascript.core :as ds]
+            [eacl.authorization.evidence :as evidence]
             [eacl.cache.key :as cache-key]
+            [eacl.client.orchestration :as orchestration]
             [eacl.core :as eacl]
             [eacl.datascript.backend :as datascript-backend]
             [eacl.datascript.core :as datascript]
             [eacl.datascript.impl :as datascript-impl]
+            [eacl.datascript.qualifiers :as qualifiers]
             [eacl.datascript.schema :as datascript-schema]
             [eacl.engine.v8 :as engine]
             [eacl.execution :as execution]
             [eacl.operator.plan :as plan]
+            [eacl.operator.evaluator-test :as scalar-fixtures]
             [eacl.operator.recursive :as recursive]
             [eacl.operator-engine.oracle :as oracle]
-            [eacl.subproblem-cache :as subproblem]))
+            [eacl.subproblem-cache :as subproblem]
+            [eacl.relationships.staged :as staged]))
 
 (defn- test-exact-key
   [semantic]
   (let [identity {:tier :denotation
-                  :source-lifecycle {:source :test :lifecycle :operator}
+                  :source-lifecycle #uuid "07529ca3-2c5b-57d9-a992-31d5a71299f5"
                   :abi :test-authorization-v2
                   :semantic semantic
                   :reuse [:basis 1]}]
@@ -37,6 +42,54 @@
      permission blocked = banned
      permission allowed = view - blocked
    }")
+
+(deftest recursive-grant-witnesses-do-not-oscillate-around-cycles
+  (let [conn (datascript/create-conn)
+        now (atom 100)
+        client (datascript/make-client conn {:clock #(deref now)})
+        user (eacl/spice-object :user "user")
+        folders (mapv #(eacl/spice-object :folder (str "folder-" %)) (range 6))
+        query {:subject user :permission :allowed :resource/type :folder}]
+    (eacl/write-schema!
+     client
+     "definition user {}
+      definition folder {
+        relation member: user
+        relation banned: user
+        relation parent: folder
+        permission base = member
+        permission walk = base + parent->walk
+        permission allowed = walk - banned
+      }")
+    (ds/transact! conn (mapv #(hash-map :eacl/id (:id %)) (cons user folders)))
+    (eacl/create-relationships!
+     client
+     (into [(assoc (eacl/->Relationship user :member (folders 5)) :valid-until-ms 102)]
+           (map (fn [[from to end]]
+                  (cond-> (eacl/->Relationship (folders from) :parent (folders to))
+                    end (assoc :valid-until-ms end))))
+           [[4 0 101] [2 1 nil] [3 1 102] [1 2 nil]
+            [0 3 102] [4 3 102] [1 4 101] [5 4 nil]]))
+    ;; Membership converges quickly. Replacing rather than accumulating the
+    ;; evidence makes the two grounded deadlines chase one another forever.
+    (with-redefs [recursive/default-limits
+                  (assoc recursive/default-limits :maximum-transitions 2000)]
+      (doseq [[time indexes] [[100 (range 6)] [101 (range 1 6)] [102 []]]]
+        (reset! now time)
+        (let [expected (set (map folders indexes))]
+          (doseq [cache? [false true true]]
+            (is (= expected
+                   (set (:data (eacl/lookup-resources
+                                client (assoc query :first 20 :cache? cache?))))))
+            (is (= (count expected)
+                   (:count (eacl/count-resources client (assoc query :cache? cache?))))))
+          (doseq [folder folders]
+            (is (= (contains? expected folder)
+                   (eacl/can? client {:subject user :permission :allowed :resource folder})))
+            (is (= (if (contains? expected folder) #{user} #{})
+                   (set (:data (eacl/lookup-subjects
+                                client {:resource folder :permission :allowed
+                                        :subject/type :user :first 20})))))))))))
 
 (def recursive-relation-arrow-schema
   "definition user {}
@@ -112,7 +165,7 @@
             :entid->object-id
             (fn [snapshot internal-id]
               (:eacl/id (ds/entity snapshot internal-id)))})]
-      {:adapter adapter
+      {:conn conn :db db :adapter adapter
        :public-adapter public-adapter
        :client (datascript/make-client conn {})
        :plan (plan/seal-plan adapter [:folder :allowed])
@@ -814,7 +867,7 @@
         (is (true? (:allowed? cold)))
         (is (false? (:cached? cold)))
         (is (true? (:cached? warm)))
-        (is (pos? (:managed-entries before)))
+        (is (= (not orchestration/*qualified-authorization-enabled?*) (pos? (:managed-entries before))))
         (is (zero? (:stamp-failures before)))
 
         (eacl/create-relationship!
@@ -822,10 +875,10 @@
         (let [lifted (eacl/check-permission client f0-query)
               after-unrelated (datascript/cache-stats client)]
           (is (true? (:allowed? lifted)))
-          (is (true? (:cached? lifted)))
-          (is (= (inc (:managed-hits before))
+          (is (= (not orchestration/*qualified-authorization-enabled?*) (:cached? lifted)))
+          (is (= (cond-> (:managed-hits before) (not orchestration/*qualified-authorization-enabled?*) inc)
                  (:managed-hits after-unrelated)))
-          (is (= (:misses before) (:misses after-unrelated)))
+          (is (= (cond-> (:misses before) orchestration/*qualified-authorization-enabled?* inc) (:misses after-unrelated)))
           (is (= (:stamp-failures before)
                  (:stamp-failures after-unrelated))))
 
@@ -928,8 +981,69 @@
             (eacl/lookup-resources client (assoc base :first 1 :after token))]
         (is (= ["f0"] (page-ids first-page)))
         (is (= ["f1"] (page-ids second-page)))
-        (is (= 13 (:v envelope)))
+        (is (= 14 (:v envelope)))
         (is (= :operator-recursive-edge
                (get-in envelope [:edge :kind])))
         (is (= recursive/checkpoint-version
                (get-in envelope [:edge :recursive-checkpoint-version])))))))
+
+(deftest conditional-cycle-reaches-an-evidence-and-certificate-fixed-point
+  (let [alice (object :user "alice")
+        f0 (object :folder "f0") f1 (object :folder "f1") f2 (object :folder "f2")
+        relationships [(eacl/->Relationship alice :direct f0)
+                       (eacl/->Relationship alice :eligible f1)
+                       (eacl/->Relationship alice :eligible f2)
+                       (eacl/->Relationship f0 :parent f1)
+                       (eacl/->Relationship f1 :parent f2)
+                       (eacl/->Relationship f2 :parent f1)
+                       (eacl/->Relationship alice :banned f2)]
+        {:keys [conn eid]} (seed-schema (str "caveat enabled(flag bool) { flag }\n" recursive-schema) relationships)
+        writer (qualifiers/writer conn)
+        relation (fn [name type] (ds/entid (ds/db conn)
+                                           [:eacl.relation/resource-type+relation-name+subject-type [:folder name type]]))
+        caveat (ds/entid (ds/db conn) [:eacl.caveat/name "enabled"])]
+    (ds/transact! conn [(hash-map :db/id (relation :direct :user)
+                                 :eacl.relation/caveats [caveat]
+                                 :eacl.relation/allows-unqualified? true)])
+    (staged/write! writer :replace [:user (eid alice) (relation :direct :user) :folder (eid f0)] {:caveat caveat})
+    (staged/write! writer :replace [:folder (eid f0) (relation :parent :folder) :folder (eid f1)] {:valid-until-ms 110})
+    (staged/write! writer :replace [:user (eid alice) (relation :banned :user) :folder (eid f2)] {:valid-until-ms 100})
+    (let [db (ds/db conn) adapter (datascript-backend/basis-adapter db {})
+          sealed (plan/seal-plan adapter [:folder :allowed])
+          options (fn [time context]
+                    {:adapter adapter :plan sealed :scope-identity :qualified-cycle
+                     :qualification (scalar-fixtures/qualified-request db time context)
+                     :candidates (mapv (fn [folder] {:direction :forward :subject-type :user
+                                                     :subject-eid (eid alice) :resource-eid (eid folder)})
+                                       [f0 f1 f2])})
+          before (recursive/evaluate-many (options 99 {}))
+          after (recursive/evaluate-many (options 100 {}))
+          granted (recursive/evaluate-many (options 109 {"flag" true}))
+          expired (recursive/evaluate-many (options 110 {}))
+          kinds #(mapv evidence/permissionship (:decisions %))]
+      (is (= [:conditional-permission :conditional-permission :no-permission] (kinds before)))
+      (is (= [nil 110 100] (mapv evidence/valid-until (:decisions before))))
+      (is (= [:conditional-permission :conditional-permission :conditional-permission] (kinds after)))
+      (is (= [nil 110 110] (mapv evidence/valid-until (:decisions after))))
+      (is (every? evidence/has? (:decisions granted)))
+      (is (= [nil 110 110] (mapv evidence/valid-until (:decisions granted))))
+      (is (= [:conditional-permission :no-permission :no-permission] (kinds expired)))
+      (let [store (subproblem/store)]
+        (binding [subproblem/*store* store subproblem/*exact-denotation-key-fn* test-exact-key]
+          (let [cold (recursive/evaluate-cached-many (options 99 {}))
+                warm (recursive/evaluate-cached-many (options 99 {}))
+                later (recursive/evaluate-cached-many (options 100 {}))
+                entries (get-in (subproblem/stats store) [:tiers :denotation :entries])
+                fault (recursive/evaluate-cached-many (options 100 {"flag" "wrong-type"}))]
+            (is (= (:decisions before) (:decisions cold) (:decisions warm)))
+            (is (= 3 (get-in warm [:counters :point-cache-hits])))
+            (is (= (:decisions after) (:decisions later)))
+            (is (every? evidence/fault? (:decisions fault)))
+            (is (= entries (get-in (subproblem/stats store) [:tiers :denotation :entries]))))))
+      (is (nil? (:checkpoint (recursive/evaluate-many (options 100 {"flag" "wrong-type"})))))
+      (is (= (:decisions after)
+             (:decisions (recursive/evaluate-many (assoc (options 100 {}) :checkpoint (:checkpoint after))))))
+      (is (= :invalid-checkpoint
+             (:reason (error-data #(recursive/evaluate-many (assoc (options 101 {}) :checkpoint (:checkpoint after)))))))
+      (is (= :invalid-checkpoint
+             (:reason (error-data #(recursive/evaluate-many (assoc (options 100 {"flag" true}) :checkpoint (:checkpoint after))))))))))

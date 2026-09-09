@@ -34,7 +34,7 @@
   (let [uri (str "datomic:mem://recursive-op-count-" (java.util.UUID/randomUUID))
         _ (assert (d/create-database uri))
         conn (d/connect uri)]
-    @(d/transact conn dschema/v7-schema)
+    (dschema/install! conn)
     (let [client (dc/make-client
                   conn
                   {:entid->object-id

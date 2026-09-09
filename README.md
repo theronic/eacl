@@ -135,8 +135,7 @@ This README is too long & too technical, so I am working to simplify it and brea
 
 > [!WARNING]
 > EACL is used in production, but under active development.
-> EACL is [available on Clojars](https://clojars.org/dev.eacl/). Use the `8.0.0-SNAPSHOT`.
-> An official v8.0.0 release should be available by end-August 2026.
+> This branch targets `8.0.0-SNAPSHOT`. Build it locally until the coordinated release is published; see [Clojars](https://clojars.org/dev.eacl/) for published versions.
 
 ## Real-Time UI Maintenance
 
@@ -353,10 +352,12 @@ For reader-Peer session pinning, let the writer return a basis token with its
 mutation response, select that exact basis once on the reader, and retain the
 snapshot for the session. Subsequent authorization reads then make no current
 head request. Datomic, Datahike, and DataScript default to the portable source
-lifecycle `"eacl/initial"`; rotate it explicitly with `expire-cache!` after a
+lifecycle `#uuid "00000000-0000-0000-0000-000000000000"`; rotate it explicitly with `expire-cache!` after a
 restore, reset, force-move, or history replacement. Datalevin has no universal
 safe default and requires an externally persisted `:source-lifecycle` plus
-shared token key material at `make-client`.
+shared token key material at `make-client`. See the
+[native UUID lifecycle upgrade guide](docs/uuid-source-lifecycle-upgrade.md)
+for coordinated configuration and artifact cutover.
 
 Construct a source-only deployment with `{:read-only? true}`. Reads and
 snapshot selection remain available; every mutation fails before planning or
@@ -400,9 +401,7 @@ As long as the DB basis is recent enough for our consistency demands, we can avo
 
 8. **One less thing** to deploy & sync Relationships to.
 
-Note that EACL has [Limitations](#limitations-deficiencies--gotchas) compared to SpiceDB, mainly:
-- No [Caveats](https://authzed.com/docs/spicedb/concepts/caveats) yet (needed for ABAC),
-- and a few other minor differences.
+Note that EACL has [Limitations](#limitations-deficiencies--gotchas) compared to SpiceDB.
 
 ## ReBAC: Relationship-based Access Control
 
@@ -539,8 +538,8 @@ The EACL-specific attributes are detailed below.
 ### Relationships
 
 EACL Relationships are light by virtue of being stored directly on entities as two tuples:
-- Forward subject->resource tuple: `:eacl.v7.relationship/subject-type+relation+resource-type+resource`
-- Reverse resource->subject tuple: `:eacl.v7.relationship/resource-type+relation+subject-type+subject`
+- Forward subject->resource tuple: `:eacl.v8.relationship/subject-type+relation+resource-type+resource+qualifier`
+- Reverse resource->subject tuple: `:eacl.v8.relationship/resource-type+relation+subject-type+subject+qualifier`
 
 To retract an entity and its Relationships, use `:eacl.fn/retractEntity`, an optional Transactor function you can install.
 
@@ -587,7 +586,7 @@ inside the client.
 - `:eacl/schema-string` stores a valid schema string was written via `eacl/write-schema!`.
 - `:eacl/schema-version` track the schema revision in Datomic Pro.
 - `:eacl/schema-generation` and `:eacl/schema-write-fence` track schema writes in Datahike and DataScript. Datalevin uses scalar `:eacl.datalevin/schema-generation` and `:eacl.datalevin/schema-write-fence` values in its native `max-tx` domain.
-- `:eacl/storage-version` identifies Datomic's current Relationship storage model, e.g. version 7 (current).
+- `:eacl/storage-version` identifies Relationship storage ABI 8 across the bundled backends (five-slot endpoint pairs).
 - `:eacl/permission-storage-version` identifies Datomic's canonical permission representation (version 8).
 - `:eacl.fn/assert-relation-unused` is a Transactor function in Datomic that guards removing Relations with active Relationships (to avoids orphaned Relationships).
 
@@ -842,10 +841,11 @@ the authorization schema directly, follow the recovery procedure in
 [Caching](#caching) before resuming authorization traffic.
 
 Datomic and Datahike consumers upgrading a released v7 database must run the
-backend's explicit permission-only v7-to-v8 migration before constructing an
-ordinary v8 client. Both reuse the existing relationship tuple attributes and
-datoms without a relationship rebuild. See the
-[v7-to-v8 migration guide](docs/migration-v7-to-v8.md).
+backend's explicit permission-only v7-to-v8 migration, followed by the
+[Relationship storage 7-to-8 migration](docs/relationship-storage-v7-to-v8.md), before
+constructing an ordinary v8 client. Permission storage remains version 8.
+Storage 8 uses a nullable qualifier reference in slot five for Caveats and
+expiring Relationships.
 
 ### Permission-tree expansion
 
@@ -1004,7 +1004,7 @@ Add the Datomic adapter dependency to your `deps.edn` file:
 (def conn (d/connect datomic-uri))
 
 ; Install EACL's current Datomic Relationship schema:
-@(d/transact conn schema/v8-schema)
+(schema/install! conn)
 
 ; Make an EACL client that satisfies the `IAuthorization` protocol:
 (def acl
@@ -1683,21 +1683,27 @@ verification keys on every instance that accepts the same tokens:
 (def acl
   (eacl.datomic.core/make-client
    conn
-   {:security-key "32+ bytes of shared secret key material"
+   {:security-key externally-supplied-primary-root
     :security-kid :cursor-2026-07
     :zed-token-keyring {:zed-2026-06 old-zed-root
                         :zed-2026-07 current-zed-root}
     :zed-token-kid :zed-2026-07}))
 ```
 
-Portable cursors use the confidential `eacl_c5_` envelope: independently
+Portable cursors use the confidential `eacl_c6_` envelope: independently
 derived AES-256-CTR and HMAC-SHA-256 keys, a random 96-bit nonce, and
 authentication before payload parsing. Rotate a cursor authenticated-encryption
-key before 2^32 cursor encryptions. Install the new key id for issuance first,
-retain old keys for verification through the intended token lifetime, and then
-retire them. EACL does not count per-key encryptions for you. The default keys
-are client-local, so default cursors and tokens do not survive restarts or load
-balancing.
+key before 2^32 cursor encryptions. Distribute the new key as inactive to every
+Peer, observe acceptance everywhere, then activate it. **Default cursors never
+expire: lossless resume requires indefinite retention of old keys.** A finite
+`:cursor-ttl-seconds` bounds only subsequently issued cursors. EACL does not
+count per-key encryptions. Default keys are process-local and do not survive
+restarts or provide cross-process verification.
+
+V8 adds shared live `:security-keyring-controller` and dedicated
+`:zed-token-keyring-controller` options. See the [security-key guide](docs/security-keyrings.md)
+for the public update APIs, two-Peer runbook, failure recovery, and cache trust
+rules. Key updates do not change authorization proofs or database identity.
 
 See the [backend guide](docs/v8-backend-modules-and-upgrade.md) for exact
 capabilities, synchronization timeouts, checkpoints, key rotation, and
@@ -1874,6 +1880,11 @@ Now you can transact relationships. The usual way is `eacl/create-relationships!
 
 ## Limitations, Deficiencies & Gotchas:
 
+- Caveats use a bounded CEL subset. JVM clients need the optional
+  `eacl-caveats-jvm` evaluator; ClojureScript clients must supply a compatible
+  evaluator. See [supported expressions and limits](docs/caveats.md).
+- Client-targeted cursors over expiring Relationships require a restart when
+  their temporal certificate ends; explicit snapshots retain their captured time.
 - *Exact snapshots require backend history:* `at-exact-snapshot` and continued
   cursors require the backend to reconstruct the selected database value.
   Ordinary Datomic history and history-enabled Datahike do not age-expire.
@@ -1916,9 +1927,10 @@ but it is not a byte-for-byte or operational clone:
   sets unless your application explicitly sorts them; never compare EACL and
   SpiceDB page membership or cursor bytes.
 - EACL cursors bind the selected native revision and its dependency/order
-  proof. A cursor walk stays on that exact snapshot. If the backend cannot
-  reconstruct it, EACL fails closed. A relevant write does not silently change
-  page membership midway through a cursor walk.
+  proof. A cursor walk stays on that database snapshot. Qualified client-targeted
+  cursors capture fresh time and require restart when their temporal certificate
+  ends; explicit snapshots pin historical time. Neither mode silently rebases
+  its page boundary. Unavailable native history fails closed.
 - Omitted consistency means `:minimize-latency`. EACL selects the current
   immutable database value visible to the local backend connection. SpiceDB may use
   an optimized cached revision, so freshness can differ. Use each backend's
@@ -1926,12 +1938,14 @@ but it is not a byte-for-byte or operational clone:
   distinction matters; tokens and cursors are backend-local.
 - EACL provides `count-resources`, `count-subjects`, a controllable EACL result
   cache, and `delete-object!`, which removes both stored Relationship halves.
-  Datomic commits high-degree deletion in batches of 1,000; Datahike and
-  DataScript use one atomic transaction. These do not have direct SpiceDB API
-  equivalents.
-- EACL currently supports a smaller schema subset: unions, intersections,
-  exclusions, and its documented arrow forms, but not caveats, wildcard
-  subjects, expiration, or subject relations.
+  Qualified deletion uses bounded native transactions; each transaction removes
+  both endpoint values and their owned qualifier together. These operations do
+  not have direct SpiceDB API equivalents.
+- V8 supports [Caveats and expiring Relationships](docs/caveats.md), including
+  conditional results and an exclusive UTC-millisecond expiry. Its bounded CEL
+  profile is a subset of SpiceDB's expression language; wildcard subjects and
+  subject relations remain unsupported. Qualified activation requires upgrading
+  every serving Peer first.
 - EACL evaluates relationship cycles as a fixed point and has no separate
   dispatch-depth limit for checks, lookups, and counts. These operations remain
   subject to configured traversal work limits. SpiceDB uses a configurable
@@ -1958,3 +1972,5 @@ Some of this open-source work was generously funded by my former employer, [Clou
 # Licence
 
 - EACL is free and open-source, licensed under the Eclipse Public License v2.0.
+
+See [Caveats and expiring Relationships](docs/caveats.md) for the v8 public APIs, optional JVM evaluator, trusted-clock and cursor semantics, and coordinated rollout.

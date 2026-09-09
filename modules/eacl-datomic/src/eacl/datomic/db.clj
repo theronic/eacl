@@ -1,7 +1,26 @@
 (ns eacl.datomic.db
   "Datomic-only entity, schema-definition, and ordered adjacency operations."
   (:require [datomic.api :as d]
-            [eacl.relationships.storage :as relationship-storage]))
+            [eacl.relationships.storage :as relationship-storage]
+            [eacl.relationships.edge :as edge]
+            [eacl.relationships.endpoint-pair :as endpoint-pair]))
+
+(defn relationship-identity-datoms
+  "One owner/attribute/identity seek, retaining exact qualifier variants."
+  [db entity attr value]
+  (let [attribute-eid (d/entid db attr)
+        prefix (endpoint-pair/identity-prefix value)]
+    (take-while #(and (= entity (:e %)) (= attribute-eid (:a %))
+                     (endpoint-pair/value-prefix? (:v %) prefix))
+                (d/seek-datoms db :eavt entity attribute-eid (conj prefix nil)))))
+
+(defn global-relationship-identity-datoms
+  [db attr value]
+  (let [attribute-eid (d/entid db attr)
+        prefix (endpoint-pair/identity-prefix value)]
+    (take-while #(and (= attribute-eid (:a %))
+                     (endpoint-pair/value-prefix? (:v %) prefix))
+                (d/seek-datoms db :avet attribute-eid (conj prefix nil)))))
 
 (defn object-eid
   [db object-id]
@@ -16,14 +35,11 @@
   entity, strictly after an exclusive bound or from an inclusive one. Lazy:
   the routed read seam realizes exactly the chunk it asked for."
   [db endpoint-id attr prefix cursor-or-options]
-  (let [{:keys [direction bound-eid inclusive-bound?]}
+  (let [{:keys [direction bound-eid inclusive-bound? include-qualifier?]}
         (relationship-storage/normalize-scan-options cursor-or-options)
         attr-id (d/entid db attr)
         [p0 p1 p2] prefix
-        start-tuple (conj prefix
-                          (case direction
-                            :asc (or bound-eid 0)
-                            :desc (or bound-eid Long/MAX_VALUE)))
+        start-tuple (endpoint-pair/seek-bound prefix bound-eid direction Long/MAX_VALUE)
         datoms (case direction
                  :asc (d/seek-datoms
                        db :eavt endpoint-id attr-id start-tuple)
@@ -39,8 +55,9 @@
                      (= p0 (nth value 0))
                      (= p1 (nth value 1))
                      (= p2 (nth value 2))))))
+      true (#(endpoint-pair/checked-datoms % include-qualifier?))
       skip-bound? (drop-while #(= bound-eid (nth (:v %) 3)))
-      true (map #(nth (:v %) 3)))))
+      true (map (if include-qualifier? edge/from-datom #(nth (:v %) 3))))))
 
 (defn subject->resources
   [db subject-type subject-id relation-id resource-type cursor-or-options]
@@ -113,12 +130,43 @@
   [db subject-type subject-id relation-id resource-type resource-id]
   (boolean
    (seq
-    (d/datoms
-     db :eavt subject-id relationship-storage/forward-attribute
-     [subject-type relation-id resource-type resource-id]))))
+    (endpoint-pair/checked-datoms
+     (relationship-identity-datoms
+      db subject-id relationship-storage/forward-attribute
+      (endpoint-pair/forward-value subject-type relation-id resource-type resource-id))))))
+
+(defn direct-edge
+  "Stored compact edge or nil, prior to request qualification."
+  [db subject-type subject-id relation-id resource-type resource-id]
+  (some-> (first (endpoint-pair/checked-datoms
+                 (relationship-identity-datoms
+                  db subject-id relationship-storage/forward-attribute
+                  (endpoint-pair/forward-value subject-type relation-id resource-type resource-id))
+                 true))
+          edge/from-datom))
 
 (defn schema-version
   [db]
   (when (d/entid db :eacl/id)
     (some-> (d/entity db [:eacl/id "schema-string"])
             :eacl/schema-version)))
+
+(defn entity-facts [database eid]
+  (mapv (fn [datom] [(:a datom) (:v datom) (:tx datom)]) (d/datoms database :eavt eid)))
+
+(defn entity-data [database eid]
+  (let [rows (entity-facts database eid)]
+    (when (seq rows)
+      (reduce (fn [result [a v]]
+                (let [attribute (:db/ident (d/entity database a))]
+                  (if (= :eacl.relation/caveats attribute)
+                    (update result attribute (fnil conj #{}) v) (assoc result attribute v))))
+              {:db/id eid} rows))))
+
+
+(defn avet-tuple-prefix
+  "All stored endpoint rows in one typed Relation partition, including qualifiers."
+  [database attribute prefix]
+  (when-let [attribute-id (d/entid database attribute)]
+    (take-while #(and (= attribute-id (:a %)) (endpoint-pair/value-prefix? (:v %) prefix))
+                (d/seek-datoms database :avet attribute-id (into prefix [0 nil])))))

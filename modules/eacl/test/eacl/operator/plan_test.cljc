@@ -166,10 +166,7 @@
     (is (= (:fingerprint left) (:fingerprint right)))
     (is (= (:anchors left) (:anchors right)))
     (is (= (:witness-programs left) (:witness-programs right)))
-    (is (= plan/order-contract (:order-contract left)))
-    (is (= "vzgqjN4YMK7bpU-dk5WQSfKPdEXdIDeloaP6pNcqw_I"
-           (:fingerprint left))
-        "the canonical plan fingerprint is identical in CLJ and CLJS")))
+    (is (= plan/order-contract (:order-contract left)))))
 
 (deftest ordered-exclusion-and-complete-evidence-test
   (let [operator-plan

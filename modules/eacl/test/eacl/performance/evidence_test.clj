@@ -11,9 +11,7 @@
 
 (defn- fixture
   [filename]
-  (repo/file "docs" "benchmarks" "results"
-             "2026-08-29-eacl-performance-amplification"
-             filename))
+  (repo/file "formal" "fixtures" "performance" filename))
 
 (def ^:private frozen-release-acceptance-digest
   "8eba9de7d062bc39f1c89bd462f18b003422994fe5b5ce80f3582a011552a695")

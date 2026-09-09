@@ -4,7 +4,10 @@
   Exact and managed reuse are semantic key construction concerns. Storage is
   only a bounded partial map of opaque keys to immutable completed values;
   misses compute independently and publication never owns computation."
-  (:require [eacl.backend.v8 :as backend]
+  (:require [clojure.string :as str]
+            [eacl.authorization.result :as authorization-result]
+            [eacl.authorization.temporal :as temporal]
+            [eacl.backend.v8 :as backend]
             [eacl.cache-identity :as cache-identity]
             [eacl.cache.key :as cache-key]
             [eacl.cache.standard-lru :as lru]
@@ -13,7 +16,11 @@
             [eacl.exact-integer :as exact-integer]
             [eacl.execution :as execution]
             [eacl.proof-frame :as proof-frame]
+            [eacl.relationships.mutations :as relationship-mutations]
             [eacl.secure-format :as secure]
+            [eacl.uuid :as uuid]
+            [eacl.security.imports :as imports]
+            [eacl.security.retention :as retention]
             [eacl.subproblem-cache :as subproblem])
   #?(:clj (:import [java.util.concurrent.atomic LongAdder])))
 
@@ -77,12 +84,12 @@
 
 (def basis-snapshot-format
   "Version identifier for flat process-neutral authorization-cache snapshots."
-  :eacl.cache/basis-snapshot-v2)
+  :eacl.cache/basis-snapshot-v3)
 
-(def ^:private answer-entry-format :eacl.cache/completed-answer-v2)
+(def ^:private answer-entry-format :eacl.cache/completed-answer-v3)
 (def rendered-page-entry-format
   "Version identifier for exact public transport-page values."
-  :eacl.cache/rendered-page-v4)
+  :eacl.cache/rendered-page-v6)
 
 (defn- metadata-free-portable-data?
   [value allow-records? {:keys [maximum-depth maximum-entries
@@ -100,6 +107,7 @@
                (cond
                  (string? item) (count item)
                  (keyword? item) (count (str item))
+                 (uuid/value? item) 44
                  :else 0))]
         (cond
           (or (and maximum-depth (> depth maximum-depth))
@@ -115,6 +123,7 @@
               (boolean? item)
               (string? item)
               (keyword? item)
+              (uuid/value? item)
               (exact-integer/exact? item))
           (recur remaining next-entries next-characters)
 
@@ -199,6 +208,10 @@
                (or (map? item) (set? item))
                false
 
+               ;; UUID support is for portable authority, not an expansion of
+               ;; the external object-ID codec's previously admitted domain.
+               (uuid/value? item) false
+
                :else
                (try
                  (let [canonical (secure/canonicalize item)]
@@ -208,8 +221,8 @@
      (canonical? value))))
 
 (def ^:private authorization-abi
-  {:key-version 2
-   :answer-value-version 2
+  {:key-version 3
+   :answer-value-version 3
    :subproblem-value-version 2
    :backend-adapter-version backend/adapter-version
    :engine-version engine/engine-version
@@ -317,7 +330,7 @@
          (= (:backend basis-key) (:backend identity))
          (backend/admissible-basis-kind? (:basis-kind identity))
          (some? (:source-id identity))
-         (some? (:source-lifecycle identity))
+         (uuid/value? (:source-lifecycle identity))
          (proof-frame/generation? (:revision identity))
          (causal-token/exact-locator? (:exact-locator identity))
          (map? (:backend-snapshot-id identity))
@@ -334,7 +347,7 @@
                 (set (keys (:source-scope lineage))))
              (keyword? (get-in lineage [:source-scope :backend]))
              (some? (get-in lineage [:source-scope :source-id]))
-             (some? (:source-lifecycle lineage)))
+             (uuid/value? (:source-lifecycle lineage)))
     {:source-scope
      (select-keys (:source-scope lineage) [:backend :source-id :branch])
      :source-lifecycle (:source-lifecycle lineage)}))
@@ -888,15 +901,21 @@
         expected-limit (if limited?
                          (:count-limit answer-query)
                          -1)
-        expected-fields (if limited?
-                          #{:count :limit :truncated?}
-                          #{:count :limit})
+        detailed? (= :detailed (:result-policy answer-query))
+        expected-fields (cond-> #{:count :limit}
+                          limited? (conj :truncated?)
+                          detailed? (conj :definite-count :conditional-count))
         count-value (:count value)]
     (and (map? query)
          (map? answer-query)
          (map? value)
          (= expected-fields (set (keys value)))
          (portable-natural? count-value)
+         (or (not detailed?)
+             (and (portable-natural? (:definite-count value))
+                  (portable-natural? (:conditional-count value))
+                  (= count-value (+ (:definite-count value)
+                                    (:conditional-count value)))))
          (if limited?
            (and (portable-natural? expected-limit)
                 (= expected-limit (:limit value))
@@ -926,10 +945,23 @@
 (defn- rendered-relationship-shape?
   [value]
   (and (map? value)
-       (= #{:subject :relation :resource} (set (keys value)))
+       (every? (into #{:subject :relation :resource} relationship-mutations/qualifier-keys) (keys value))
+       (relationship-mutations/canonical-qualifier-metadata? value)
        (rendered-spice-object-shape? (:subject value))
        (unqualified-keyword? (:relation value))
        (rendered-spice-object-shape? (:resource value))))
+
+(defn- internal-relationship-shape?
+  "Native eids may be Integer or Long. Their representation is an adapter
+  detail; public transport IDs retain the stricter canonical shape check."
+  [value]
+  (and (every? #(let [id (get-in value [% :id])]
+                  (and (integer? id) (pos? id)
+                       (<= id #?(:clj Long/MAX_VALUE :cljs js/Number.MAX_SAFE_INTEGER))))
+               [:subject :resource])
+       (rendered-relationship-shape?
+        #?(:clj (-> value (update-in [:subject :id] long) (update-in [:resource :id] long))
+           :cljs value))))
 
 (defn rendered-page-entry-valid?
   "True for one exact public page with its already-authenticated cursor tokens.
@@ -942,40 +974,55 @@
    (rendered-page-entry-valid? nil value))
   ([semantic-key value]
    (let [page (:page value)
-        page-info (:page-info page)
-        page-info-fields (when (map? page-info) (set (keys page-info)))
-        operation (:operation semantic-key)
-        rendered-item?
-        (case operation
-          :read-relationships rendered-relationship-shape?
-          (:lookup-resources :lookup-subjects)
-          rendered-spice-object-shape?
+         page-info (:page-info page)
+         page-info-fields (when (map? page-info) (set (keys page-info)))
+         operation (:operation semantic-key)
+         qualified? (if semantic-key (some? (:qualification semantic-key))
+                        (contains? value :qualification-certificate))
+         detailed? (= :detailed (get-in semantic-key [:query :public :result-policy]))
+         rendered-item?
+         (case operation
+           :read-relationships rendered-relationship-shape?
+           (:lookup-resources :lookup-subjects)
+           (if detailed?
+             #(authorization-result/lookup-result-valid? rendered-spice-object-shape? %)
+             rendered-spice-object-shape?)
           ;; The one-argument public predicate accepts either supported page
           ;; shape; publication always supplies the operation-specific key.
-          (fn [item]
-            (or (rendered-spice-object-shape? item)
-                (rendered-relationship-shape? item))))
-        token? (fn [candidate]
-                 (or (nil? candidate)
-                     (and (string? candidate)
-                          (pos? (count candidate)))))]
-    (and (map? value)
-         (= rendered-page-entry-fields (set (keys value)))
-         (= rendered-page-entry-format (:format value))
-         (map? page)
-         (= page-answer-fields (set (keys page)))
-         (vector? (:data page))
-         (<= (count (:data page)) 1000)
-         (every? rendered-item? (:data page))
-         (map? page-info)
-         (every? page-info-fields required-page-info-fields)
-         (every? allowed-page-info-fields page-info-fields)
-         (token? (:start-cursor page-info))
-         (token? (:end-cursor page-info))
-         (boolean? (:has-next-page? page-info))
-         (boolean? (:has-previous-page? page-info))
-         (or (not (contains? page-info :bounded?))
-             (boolean? (:bounded? page-info)))))))
+           (fn [item]
+             (or (rendered-spice-object-shape? item)
+                 (rendered-relationship-shape? item))))
+         token? (fn [candidate]
+                  (or (nil? candidate)
+                      (and (string? candidate)
+                           (pos? (count candidate)))))]
+     (and (map? value)
+          (= (cond-> rendered-page-entry-fields
+               qualified? (conj :qualification-certificate)
+               (if semantic-key (get-in semantic-key [:query :security-kid]) (:security-kid value))
+               (conj :security-kid))
+             (set (keys value)))
+          (or (nil? semantic-key)
+              (= (get-in semantic-key [:query :security-kid]) (:security-kid value)))
+          (or (not qualified?)
+              (and (or (nil? semantic-key)
+                       (= temporal/collection-format (:qualification-certificate-format semantic-key)))
+                   (temporal/interval-valid? (:qualification-certificate value))))
+          (= rendered-page-entry-format (:format value))
+          (map? page)
+          (= page-answer-fields (set (keys page)))
+          (vector? (:data page))
+          (<= (count (:data page)) 1000)
+          (every? rendered-item? (:data page))
+          (map? page-info)
+          (every? page-info-fields required-page-info-fields)
+          (every? allowed-page-info-fields page-info-fields)
+          (token? (:start-cursor page-info))
+          (token? (:end-cursor page-info))
+          (boolean? (:has-next-page? page-info))
+          (boolean? (:has-previous-page? page-info))
+          (or (not (contains? page-info :bounded?))
+              (boolean? (:bounded? page-info)))))))
 
 (defn- permission-tree-answer?
   [value]
@@ -1013,6 +1060,16 @@
           :else false))
       true)))
 
+(defn- lookup-page-answer?
+  [semantic-key value]
+  (let [query (:query semantic-key)
+        detailed? (= :detailed (:result-policy (or (:internal query) (:public query))))]
+    (and (page-answer? value)
+         (if detailed?
+           (every? #(authorization-result/lookup-result-valid? rendered-spice-object-shape? %)
+                   (:data value))
+           (not-any? #(and (map? %) (contains? % :object)) (:data value))))))
+
 (defn completed-answer-value-valid?
   "Validates one completed authorization answer against its semantic key.
 
@@ -1020,17 +1077,30 @@
   snapshot restore. Exact resident lookup is ordinary membership by a complete
   semantic key, so an already accepted value is not validated again per hit."
   [operation semantic-key value]
-  (and (map? semantic-key)
-       (= operation (:operation semantic-key))
-       (case operation
-         :can? (boolean? value)
-         :read-relationships (page-answer? value)
-         :lookup-resources (page-answer? value)
-         :lookup-subjects (page-answer? value)
-         :count-resources (count-answer? semantic-key value)
-         :count-subjects (count-answer? semantic-key value)
-         :expand-permission-tree (permission-tree-answer? value)
-         false)))
+  (let [qualified-result? (and (:qualification semantic-key)
+                               (contains? #{:lookup-resources :lookup-subjects :count-resources :count-subjects :read-relationships} operation))
+        certificate (:qualification-certificate value)
+        value (if qualified-result? (dissoc value :qualification-certificate) value)]
+    (and (or (not qualified-result?)
+             (and (= temporal/collection-format (:qualification-certificate-format semantic-key))
+                  (temporal/interval-valid? certificate)))
+         (map? semantic-key)
+         (= operation (:operation semantic-key))
+         (case operation
+           :can? (cond
+                   (= temporal/point-format (:temporal-answer-format semantic-key))
+                   (and (:qualification semantic-key) (temporal/point-answer-valid? value))
+                   (:qualification semantic-key) (authorization-result/cache-value? value)
+                   :else (boolean? value))
+           :read-relationships (and (page-answer? value)
+                                    (or (nil? (:qualification semantic-key))
+                                        (every? internal-relationship-shape? (:data value))))
+           :lookup-resources (lookup-page-answer? semantic-key value)
+           :lookup-subjects (lookup-page-answer? semantic-key value)
+           :count-resources (count-answer? semantic-key value)
+           :count-subjects (count-answer? semantic-key value)
+           :expand-permission-tree (permission-tree-answer? value)
+           false))))
 
 (defn- answer-snapshot-entry-valid?
   [key entry]
@@ -1096,6 +1166,12 @@
     (incompatible-snapshot! "Cache snapshot must be a map."
                             {:snapshot snapshot}))
   (when-not (= basis-snapshot-format (:format snapshot))
+    (when (contains? #{:eacl.cache/basis-snapshot-v1 :eacl.cache/basis-snapshot-v2}
+                     (:format snapshot))
+      (throw (ex-info "This cache snapshot requires upgrade; export a fresh snapshot."
+                      {:type :eacl/cache-snapshot-upgrade-required
+                       :eacl/error :eacl/cache-snapshot-upgrade-required
+                       :reason :legacy-source-lifecycle})))
     (incompatible-snapshot!
      "Cache snapshot format is not supported."
      {:actual-format (:format snapshot)}))
@@ -1130,13 +1206,32 @@
                  (count (set (map (juxt :tier :key) entries))))
       (incompatible-snapshot! "Cache snapshot contains duplicate keys." {}))))
 
-(defn restore-basis-snapshot!
+(defn- restore-basis-snapshot*
   "Validates and reconstructs fresh stores off-side, then installs atomically."
-  [store snapshot bounds]
+  [store snapshot bounds import-trust expected-lineage]
   (when-not (basis-cache? store)
     (invalid-config! "Expected an EACL basis cache." {:cache store}))
   (let [max-entries (valid-bounds! bounds)
         _ (validate-basis-snapshot! snapshot max-entries)
+        original-snapshot snapshot
+        ;; JVM UUIDs are immutable. CLJS trusted decoded inputs still need
+        ;; capture: freezing an ingress option does not own imported keys.
+        snapshot #?(:clj snapshot
+                    :cljs (try
+                            (secure/capture-portable snapshot {:maximum-depth 64
+                                                               :maximum-entries 131072})
+                            (catch :default error
+                              (incompatible-snapshot! "Cache snapshot contains invalid portable data."
+                                                      {:cause-type (:type (ex-data error))}))))
+        ;; Check the captured values: a caller-owned CLJS UUID accessor must
+        ;; not change authority between the scope check and reconstruction.
+        _ #?(:cljs (when-not (identical? original-snapshot snapshot)
+                     (validate-basis-snapshot! snapshot max-entries)) :clj nil)
+        _ (when expected-lineage
+            (doseq [entry (:entries snapshot)]
+              (when-not (= expected-lineage (get-in entry [:key 2 2 :lineage]))
+                (incompatible-snapshot! "Cache snapshot belongs to another source lifecycle."
+                                        {:reason :source-lifecycle-mismatch}))))
         restored
         (try
           (subproblem/restore-store
@@ -1152,7 +1247,10 @@
               (incompatible-snapshot!
                "Cache snapshot entry validation failed."
                {:cause-type (:type (ex-data error))})
-              (throw error))))]
+              (throw error))))
+        restored (if import-trust
+                   (subproblem/mark-imported! restored (:controller import-trust) (:kid import-trust))
+                   restored)]
     (replace-lifecycle!
      store
      #(restored-lifecycle
@@ -1163,6 +1261,67 @@
     (record-metrics! store update :restores inc)
     {:restored? true
      :entry-count (:entry-count snapshot)}))
+
+(defn restore-basis-snapshot!
+  "Restores an already trusted decoded snapshot. External hosts own its trust."
+  ([store snapshot bounds]
+   (restore-basis-snapshot! store snapshot bounds nil))
+  ([store snapshot bounds expected-lineage]
+   (restore-basis-snapshot* store snapshot bounds nil expected-lineage)))
+
+(def maximum-authenticated-snapshot-bytes (* 16 1024 1024))
+
+(defn- authenticated-snapshot-options [options bounds]
+  (when-not (and (map? bounds) (every? #{:max-entries :maximum-size} (keys bounds)))
+    (invalid-config! "Invalid authenticated cache snapshot bounds." {}))
+  (valid-bounds! (select-keys bounds [:max-entries]))
+  (let [maximum-size (get bounds :maximum-size maximum-authenticated-snapshot-bytes)]
+    (when-not (and (integer? maximum-size) (pos? maximum-size)
+                   (<= maximum-size maximum-authenticated-snapshot-bytes))
+      (invalid-config! "Invalid authenticated cache snapshot byte limit." {}))
+    (when-not (:keyring-controller options)
+      (invalid-config! "Authenticated cache snapshots require a keyring controller." {}))
+    (assoc options :prefix "eacl_cache2_" :domain "eacl/cache-snapshot/envelope/v2"
+           :payload-keys #{:format :entries :entry-count}
+           :maximum-size maximum-size :maximum-depth 64 :maximum-entries 131072)))
+
+(defn export-authenticated-basis-snapshot
+  "Authenticates a bounded snapshot of locally computed entries with one kid.
+   Imported entries are omitted so re-export cannot extend their original trust."
+  [store bounds options]
+  (let [options (authenticated-snapshot-options options bounds)
+        snapshot (export-basis-snapshot store (select-keys bounds [:max-entries]))
+        token (secure/encode-authenticated options snapshot)]
+    (when (> (count token) (:maximum-size options))
+      (throw (ex-info "Authenticated cache snapshot exceeds its byte limit."
+                      {:type :eacl.format/invalid :eacl/error :eacl.format/invalid :reason :too-large})))
+    token))
+
+(defn restore-authenticated-basis-snapshot!
+  "Authenticates optional bytes before decoding and attaches the verifying kid.
+   Unavailable keys or invalid artifacts miss without modifying existing stores."
+  ([store token bounds options]
+   (restore-authenticated-basis-snapshot! store token bounds options nil))
+  ([store token bounds options expected-lineage]
+   (let [options (authenticated-snapshot-options options bounds)]
+     (when (and (string? token) (str/starts-with? token "eacl_cache1_"))
+       (throw (ex-info "This cache snapshot requires upgrade; export a fresh snapshot."
+                       {:type :eacl/cache-snapshot-upgrade-required
+                        :eacl/error :eacl/cache-snapshot-upgrade-required
+                        :reason :legacy-source-lifecycle})))
+     (try
+       (let [{:keys [payload security-kid]} (secure/decode-authenticated-envelope options token)]
+         (assoc (restore-basis-snapshot* store payload (select-keys bounds [:max-entries])
+                                         {:controller (:keyring-controller options) :kid security-kid}
+                                         expected-lineage)
+                :security-kid security-kid))
+       (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core/ExceptionInfo) error
+         (if (contains? #{:eacl.format/invalid :eacl/incompatible-cache-snapshot
+                          :eacl/cache-snapshot-incompatible} (:type (ex-data error)))
+           {:restored? false :cache-miss? true
+            :reason (if (= :security-key-unavailable (:reason (ex-data error)))
+                      :security-key-unavailable :invalid-cache-artifact)}
+           (throw error)))))))
 
 (defn- safe-valid?
   [valid? value]
@@ -1206,17 +1365,18 @@
         nil))))
 
 (defn- lookup-answer
-  [subproblem-store key]
-  (some-> (subproblem/lookup!
-           subproblem-store :answer key)
+  [subproblem-store key eligible?]
+  (some-> (if eligible?
+            (subproblem/lookup-eligible! subproblem-store :answer key eligible?)
+            (subproblem/lookup! subproblem-store :answer key))
           :value))
 
 (defn- lookup-managed-answer
-  [subproblem-store key requested-revision]
+  [subproblem-store key requested-revision temporal? evaluation-time-ms]
   (some-> (subproblem/lookup-eligible!
            subproblem-store :answer key
-           #(managed-answer-causally-eligible?
-             requested-revision %))
+           #(and (managed-answer-causally-eligible? requested-revision %)
+                 (or (not temporal?) (temporal/answer-reusable? (:value %) evaluation-time-ms false))))
           :value))
 
 (defn- record-publication!
@@ -1234,7 +1394,12 @@
    store
    (subproblem/publish!
     subproblem-store :answer key
-    {:valid? answer-entry-valid?}
+    (cond-> {:valid? answer-entry-valid?}
+      (some? (temporal/answer-interval (:value entry)))
+      (assoc :replace? (fn [prior next]
+                         (and (= (:computed-revision prior) (:computed-revision next))
+                              (= (:computed-exact-locator prior) (:computed-exact-locator next))
+                              (temporal/supersedes? (:value prior) (:value next))))))
     entry)))
 
 (defn- cache-hit-result
@@ -1251,7 +1416,7 @@
   The caller supplies the captured lifecycle so an expiry racing this request
   cannot mix an old answer store with a new rendered store. Cache failures are
   ordinary misses and never affect authorization."
-  [store {:keys [exact-basis-key cache-lifecycle]} semantic-key]
+  [store {:keys [exact-basis-key cache-lifecycle evaluation-time-ms]} semantic-key]
   (when (and (basis-cache? store)
              (valid-exact-basis-key? exact-basis-key)
              (map? semantic-key)
@@ -1265,7 +1430,10 @@
             (catch #?(:clj Throwable :cljs :default) _
               (record-metrics! store update :rendered-page-store-errors inc)
               nil))]
-      (if (:found? resident)
+      (if (and (:found? resident)
+               (= (get-in semantic-key [:query :security-kid]) (:security-kid (:value resident)))
+               (or (nil? (:qualification semantic-key))
+                   (temporal/answer-reusable? (:value resident) evaluation-time-ms true)))
         (do
           ;; JVM hits use a striped LongAdder instead of serializing on the
           ;; ordinary metrics atom. CLJS remains single-threaded.
@@ -1315,8 +1483,10 @@
     (let [lifecycle (or cache-lifecycle @(:lifecycle store))
           storage-key (exact-rendered-page-key exact-basis-key semantic-key)]
       (try
-        (if (lru/put-if-absent!
-             (:rendered-pages lifecycle) storage-key value)
+        (if (or (lru/put-if-absent! (:rendered-pages lifecycle) storage-key value)
+                (let [prior (lru/lookup! (:rendered-pages lifecycle) storage-key)]
+                  (and (:found? prior) (temporal/supersedes? (:value prior) value)
+                       (lru/replace-if! (:rendered-pages lifecycle) storage-key (:value prior) value))))
           (do
             (record-metrics! store update :rendered-page-puts inc)
             {:published? true :reason :published})
@@ -1351,11 +1521,11 @@
    :cache-tier nil
    :cache-basis nil})
 
-(defn resolve-basis!
+(defn- resolve-basis*
   "Resolves an ordinary request exact-first, then by one complete managed key."
   [store
    {:keys [exact-basis-key cache-lifecycle managed-key-fn populate-cache?
-           populate-exact?]
+           populate-exact? evaluation-time-ms]
     :or {populate-cache? true
          populate-exact? true}}
    semantic-key compute]
@@ -1370,7 +1540,11 @@
           lifecycle (or cache-lifecycle @(:lifecycle store))
           subproblem-store (:subproblems lifecycle)
           exact-key (exact-answer-key exact-basis-key semantic-key)
-          exact-entry (lookup-answer subproblem-store exact-key)]
+          temporal? (or (= temporal/point-format (:temporal-answer-format semantic-key))
+                        (= temporal/collection-format (:qualification-certificate-format semantic-key)))
+          exact-entry (lookup-answer subproblem-store exact-key
+                                     (when temporal?
+                                       #(temporal/answer-reusable? (:value %) evaluation-time-ms true)))]
       (if exact-entry
         (cache-hit-result store :exact-basis exact-entry)
         (if-not (execution/cache-stage-available?)
@@ -1384,7 +1558,7 @@
                 managed-entry
                 (when managed-key
                   (lookup-managed-answer
-                   subproblem-store managed-key revision))]
+                   subproblem-store managed-key revision temporal? evaluation-time-ms))]
             (if managed-entry
               (do
                 (when (and populate-cache? populate-exact?)
@@ -1422,10 +1596,10 @@
                    :cache-tier nil
                    :cache-basis cache-basis})))))))))
 
-(defn resolve-managed-read-only!
+(defn- resolve-managed-read-only*
   "Consults only a causally valid managed key; a miss computes without writes."
   [store
-   {:keys [cache-lifecycle snapshot-order managed-source managed-key-fn]}
+   {:keys [cache-lifecycle snapshot-order managed-source managed-key-fn evaluation-time-ms]}
    semantic-key compute]
   (if-not (and (basis-cache? store)
                (proof-frame/generation? snapshot-order)
@@ -1442,7 +1616,31 @@
               entry
               (when managed-key
                 (lookup-managed-answer
-                 subproblem-store managed-key snapshot-order))]
+                 subproblem-store managed-key snapshot-order
+                 (= temporal/point-format (:temporal-answer-format semantic-key)) evaluation-time-ms))]
           (if entry
             (cache-hit-result store :managed-current entry)
             (uncached-result store compute)))))))
+
+(defn ^:no-doc prune-retired-rendered! [store retired]
+  (when (basis-cache? store)
+    (retention/prune! (:rendered-pages (capture-cache-lifecycle store))
+                      (fn [_ value] (contains? retired (:security-kid value))))))
+
+(defn- resolve-with-imports [store options f]
+  (let [lifecycle (or (:cache-lifecycle options)
+                      (when (basis-cache? store) @(:lifecycle store)))
+        options (assoc options :cache-lifecycle lifecycle)]
+    (if (get-in lifecycle [:subproblems :imports?])
+      (imports/run #(f options))
+      (f options))))
+
+(defn resolve-basis!
+  "Resolves an ordinary request without promoting imported trust into local values."
+  [store options semantic-key compute]
+  (resolve-with-imports store options #(resolve-basis* store % semantic-key compute)))
+
+(defn resolve-managed-read-only!
+  "Consults one causally valid managed key and retains any import provenance."
+  [store options semantic-key compute]
+  (resolve-with-imports store options #(resolve-managed-read-only* store % semantic-key compute)))

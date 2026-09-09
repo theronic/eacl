@@ -5,9 +5,11 @@
   authenticity rather than pretending that base64 is encryption; adapters may
   layer authenticated encryption over the resulting payload when their runtime
   supports a compatible API."
-  (:require [#?(:clj clojure.edn :cljs cljs.reader) :as edn]
+  (:require [#?(:clj clojure.edn :cljs cljs.tools.reader.edn) :as edn]
             [clojure.string :as str]
             [eacl.exact-integer :as exact-integer]
+            [eacl.uuid :as uuid]
+            [eacl.security.protocols :as keyrings]
             #?@(:cljs [[goog.crypt :as gcrypt]
                        [goog.crypt.Hmac]
                        [goog.crypt.Sha256]]))
@@ -18,7 +20,7 @@
               [javax.crypto Mac]
               [javax.crypto.spec SecretKeySpec])))
 
-(def canonical-version 1)
+(def canonical-version 2)
 (def default-maximum-size 65536)
 (def default-maximum-depth 32)
 (def default-maximum-entries 16384)
@@ -44,25 +46,34 @@
   #?(:clj (int (.charAt ^String value index))
      :cljs (.charCodeAt value index)))
 
-(defn- well-formed-unicode?
+(defn- unicode-utf8-size
+  "Counts UTF-8 bytes directly from UTF-16, rejecting unpaired surrogates."
   [value]
-  (loop [index 0]
-    (if (= index (count value))
-      true
-      (let [code (string-code-unit-at value index)]
-        (cond
-          (<= 0xD800 code 0xDBFF)
-          (and (< (inc index) (count value))
-               (<= 0xDC00
-                   (string-code-unit-at value (inc index))
-                   0xDFFF)
-               (recur (+ index 2)))
+  (let [length (count value)]
+    (loop [index 0 size 0]
+      (if (= index length)
+        size
+        (let [code (long (string-code-unit-at value index))]
+          (cond
+            (< code 0x80) (recur (inc index) (inc size))
+            (< code 0x800) (recur (inc index) (+ size 2))
+            (< code 0xD800) (recur (inc index) (+ size 3))
+            (<= code 0xDBFF)
+            (when (< (inc index) length)
+              (let [next-code (long (string-code-unit-at value (inc index)))]
+                (when (and (<= 0xDC00 next-code) (<= next-code 0xDFFF))
+                  (recur (+ index 2) (+ size 4)))))
+            (<= code 0xDFFF) nil
+            :else (recur (inc index) (+ size 3))))))))
 
-          (<= 0xDC00 code 0xDFFF)
-          false
+(defn- well-formed-unicode? [value]
+  (some? (unicode-utf8-size value)))
 
-          :else
-          (recur (inc index)))))))
+(defn utf8-size
+  "Returns the exact UTF-8 byte count without allocating a byte collection."
+  [value]
+  (or (unicode-utf8-size (str value))
+      (format-error! :invalid-unicode {})))
 
 (defn- hidden-reader-input?
   [value]
@@ -92,10 +103,21 @@
             (= 59 code)
             true
 
-            (and (= 35 code)
-                 (< (inc index) (count value))
-                 (= 95 (string-code-unit-at value (inc index))))
-            true
+            (= 35 code)
+            (cond
+              (and (< (inc index) (count value))
+                   (= 123 (string-code-unit-at value (inc index))))
+              (recur (+ index 2) false false)
+
+              ;; Validate the original tagged spelling before either host
+              ;; reader can lowercase text or interpret Unicode escapes.
+              (and (<= (+ index 44) (count value))
+                   (= "#uuid \"" (subs value index (+ index 7)))
+                   (= 34 (string-code-unit-at value (+ index 43)))
+                   (uuid/canonical-text? (subs value (+ index 7) (+ index 43))))
+              (recur (+ index 44) false false)
+
+              :else true)
 
             :else
             (recur (inc index) false false)))))))
@@ -163,6 +185,7 @@
     (true? value) "true"
     (false? value) "false"
     (string? value) (render-string value)
+    (uuid/value? value) (str "#uuid \"" (uuid/text (uuid/capture value)) "\"")
     (keyword? value)
     (str ":" (when-let [keyword-namespace (namespace value)]
                (str keyword-namespace "/"))
@@ -228,7 +251,7 @@
    value))
 
 (defn- validate-value
-  [value depth {:keys [maximum-depth maximum-entries] :as limits}]
+  [value depth {:keys [maximum-depth maximum-entries allow-uuids?] :as limits}]
   (when (> depth maximum-depth)
     (format-error! :too-deep {:maximum-depth maximum-depth}))
   (let [entries
@@ -241,6 +264,9 @@
           (if (well-formed-unicode? value)
             1
             (format-error! :invalid-unicode {}))
+
+          (and (not (false? allow-uuids?)) (uuid/value? value))
+          1
 
           (keyword? value)
           (if (unambiguous-keyword? value)
@@ -286,10 +312,11 @@
   "Validates and canonicalizes portable EDN without changing collection types."
   ([value]
    (canonicalize value {}))
-  ([value {:keys [maximum-depth maximum-entries]
+  ([value {:keys [maximum-depth maximum-entries allow-uuids?]
            :or {maximum-depth default-maximum-depth
                 maximum-entries default-maximum-entries}}]
-   (let [limits {:maximum-depth maximum-depth
+   (let [limits {:allow-uuids? allow-uuids?
+                 :maximum-depth maximum-depth
                  :maximum-entries maximum-entries}]
      (validate-value value 0 limits)
      (letfn [(canonical [item]
@@ -308,14 +335,35 @@
                  (sequential? item)
                  (mapv canonical item)
 
+                 (uuid/value? item) (uuid/capture item)
+
                  :else item))]
        (canonical value)))))
+
+(defn ^:no-doc capture-portable
+  "Validates portable data and owns mutable UUID leaves. Already owned plain
+  persistent collections can be shared; this does not promise sorted output."
+  [value limits]
+  (validate-value value 0 (merge {:maximum-depth default-maximum-depth
+                                 :maximum-entries default-maximum-entries} limits))
+  (letfn [(needs-capture? [item]
+            (or (some? (meta item)) (record? item) (sorted? item)
+                (and (sequential? item) (not (vector? item)))
+                (and (uuid/value? item) (not (uuid/owned? item)))
+                (cond
+                  (map? item)
+                  (reduce-kv (fn [_ k v]
+                               (if (or (needs-capture? k) (needs-capture? v))
+                                 (reduced true) false)) false item)
+                  (coll? item) (boolean (some needs-capture? item))
+                  :else false)))]
+    (if (needs-capture? value) (canonicalize value limits) value)))
 
 (defn encode-canonical
   "Returns the canonical portable EDN representation after enforcing bounds."
   ([value]
    (encode-canonical value {}))
-  ([value {:keys [maximum-size maximum-depth maximum-entries]
+  ([value {:keys [maximum-size maximum-depth maximum-entries allow-uuids?]
            :or {maximum-size default-maximum-size}}]
    ;; `portable-render` already imposes the canonical map/set order and renders
    ;; every sequential value as a vector. Building a second recursively sorted
@@ -323,7 +371,8 @@
    ;; keys) without changing a byte of output. Validate once, then render the
    ;; original value directly.
    (validate-value value 0
-                   {:maximum-depth (or maximum-depth default-maximum-depth)
+                   {:allow-uuids? allow-uuids?
+                    :maximum-depth (or maximum-depth default-maximum-depth)
                     :maximum-entries
                     (or maximum-entries default-maximum-entries)})
    (let [encoded (portable-render value)]
@@ -340,13 +389,28 @@
    (when-not (and (string? encoded)
                   (<= (count encoded) maximum-size))
      (format-error! :too-large {:maximum-size maximum-size}))
-   (when (hidden-reader-input? encoded)
-     (format-error! :malformed {}))
    (try
-     (let [forms (edn/read-string (str "[" encoded "]"))
-           _ (when-not (= 1 (count forms))
-               (format-error! :malformed {}))
-           value (first forms)
+     (let [value
+           (if (and (= 44 (count encoded))
+                    (= "#uuid \"" (subs encoded 0 7))
+                    (= 34 (string-code-unit-at encoded 43)))
+             ;; The complete scalar has fixed framing and a strict parser.
+             ;; Avoid constructing a reader and temporary vector for it;
+             ;; the same canonical domain and resource checks still apply.
+             (or (uuid/parse-canonical (subs encoded 7 43))
+                 (format-error! :malformed {}))
+             (do
+               (when (hidden-reader-input? encoded)
+                 (format-error! :malformed {}))
+               (let [forms (edn/read-string
+                            {:readers {'uuid (fn [text]
+                                               (or (uuid/parse-canonical text)
+                                                   (format-error! :malformed {})))}
+                             :default (fn [_tag _value] (format-error! :malformed {}))}
+                            (str "[" encoded "]"))]
+                 (when-not (= 1 (count forms))
+                   (format-error! :malformed {}))
+                 (first forms))))
            canonical (canonicalize value limits)]
        (when (and allowed-keys
                   (or (not (map? canonical))
@@ -357,10 +421,10 @@
                          (when (map? canonical)
                            (set (keys canonical)))}))
        canonical)
-    (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo) e
-      (if (= :eacl.format/invalid (:type (ex-data e)))
-        (throw e)
-        (format-error! :malformed {})))
+     (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo) e
+       (if (= :eacl.format/invalid (:type (ex-data e)))
+         (throw e)
+         (format-error! :malformed {})))
      (catch #?(:clj StackOverflowError :cljs :default) _
        (format-error! :malformed {}))
      #?(:clj
@@ -614,17 +678,67 @@
         :cljs
         (vec (.digest digest))))))
 
+(defn canonical-tree-digest
+  "Digests already admitted compiler data without encoding a whole aggregate.
+   Container tags and arities preserve structure; map keys and set members
+   retain canonical order. Scalar records still use the bounded wire codec.
+   This is not a replacement for admission limits on untrusted input."
+  [domain value]
+  (letfn [(records [value]
+            (cond
+              (map? value)
+              (cons [:map (count value)]
+                    (mapcat (fn [key]
+                              (concat (records key) (records (get value key))))
+                            (sort-by encode-canonical (keys value))))
+              (set? value)
+              (cons [:set (count value)]
+                    (mapcat records (sort-by encode-canonical value)))
+              (sequential? value)
+              (cons [:sequence (count value)] (mapcat records value))
+              :else [[:value value]]))]
+    (canonical-records-digest domain (records value))))
+
+(defn ^:no-doc capture-keyring
+  "Captures at most once for a protected operation. Static codec options are
+   already immutable; constructed clients supply an opaque controller."
+  [options]
+  (if-let [controller (:keyring-controller options)]
+    (if (:keyring-snapshot options)
+      options
+      (do
+        (when-not (satisfies? keyrings/KeyringSource controller)
+          (format-error! :invalid-keyring {}))
+        (let [snapshot (keyrings/-snapshot controller)]
+          (assoc options :keyring-snapshot snapshot
+                 :current-kid (:active-kid snapshot)
+                 :keyring (:keys snapshot)))))
+    options))
+
+(defn ^:no-doc domain-key
+  "Uses only the captured generation; never reads mutable controller state."
+  [options kid root-key domain version]
+  (if-let [controller (:keyring-controller options)]
+    (keyrings/-derive-key controller (:keyring-snapshot options) kid root-key domain version)
+    (derive-key root-key domain)))
+
+(defn ^:no-doc key-by-id
+  "Looks up one format key by its admitted identifier type. Callers own the
+   operation snapshot and error category; this never captures mutable state."
+  [keyring kid]
+  (when (or (keyword? kid) (and (string? kid) (not-empty kid)))
+    (get (or keyring {:default default-root-key}) kid)))
+
 (defn signing-context
-  [{:keys [current-kid keyring]} domain]
-  (let [kid (or current-kid :default)
+  [options domain]
+  (let [{:keys [current-kid keyring] :as options} (capture-keyring options)
+        kid (or current-kid :default)
         keyring (or keyring {:default default-root-key})
-        root-key (get keyring kid)]
-    (when-not (and (or (keyword? kid)
-                       (and (string? kid) (not-empty kid)))
-                   root-key)
-      (format-error! :unknown-key-id {:kid kid}))
+        root-key (key-by-id keyring kid)]
+    (when-not root-key
+      (format-error! :unknown-key-id {}))
     {:kid kid
-     :key (derive-key root-key domain)
+     :key (domain-key options kid root-key domain canonical-version)
      :keyring keyring}))
 
 (defn encode-authenticated
@@ -645,7 +759,7 @@
          (b64url-encode
           (utf8-bytes (encode-canonical envelope options))))))
 
-(defn decode-authenticated
+(defn ^:no-doc decode-authenticated-envelope
   [{:keys [domain prefix payload-keys maximum-size] :as options} token]
   (when-not (and (string? token)
                  (<= (count token)
@@ -658,15 +772,14 @@
           (b64url-decode (subs token (count prefix))))
          (assoc options :allowed-keys #{:v :kid :payload :tag}))
         {:keys [v kid payload tag]} envelope
-        root-key (get (or (:keyring options)
-                          {:default default-root-key})
-                      kid)]
+        options (capture-keyring options)
+        root-key (key-by-id (:keyring options) kid)]
     (when-not (and (= canonical-version v)
-                   root-key
                    (string? payload)
                    (string? tag))
       (format-error! :authentication-failed {}))
-    (let [key (derive-key root-key domain)
+    (when-not root-key (format-error! :security-key-unavailable {}))
+    (let [key (domain-key options kid root-key domain canonical-version)
           expected (hmac-sha-256
                     key
                     (str domain "\n"
@@ -676,7 +789,10 @@
           supplied (b64url-decode tag)]
       (when-not (secure-equal? expected supplied)
         (format-error! :authentication-failed {}))
-      (decode-canonical
-       (bytes->utf8 (b64url-decode payload))
-       (cond-> options
-         payload-keys (assoc :allowed-keys payload-keys))))))
+      {:security-kid kid
+       :payload (decode-canonical
+                 (bytes->utf8 (b64url-decode payload))
+                 (cond-> options payload-keys (assoc :allowed-keys payload-keys)))})))
+
+(defn decode-authenticated [options token]
+  (:payload (decode-authenticated-envelope options token)))

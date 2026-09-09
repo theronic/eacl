@@ -17,6 +17,7 @@
   (nil scope bypasses it) and switched off by `:cache? false` or a disabled
   client cache."
   (:require [eacl.cache.standard-lru :as lru]
+            [eacl.relationships.edge :as edge]
             [eacl.request.counters :as request-counters]))
 
 (def default-memo-bound
@@ -45,22 +46,27 @@
   "The reuse identity of one read descriptor, or nil for an unknown
   operation. Bound and limit are not part of it: one prefix serves every
   (bound, limit) it can reproduce."
-  [{:keys [operation relation-eid direction] :as descriptor}]
-  (case operation
-    :subject->resources
-    [:subject->resources (:subject-type descriptor) (:subject-eid descriptor)
-     relation-eid (:resource-type descriptor) (or direction :asc)]
-    :resource->subjects
-    [:resource->subjects (:resource-type descriptor) (:resource-eid descriptor)
-     relation-eid (:subject-type descriptor) (or direction :asc)]
-    nil))
+  [{:keys [operation relation-eid direction include-qualifier?] :as descriptor}]
+  (let [key (case operation
+              :subject->resources
+              [:subject->resources (:subject-type descriptor) (:subject-eid descriptor)
+               relation-eid (:resource-type descriptor) (or direction :asc)]
+              :resource->subjects
+              [:resource->subjects (:resource-type descriptor) (:resource-eid descriptor)
+               relation-eid (:subject-type descriptor) (or direction :asc)]
+              nil)]
+    ;; Retain the ordinary key and its allocation shape. A compact scan is
+    ;; a different physical response even when every stored qualifier is nil.
+    (if (and key (true? include-qualifier?))
+      (conj key :compact-edge edge/format-version)
+      key)))
 
 (defn- beyond?
   "True when `value` lies strictly beyond `bound` in the scan direction."
   [direction value bound]
   (if (= :desc direction)
-    (neg? (compare value bound))
-    (pos? (compare value bound))))
+    (neg? (compare (edge/endpoint value) bound))
+    (pos? (compare (edge/endpoint value) bound))))
 
 (defn- first-beyond
   "Index of the first prefix value strictly beyond `bound`; the prefix count
@@ -110,7 +116,7 @@
               start (first-beyond prefix bound direction)
               contiguous? (or (< start (count prefix))
                               (and (pos? (count prefix))
-                                   (zero? (compare bound (peek prefix)))))]
+                                   (zero? (compare bound (edge/endpoint (peek prefix))))))]
           (when contiguous?
             (if (>= (- (count prefix) start) (count values))
               entry

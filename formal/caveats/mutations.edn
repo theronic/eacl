@@ -1,0 +1,14 @@
+{:version 1
+ :gate "bin/formal fast"
+ :controls
+ [{:id :bound-context-loses :theorem :bound-wins}
+  {:id :returned-error-is-truthy :theorem :fault-is-not-missing}
+  {:id :short-circuit-keeps-residual :theorem :logical-absorbers}
+  {:id :qualifier-mutates-in-place :theorem :replacement-is-fresh-and-atomic}
+  {:id :one-half-publication :theorem :publication-is-atomic}
+  {:id :missing-qualifier-becomes-nil :theorem :non-nil-missing-is-fault}
+  {:id :schema-generation-stalls :theorem :accepted-replacement-is-atomic}
+  {:id :prepared-qualifier-authorizes :theorem :preparation-is-inert}
+  {:id :publication-stamp-stalls :theorem :publication-is-atomic}
+  {:id :qualifier-is-shared :theorem :shared-is-fault}
+  {:id :required-caveat-omitted :theorem :unqualified-requires-plain-branch}]}

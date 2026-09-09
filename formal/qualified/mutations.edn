@@ -1,0 +1,11 @@
+{:version 1
+ :controls
+ [:omitted-qualifier-read :missing-qualifier-is-plain
+  :inclusive-expiry :expired-caveat-still-runs
+  :conditional-is-true :fault-is-absence
+  :maximum-instead-of-minimum-horizon :emitted-only-cursor-horizon
+  :incomplete-certificate-publishes :time-only-removes-permission
+  :context-omitted-from-cache :evaluator-omitted-from-cache
+  :conditional-cache-alias :qid-only-decode-cache
+  :raw-clock-regresses :live-cursor-pins-old-time
+  :recursion-stops-before-certificate-fixpoint]}

@@ -1,0 +1,13 @@
+EACL JVM Caveat evaluator
+
+Runtime dependencies (separate Maven artifacts, not shaded):
+- com.exoscale/cel-parser 0.1.8, Exoscale: ISC.
+- com.exoscale/antlr-cel 0.1.1, Exoscale and Google CEL grammar: Apache-2.0.
+- org.antlr/antlr4-runtime 4.9.2, Terence Parr and Sam Harwell: BSD-3-Clause.
+
+The cel-parser POM also lists MIT. The antlr-cel POM lists MIT and ISC;
+its source and vendored CEL grammar carry Apache-2.0. The accompanying
+source notices preserve the qualified artifacts' actual notices.
+Test fixture adaptations from CEL-spec retain its Apache-2.0 notice.
+Versions, revisions, artifact hashes and qualification evidence are recorded
+in the repository's exploration/caveats directory.

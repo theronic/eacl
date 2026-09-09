@@ -209,3 +209,21 @@
     (is (= (vec (range 20))
            (:data (range-reuse/derive-page [:first 30] (page 0 20 {:previous? true})))))
     (is (nil? (range-reuse/derive-page [:first 10] {:data [1] :page-info {}})))))
+
+(deftest qualified-range-slices-and-composition-preserve-the-entire-retained-certificate
+  (let [certificate {:start-ms 99 :valid-until-ms 100 :complete? true}
+        first-page (assoc (page 0 5 {:next? true}) :qualification-certificate certificate)
+        tier (tier-with (first-window 5) first-page)
+        hit (range-reuse/lookup! tier :walk (first-window 2))
+        partial-hit (range-reuse/lookup! tier :walk (first-window 3 3))
+        remainder (assoc (page 5 7 {:next? true :previous? true})
+                         :qualification-certificate {:start-ms 99 :valid-until-ms 200 :complete? true})
+        composed (range-reuse/compose (:partial partial-hit) (:continuation partial-hit) remainder)]
+    (is (= certificate (:qualification-certificate hit) (get-in hit [:page :qualification-certificate])))
+    (is (= certificate (:qualification-certificate partial-hit) (:qualification-certificate composed)))
+    (is (= certificate (:qualification-certificate (range-reuse/lookup! tier :walk (first-window 2 4)))))
+    (range-reuse/publish! tier :walk (first-window 2 4) remainder)
+    (is (= certificate (get-in (range-reuse/lookup! tier :walk (first-window 7)) [:page :qualification-certificate])))
+    (is (nil? (:qualification-certificate
+               (range-reuse/compose (:partial partial-hit) (:continuation partial-hit)
+                                    (dissoc remainder :qualification-certificate)))))))

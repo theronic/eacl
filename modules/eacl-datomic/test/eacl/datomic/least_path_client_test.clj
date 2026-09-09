@@ -13,7 +13,8 @@
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.schema :as schema]
-            [eacl.engine.v8 :as engine]))
+            [eacl.engine.v8 :as engine]
+            [eacl.exact-integer :as exact-integer]))
 
 (def ^:private acyclic-schema
   "definition user {}
@@ -25,16 +26,25 @@ definition org {
 definition doc {
   relation owner: user
   relation org: org
+  relation parent: doc
   permission view = owner + org->view
+  permission common = view & org->view
+  permission without_owner = view - owner
+  permission inherited = view + parent->inherited
+  permission common_inherited = inherited & view
 }")
 
 (defn- seed!
   [conn n-docs]
   (let [acl (core/make-client conn {:cache shared-cache/no-cache})]
     (eacl/write-schema! acl acyclic-schema)
-    @(d/transact conn [{:eacl/id "org1"} {:eacl/id "alice"}])
+    ;; Numeric tempids exercise Datomic entity IDs above JavaScript's safe
+    ;; integer range; implicit tempids alone missed the cursor transport bug.
+    @(d/transact conn [{:db/id -1 :eacl/id "org1"}
+                      {:db/id -2 :eacl/id "alice"}])
     (doseq [batch (partition-all 500 (range n-docs))]
-      @(d/transact conn (mapv (fn [i] {:eacl/id (str "d" i)}) batch)))
+      @(d/transact conn (mapv (fn [i] {:db/id (- (inc i))
+                                     :eacl/id (str "d" i)}) batch)))
     (doseq [batch (partition-all 500 (range n-docs))]
       (eacl/create-relationships!
        acl (mapv (fn [i] (->Relationship (spice-object :org "org1")
@@ -46,8 +56,63 @@ definition doc {
                          :member (spice-object :org "org1")))
     acl))
 
+(defn- walk-pages [lookup query direction]
+  (let [[size-key bound-key cursor-key more-key]
+        (if (= :forward direction)
+          [:first :after :end-cursor :has-next-page?]
+          [:last :before :start-cursor :has-previous-page?])]
+    (loop [bound nil out [] remaining 100]
+      (assert (pos? remaining) "pagination must terminate")
+      (let [page (lookup (cond-> (assoc query size-key 2)
+                          bound (assoc bound-key bound)))
+            data (:data page)
+            out (if (= :forward direction) (into out data) (into data out))]
+        (if (get-in page [:page-info more-key])
+          (let [cursor (get-in page [:page-info cursor-key])]
+            (is (string? cursor))
+            (recur cursor out (dec remaining)))
+          out)))))
+
+(deftest native-int64-cursors-walk-resources-and-subjects-test
+  (with-mem-conn [conn schema/v8-schema]
+    (let [acl (seed! conn 7)
+          users ["alice" "bob" "carol" "dave"]
+          alice (spice-object :user "alice")
+          cached-client (core/make-client conn {})]
+      @(d/transact conn (mapv (fn [i id] {:db/id (- (inc i)) :eacl/id id})
+                             (range) (rest users)))
+      (doseq [id (rest users)]
+        (eacl/create-relationship!
+         acl (->Relationship (spice-object :user id) :member
+                             (spice-object :org "org1"))))
+      (eacl/create-relationship!
+       acl (->Relationship alice :owner (spice-object :doc "d0")))
+      (is (> (d/entid (d/db conn) [:eacl/id "alice"]) exact-integer/maximum))
+      ;; A new cache-free client on every page also checks that tokens alone
+      ;; carry the exact boundary, without a retained server-side checkpoint.
+      (doseq [cached? [false true]
+              permission [:view :common :without_owner :inherited :common_inherited]
+              [lookup query expected]
+              [[eacl/lookup-resources
+                {:subject alice :permission permission :resource/type :doc}
+                (set (map #(str "d" %) (range (if (= :without_owner permission) 1 0) 7)))]
+               [eacl/lookup-subjects
+                {:resource (spice-object :doc "d3") :permission permission :subject/type :user}
+                (set users)]]]
+        (testing (str permission " " (if (:subject query) "resources" "subjects") " cached=" cached?)
+          (let [query (cond-> query
+                        (#{:inherited :common_inherited} permission)
+                        (assoc :evaluation :complete-denotation))
+                read-page #(lookup (if cached? cached-client
+                                      (core/make-client conn {:cache shared-cache/no-cache})) %)
+                forward (walk-pages read-page query :forward)
+                backward (walk-pages read-page query :backward)]
+            (is (= expected (set (map :id forward))))
+            (is (= (count expected) (count forward)))
+            (is (= forward backward))))))))
+
 (deftest cache-off-pagination-is-flat-in-the-page-ordinal-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [acl (seed! conn 600)
           alice (spice-object :user "alice")
           query {:subject alice :permission :view
@@ -74,7 +139,7 @@ definition doc {
             (recur cursor (inc k) (max max-scans scans))))))))
 
 (deftest last-window-works-under-demand-evaluation-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [acl (seed! conn 120)
           alice (spice-object :user "alice")
           forward (loop [after nil out []]
@@ -109,7 +174,7 @@ definition doc {
   ;; Task 7.2: the evaluator's own scans and emissions must be visible to
   ;; observers under the public counter names, not only the witness
   ;; probe-checks.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [acl (seed! conn 60)
           alice (spice-object :user "alice")
           stats (atom {})
@@ -125,7 +190,7 @@ definition doc {
         (is (pos? (:stream-opens @stats 0)))))))
 
 (deftest lookup-subjects-least-path-round-trip-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [acl (seed! conn 40)
           _ (let [raw (core/make-client conn {:cache shared-cache/no-cache})]
               (doseq [u ["bob" "carol" "dave"]]
