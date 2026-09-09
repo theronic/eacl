@@ -1,12 +1,12 @@
 ## Why
 
-Phases 1 and 2 provide a single v9 Relationship stream, sparse immutable qualifiers, shared Caveat definitions, and a formally specified evaluator, but qualified Relationships still cannot participate in authorization. EACL now needs one coherent edge-qualification seam that activates Caveats and exclusive `valid-until` semantics without invalidating its proof-backed caches or adding work to the common `qualifier-eid = nil` path.
+Phases 1 and 2 provide a single v8 Relationship stream, sparse immutable qualifiers, shared Caveat definitions, and a formally specified evaluator, but qualified Relationships still cannot participate in authorization. EACL now needs one coherent edge-qualification seam that activates Caveats and exclusive `valid-until` semantics without invalidating its proof-backed caches or adding work to the common `qualifier-eid = nil` path.
 
 Time can change an authorization answer without a database transaction, including changing a denial into a grant when an expiring subtracting Relationship disappears. Qualifier content and request context likewise affect answers beyond Relation tuple membership. This phase therefore models temporal/conditional traversal and cache reuse first, then certifies the implementation against those models before routing is enabled.
 
 ## What Changes
 
-- Require completion of `2026-09-04-01-adopt-v9-qualifier-reference-storage` and `2026-09-04-02-build-caveat-qualifier-foundation`.
+- Require completion of `2026-09-04-01-adopt-v8-qualifier-reference-storage` and `2026-09-04-02-build-caveat-qualifier-foundation`.
 - **FORMAL GATE:** extend EACL's permission/traversal/cache models with sparse qualifier resolution, Caveat outcome algebra, exclusive expiry, decisive temporal witnesses, and cursor context before production engine changes begin.
 - Activate non-`nil` qualifier refs through one shared edge-qualification seam only on backends whose Phase 2 qualified-writer publication strategy is certified. `nil` continues directly with zero qualifier entity reads, zero clock-dependent work beyond the request's one captured time, and no Caveat evaluation.
 - Resolve each distinct non-`nil` qualifier at most once per request/batch and support bounded immutable qualifier caching keyed by source lifecycle, qualifier eid, and its certified creation `t`/version. Unknown-writer paths remain exact or content-proof backed; a dangling non-`nil` ref never aliases the `nil` fast path.

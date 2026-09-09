@@ -6,6 +6,9 @@
             [eacl.backend.direct-membership :as direct]
             [eacl.authorization.batch :as batch]
             [eacl.cache :as cache]
+            [eacl.uuid :as uuid]
+            [eacl.secure-format :as secure]
+            [eacl.causal-token :as causal-token]
             [eacl.engine.portable-decisions :as portable]
             [eacl.client.range-reuse :as range-reuse]
             [eacl.engine.scan-cache :as scan-cache]
@@ -206,7 +209,7 @@
    :backend :mutation-control
    :basis-identity
    (assoc audit-source-scope
-          :source-lifecycle :lifecycle
+          :source-lifecycle #uuid "05472c20-9953-43ca-ae5e-90bbd8d24d1c"
           :basis-kind :ordinary
           :revision revision
           :exact-locator revision
@@ -450,9 +453,9 @@
         (fn []
           (not=
            (cache/exact-basis-key
-            adapter (assoc base :source-lifecycle "before"))
+            adapter (assoc base :source-lifecycle #uuid "306de271-30fc-591d-b2e6-36bf0dcd5a69"))
            (cache/exact-basis-key
-            adapter (assoc base :source-lifecycle "after"))))
+            adapter (assoc base :source-lifecycle #uuid "2405684e-2889-5106-aa1d-d8db045e5dff"))))
         original cache/exact-basis-key]
     (and
      (separated?)
@@ -533,7 +536,7 @@
           {:backend (backend/backend-id adapter)
            :source-id (:source-id (backend/invoke adapter :snapshot-id))
            :branch nil
-           :source-lifecycle "eacl/initial"
+           :source-lifecycle #uuid "00000000-0000-0000-0000-000000000000"
            :basis-kind :ordinary
            :revision 5
            :exact-locator 5
@@ -604,7 +607,7 @@
                  {:backend :mutation-control
                   :source-id "checkpoint-source"
                   :branch nil}
-                 :source-lifecycle "checkpoint-lifecycle"}
+                 :source-lifecycle #uuid "12b397a1-f716-5469-8dd9-2be285578658"}
         plan {:fingerprint "checkpoint-plan"
               :rules [{:relation-eid 1}]}
         key-at
@@ -1915,8 +1918,84 @@ definition document {
          (not= expected (with-redefs [range-reuse/compose mutant]
                           (observe))))))
 
+(defn uuid-type-coercion-killed? []
+  (let [input #uuid "854e138f-b8a4-42ee-a8f9-49c01ac19fc1"
+        gate #(uuid/value? (causal-token/validate-source-lifecycle! input))
+        original uuid/capture invoked (atom false)]
+    (and (gate)
+         (false? (with-redefs [uuid/capture (fn [value]
+                                            (reset! invoked true)
+                                            (some-> (original value) uuid/text))]
+                   (gate)))
+         @invoked)))
+
+(defn uuid-comparator-collision-killed? []
+  (let [input {#uuid "854e138f-b8a4-42ee-a8f9-49c01ac19fc1" :uuid
+               "854e138f-b8a4-42ee-a8f9-49c01ac19fc1" :string}
+        gate #(= 2 (count (secure/canonicalize input)))
+        invoked (atom false)]
+    (and (gate)
+         (false? (with-redefs [secure/canonical-comparator (fn [_ _] (reset! invoked true) 0)]
+                   (gate)))
+         @invoked)))
+
+(defn- uuid-text-mutation-killed? [original left right transform]
+  (let [gate #(not= (secure/encode-canonical left) (secure/encode-canonical right))
+        invoked (atom false)]
+    (and (gate)
+         (false? (with-redefs [uuid/text (fn [value]
+                                         (reset! invoked true)
+                                         (transform (original value)))]
+                   (gate)))
+         @invoked)))
+
+(defn uuid-dropped-high-half-killed? []
+  (uuid-text-mutation-killed?
+   uuid/text
+   #uuid "00000000-0000-0000-0000-000000000000"
+   #uuid "80000000-0000-0000-0000-000000000000"
+   #(str "00000000-0000-0000" (subs % 18))))
+
+(defn uuid-dropped-low-half-killed? []
+  (uuid-text-mutation-killed?
+   uuid/text
+   #uuid "00000000-0000-0000-0000-000000000000"
+   #uuid "00000000-0000-0000-8000-000000000000"
+   #(str (subs % 0 18) "-0000-000000000000")))
+
+(defn uuid-number-truncation-killed? []
+  (uuid-text-mutation-killed?
+   uuid/text
+   #uuid "00000000-0000-0000-0020-000000000000"
+   #uuid "00000000-0000-0000-0020-000000000001"
+   (fn [text]
+     ;; This is the tempting two-JS-Number representation, deliberately wrong
+     ;; above 2^53. JVM double reproduces the same rounding witness.
+     (let [hex (str/replace (subs text 19) "-" "")]
+       (str (subs text 0 19)
+            #?(:clj (long (double (Long/parseLong hex 16)))
+               :cljs (js/parseInt hex 16)))))))
+
+(defn uuid-noncanonical-alias-killed? []
+  (let [wire "#uuid \"854E138F-b8a4-42ee-a8f9-49c01ac19fc1\""
+        gate #(try (secure/decode-canonical wire) false
+                   (catch #?(:clj Exception :cljs :default) _ true))
+        original uuid/canonical-text? invoked (atom false)]
+    (and (gate)
+         (false? (with-redefs [uuid/canonical-text?
+                              (fn [text] (reset! invoked true)
+                                (and (string? text) (original (str/lower-case text))))]
+                   (gate)))
+         @invoked)))
+
 (def controls
   {:wrong-arrow-direction wrong-arrow-direction-killed?
+   :uuid-type-coercion uuid-type-coercion-killed?
+   :uuid-comparator-collision uuid-comparator-collision-killed?
+   :uuid-dropped-high-half uuid-dropped-high-half-killed?
+   :uuid-dropped-low-half uuid-dropped-low-half-killed?
+   :uuid-number-truncation uuid-number-truncation-killed?
+   :uuid-noncanonical-alias uuid-noncanonical-alias-killed?
    :premature-cycle-cut premature-cycle-cut-killed?
    :missing-de-duplication missing-de-duplication-killed?
    :incomplete-dependency incomplete-dependency-killed?

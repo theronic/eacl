@@ -29,7 +29,7 @@
 (def relationship
   (eacl/->Relationship user :reader document))
 
-(def ^:private source-lifecycle "datahike-consistency-v4-test")
+(def ^:private source-lifecycle #uuid "b1d8b654-e230-5757-a529-da9c27e94649")
 
 (defn- client
   ([conn]
@@ -511,7 +511,7 @@
             rewound-authorization
             (client rewound-conn
                     {:source-lifecycle
-                     "datahike-consistency-rewound-v4-test"})]
+                     #uuid "11679037-e6ac-5d35-87a2-bf53694dbb41"})]
         (d/transact rewound-conn [{:eacl/id "unrelated"}])
         (is (= :eacl.consistency/incomparable-scope
                (:type

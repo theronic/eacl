@@ -1,6 +1,6 @@
 ## Context
 
-The selected database now has one v9 endpoint stream. An edge carries an opposite endpoint eid and a trailing qualifier eid. Phase 2 supplies immutable qualifier entities and a certified Caveat subsystem, but public writers/readers and traversal still reject non-`nil` qualifiers.
+The selected database now has one v8 endpoint stream. An edge carries an opposite endpoint eid and a trailing qualifier eid. Phase 2 supplies immutable qualifier entities and a certified Caveat subsystem, but public writers/readers and traversal still reject non-`nil` qualifiers.
 
 The existing engine is demand-driven, proof-backed, and highly sensitive to unnecessary allocation and I/O. This design therefore adds one qualification boundary rather than duplicating permission operators or wrapping the full engine in a temporal database filter.
 

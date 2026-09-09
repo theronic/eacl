@@ -9,7 +9,7 @@
             [eacl.relationships.storage :as storage]))
 
 (def function-ident :eacl.fn/retractEntity)
-(def function-version 3)
+(def function-version 4)
 (def function-doc-prefix "EACL safe entity retraction function")
 (def supported-modes #{:named :direct :unsupported})
 

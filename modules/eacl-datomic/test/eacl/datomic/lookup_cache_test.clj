@@ -344,7 +344,7 @@
     (let [token-key "shared-store-opaque-continuation"
           first-client (core/make-client conn {:cache {}
                                                :source-lifecycle
-                                               "datomic-lookup-cache-v4-test"
+                                               #uuid "f2a18c0f-0200-50fe-bda0-62e37a40af85"
                                                :security-key token-key})
           alice (spice-object :user "alice")
           root (spice-object :folder "root")
@@ -365,7 +365,7 @@
       ;; client. The second client therefore performs authenticated replay.
       (let [second-client (core/make-client conn {:cache {}
                                                   :source-lifecycle
-                                                  "datomic-lookup-cache-v4-test"
+                                                  #uuid "f2a18c0f-0200-50fe-bda0-62e37a40af85"
                                                   :security-key token-key})
             first-page (eacl/lookup-resources first-client query)
             cursor (get-in first-page [:page-info :end-cursor])

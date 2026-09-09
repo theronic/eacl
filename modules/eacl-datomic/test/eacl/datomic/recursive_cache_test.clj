@@ -50,7 +50,7 @@
    }")
 
 (def ^:private portable-source-lifecycle
-  "datomic-recursive-cache-v4-test")
+  #uuid "ad88cec0-5036-52a7-a54c-dba9558ce482")
 
 (defn- account-id [n]
   (str "account-" n))
@@ -265,7 +265,7 @@
 (deftest recursive-page-order-is-stable-across-scan-wave-boundaries-test
   (with-mem-conn [conn schema/v8-schema]
     (let [token-key "page-boundary-scan-wave000000000"
-          lifecycle "page-boundary-scan-wave-source"
+          lifecycle #uuid "dab9724f-edde-567c-85d7-a629308b85bc"
           cached-client
           (core/make-client conn {:security-key token-key
                                   :source-lifecycle lifecycle})

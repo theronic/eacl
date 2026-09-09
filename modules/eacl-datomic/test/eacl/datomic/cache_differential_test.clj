@@ -23,7 +23,7 @@
             [eacl.engine.v8 :as engine]))
 
 (def ^:private token-key "cache-differential-test-key00000")
-(def ^:private source-lifecycle "datomic-cache-differential-v4-test")
+(def ^:private source-lifecycle #uuid "1273d660-a0cd-52af-af65-bfd3914bab66")
 
 (def ^:private recursive-schema
   "definition user {}

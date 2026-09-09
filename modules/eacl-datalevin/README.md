@@ -35,13 +35,13 @@ For a source checkout with the expected sibling layout, use:
 ```
 
 The reserved release coordinate is
-`dev.eacl/eacl-datalevin:9.0.0-SNAPSHOT`, depending on
+`dev.eacl/eacl-datalevin:8.0.0-SNAPSHOT`, depending on
 `dev.eacl/datalevin-embedded-eacl:1.0.2-eacl.2`. Neither is a usable published
 dependency until the release and clean remote-consumer gates pass.
 
 Construction requires externally retained lifecycle, signing material, and
 revision state. Omitting an explicit signing key, keyring, or live controller
-or supplying a nil lifecycle fails construction; the shared development key is
+or supplying a nil, legacy, or reserved initial lifecycle fails construction; the shared development key is
 never used by this module:
 
 ```clojure
@@ -54,6 +54,7 @@ never used by this module:
   (datalevin/make-client
    conn
    {:security-key signing-key
+    ;; Must return the same persisted noninitial native UUID on every worker.
     :source-lifecycle (load-source-lifecycle)
     :revision-watermark watermark
     :advance-revision-watermark!
@@ -155,19 +156,18 @@ mutation, or opening the directory with upstream Datalevin are outside it.
   `eacl.datalevin.schema/validate-schema-references` alias — unreferenced
   since the module's integrity namespace was retired.
 
-## Relationship storage 9
+## Relationship storage 8
 
 This adapter uses five-slot endpoint pairs with a trailing nullable
-`qualifier-eid`. V8 writes only `nil` and rejects non-nil qualifiers. V9 adds
-[Caveats and expiring Relationships](../../docs/caveats.md) through coordinated
-qualified activation; older readers must be drained first. Upgrades are explicit
+`qualifier-eid`. V8 supports
+[Caveats and expiring Relationships](../../docs/caveats.md) ; older readers must be drained first. Upgrades are explicit
 and restartable, and client construction requires a completed target store.
-Follow the [7-to-9 operator guide](../../docs/migration-v7-to-v9.md) before
-starting clients, then the v9 serving rollout guide before qualified writes.
+Follow the [7-to-8 operator guide](../../docs/relationship-storage-v7-to-v8.md) before
+starting clients, then the v8 serving rollout guide before qualified writes.
 
 The adapter's `create-conn` helper explicitly bootstraps fresh stores.
 
-## Live security keys (v9)
+## Live security keys (v8)
 
 `make-client` accepts `:security-keyring-controller` and an optional independent
 `:zed-token-keyring-controller`. Static key options remain supported. All

@@ -114,12 +114,12 @@ definition doc {
           (:db-after
            (d/with db0 [(permission-entity owner+editor-schema)
                         [:db/add [:eacl/id "alice"]
-                         :eacl.v9.relationship/subject-type+relation+resource-type+resource+qualifier
+                         :eacl.v8.relationship/subject-type+relation+resource-type+resource+qualifier
                          [:user (d/entid db0 [:eacl/id
                                               "eacl.relation::doc::editor::user"])
                           :doc (d/entid db0 [:eacl/id "doc1"]) nil]]
                         [:db/add [:eacl/id "doc1"]
-                         :eacl.v9.relationship/resource-type+relation+subject-type+subject+qualifier
+                         :eacl.v8.relationship/resource-type+relation+subject-type+subject+qualifier
                          [:doc (d/entid db0 [:eacl/id
                                              "eacl.relation::doc::editor::user"])
                           :user (d/entid db0 [:eacl/id "alice"]) nil]]]))
@@ -131,10 +131,10 @@ definition doc {
           alice-eid (d/entid db0 [:eacl/id "alice"])
           _ @(d/transact conn
                          [[:db/add alice-eid
-                           :eacl.v9.relationship/subject-type+relation+resource-type+resource+qualifier
+                           :eacl.v8.relationship/subject-type+relation+resource-type+resource+qualifier
                            [:user editor-rel-eid :doc doc-eid nil]]
                           [:db/add doc-eid
-                           :eacl.v9.relationship/resource-type+relation+subject-type+subject+qualifier
+                           :eacl.v8.relationship/resource-type+relation+subject-type+subject+qualifier
                            [:doc editor-rel-eid :user alice-eid nil]]])
           committed (d/db conn)
           alice (spice-object :user "alice")

@@ -5,9 +5,10 @@
   authenticity rather than pretending that base64 is encryption; adapters may
   layer authenticated encryption over the resulting payload when their runtime
   supports a compatible API."
-  (:require [#?(:clj clojure.edn :cljs cljs.reader) :as edn]
+  (:require [#?(:clj clojure.edn :cljs cljs.tools.reader.edn) :as edn]
             [clojure.string :as str]
             [eacl.exact-integer :as exact-integer]
+            [eacl.uuid :as uuid]
             [eacl.security.protocols :as keyrings]
             #?@(:cljs [[goog.crypt :as gcrypt]
                        [goog.crypt.Hmac]
@@ -19,7 +20,7 @@
               [javax.crypto Mac]
               [javax.crypto.spec SecretKeySpec])))
 
-(def canonical-version 1)
+(def canonical-version 2)
 (def default-maximum-size 65536)
 (def default-maximum-depth 32)
 (def default-maximum-entries 16384)
@@ -102,10 +103,21 @@
             (= 59 code)
             true
 
-            (and (= 35 code)
-                 (< (inc index) (count value))
-                 (= 95 (string-code-unit-at value (inc index))))
-            true
+            (= 35 code)
+            (cond
+              (and (< (inc index) (count value))
+                   (= 123 (string-code-unit-at value (inc index))))
+              (recur (+ index 2) false false)
+
+              ;; Validate the original tagged spelling before either host
+              ;; reader can lowercase text or interpret Unicode escapes.
+              (and (<= (+ index 44) (count value))
+                   (= "#uuid \"" (subs value index (+ index 7)))
+                   (= 34 (string-code-unit-at value (+ index 43)))
+                   (uuid/canonical-text? (subs value (+ index 7) (+ index 43))))
+              (recur (+ index 44) false false)
+
+              :else true)
 
             :else
             (recur (inc index) false false)))))))
@@ -173,6 +185,7 @@
     (true? value) "true"
     (false? value) "false"
     (string? value) (render-string value)
+    (uuid/value? value) (str "#uuid \"" (uuid/text (uuid/capture value)) "\"")
     (keyword? value)
     (str ":" (when-let [keyword-namespace (namespace value)]
                (str keyword-namespace "/"))
@@ -238,7 +251,7 @@
    value))
 
 (defn- validate-value
-  [value depth {:keys [maximum-depth maximum-entries] :as limits}]
+  [value depth {:keys [maximum-depth maximum-entries allow-uuids?] :as limits}]
   (when (> depth maximum-depth)
     (format-error! :too-deep {:maximum-depth maximum-depth}))
   (let [entries
@@ -251,6 +264,9 @@
           (if (well-formed-unicode? value)
             1
             (format-error! :invalid-unicode {}))
+
+          (and (not (false? allow-uuids?)) (uuid/value? value))
+          1
 
           (keyword? value)
           (if (unambiguous-keyword? value)
@@ -296,10 +312,11 @@
   "Validates and canonicalizes portable EDN without changing collection types."
   ([value]
    (canonicalize value {}))
-  ([value {:keys [maximum-depth maximum-entries]
+  ([value {:keys [maximum-depth maximum-entries allow-uuids?]
            :or {maximum-depth default-maximum-depth
                 maximum-entries default-maximum-entries}}]
-   (let [limits {:maximum-depth maximum-depth
+   (let [limits {:allow-uuids? allow-uuids?
+                 :maximum-depth maximum-depth
                  :maximum-entries maximum-entries}]
      (validate-value value 0 limits)
      (letfn [(canonical [item]
@@ -318,14 +335,35 @@
                  (sequential? item)
                  (mapv canonical item)
 
+                 (uuid/value? item) (uuid/capture item)
+
                  :else item))]
        (canonical value)))))
+
+(defn ^:no-doc capture-portable
+  "Validates portable data and owns mutable UUID leaves. Already owned plain
+  persistent collections can be shared; this does not promise sorted output."
+  [value limits]
+  (validate-value value 0 (merge {:maximum-depth default-maximum-depth
+                                 :maximum-entries default-maximum-entries} limits))
+  (letfn [(needs-capture? [item]
+            (or (some? (meta item)) (record? item) (sorted? item)
+                (and (sequential? item) (not (vector? item)))
+                (and (uuid/value? item) (not (uuid/owned? item)))
+                (cond
+                  (map? item)
+                  (reduce-kv (fn [_ k v]
+                               (if (or (needs-capture? k) (needs-capture? v))
+                                 (reduced true) false)) false item)
+                  (coll? item) (boolean (some needs-capture? item))
+                  :else false)))]
+    (if (needs-capture? value) (canonicalize value limits) value)))
 
 (defn encode-canonical
   "Returns the canonical portable EDN representation after enforcing bounds."
   ([value]
    (encode-canonical value {}))
-  ([value {:keys [maximum-size maximum-depth maximum-entries]
+  ([value {:keys [maximum-size maximum-depth maximum-entries allow-uuids?]
            :or {maximum-size default-maximum-size}}]
    ;; `portable-render` already imposes the canonical map/set order and renders
    ;; every sequential value as a vector. Building a second recursively sorted
@@ -333,7 +371,8 @@
    ;; keys) without changing a byte of output. Validate once, then render the
    ;; original value directly.
    (validate-value value 0
-                   {:maximum-depth (or maximum-depth default-maximum-depth)
+                   {:allow-uuids? allow-uuids?
+                    :maximum-depth (or maximum-depth default-maximum-depth)
                     :maximum-entries
                     (or maximum-entries default-maximum-entries)})
    (let [encoded (portable-render value)]
@@ -350,13 +389,28 @@
    (when-not (and (string? encoded)
                   (<= (count encoded) maximum-size))
      (format-error! :too-large {:maximum-size maximum-size}))
-   (when (hidden-reader-input? encoded)
-     (format-error! :malformed {}))
    (try
-     (let [forms (edn/read-string (str "[" encoded "]"))
-           _ (when-not (= 1 (count forms))
-               (format-error! :malformed {}))
-           value (first forms)
+     (let [value
+           (if (and (= 44 (count encoded))
+                    (= "#uuid \"" (subs encoded 0 7))
+                    (= 34 (string-code-unit-at encoded 43)))
+             ;; The complete scalar has fixed framing and a strict parser.
+             ;; Avoid constructing a reader and temporary vector for it;
+             ;; the same canonical domain and resource checks still apply.
+             (or (uuid/parse-canonical (subs encoded 7 43))
+                 (format-error! :malformed {}))
+             (do
+               (when (hidden-reader-input? encoded)
+                 (format-error! :malformed {}))
+               (let [forms (edn/read-string
+                            {:readers {'uuid (fn [text]
+                                               (or (uuid/parse-canonical text)
+                                                   (format-error! :malformed {})))}
+                             :default (fn [_tag _value] (format-error! :malformed {}))}
+                            (str "[" encoded "]"))]
+                 (when-not (= 1 (count forms))
+                   (format-error! :malformed {}))
+                 (first forms))))
            canonical (canonicalize value limits)]
        (when (and allowed-keys
                   (or (not (map? canonical))
@@ -367,10 +421,10 @@
                          (when (map? canonical)
                            (set (keys canonical)))}))
        canonical)
-    (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo) e
-      (if (= :eacl.format/invalid (:type (ex-data e)))
-        (throw e)
-        (format-error! :malformed {})))
+     (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo) e
+       (if (= :eacl.format/invalid (:type (ex-data e)))
+         (throw e)
+         (format-error! :malformed {})))
      (catch #?(:clj StackOverflowError :cljs :default) _
        (format-error! :malformed {}))
      #?(:clj
@@ -623,6 +677,27 @@
               (.digest ^MessageDigest digest))
         :cljs
         (vec (.digest digest))))))
+
+(defn canonical-tree-digest
+  "Digests already admitted compiler data without encoding a whole aggregate.
+   Container tags and arities preserve structure; map keys and set members
+   retain canonical order. Scalar records still use the bounded wire codec.
+   This is not a replacement for admission limits on untrusted input."
+  [domain value]
+  (letfn [(records [value]
+            (cond
+              (map? value)
+              (cons [:map (count value)]
+                    (mapcat (fn [key]
+                              (concat (records key) (records (get value key))))
+                            (sort-by encode-canonical (keys value))))
+              (set? value)
+              (cons [:set (count value)]
+                    (mapcat records (sort-by encode-canonical value)))
+              (sequential? value)
+              (cons [:sequence (count value)] (mapcat records value))
+              :else [[:value value]]))]
+    (canonical-records-digest domain (records value))))
 
 (defn ^:no-doc capture-keyring
   "Captures at most once for a protected operation. Static codec options are

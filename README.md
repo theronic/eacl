@@ -135,7 +135,7 @@ This README is too long & too technical, so I am working to simplify it and brea
 
 > [!WARNING]
 > EACL is used in production, but under active development.
-> This branch targets `9.0.0-SNAPSHOT`. Build it locally until the coordinated release is published; see [Clojars](https://clojars.org/dev.eacl/) for published versions.
+> This branch targets `8.0.0-SNAPSHOT`. Build it locally until the coordinated release is published; see [Clojars](https://clojars.org/dev.eacl/) for published versions.
 
 ## Real-Time UI Maintenance
 
@@ -352,10 +352,12 @@ For reader-Peer session pinning, let the writer return a basis token with its
 mutation response, select that exact basis once on the reader, and retain the
 snapshot for the session. Subsequent authorization reads then make no current
 head request. Datomic, Datahike, and DataScript default to the portable source
-lifecycle `"eacl/initial"`; rotate it explicitly with `expire-cache!` after a
+lifecycle `#uuid "00000000-0000-0000-0000-000000000000"`; rotate it explicitly with `expire-cache!` after a
 restore, reset, force-move, or history replacement. Datalevin has no universal
 safe default and requires an externally persisted `:source-lifecycle` plus
-shared token key material at `make-client`.
+shared token key material at `make-client`. See the
+[native UUID lifecycle upgrade guide](docs/uuid-source-lifecycle-upgrade.md)
+for coordinated configuration and artifact cutover.
 
 Construct a source-only deployment with `{:read-only? true}`. Reads and
 snapshot selection remain available; every mutation fails before planning or
@@ -399,9 +401,7 @@ As long as the DB basis is recent enough for our consistency demands, we can avo
 
 8. **One less thing** to deploy & sync Relationships to.
 
-Note that EACL has [Limitations](#limitations-deficiencies--gotchas) compared to SpiceDB, mainly:
-- No [Caveats](https://authzed.com/docs/spicedb/concepts/caveats) yet (needed for ABAC),
-- and a few other minor differences.
+Note that EACL has [Limitations](#limitations-deficiencies--gotchas) compared to SpiceDB.
 
 ## ReBAC: Relationship-based Access Control
 
@@ -538,8 +538,8 @@ The EACL-specific attributes are detailed below.
 ### Relationships
 
 EACL Relationships are light by virtue of being stored directly on entities as two tuples:
-- Forward subject->resource tuple: `:eacl.v9.relationship/subject-type+relation+resource-type+resource+qualifier`
-- Reverse resource->subject tuple: `:eacl.v9.relationship/resource-type+relation+subject-type+subject+qualifier`
+- Forward subject->resource tuple: `:eacl.v8.relationship/subject-type+relation+resource-type+resource+qualifier`
+- Reverse resource->subject tuple: `:eacl.v8.relationship/resource-type+relation+subject-type+subject+qualifier`
 
 To retract an entity and its Relationships, use `:eacl.fn/retractEntity`, an optional Transactor function you can install.
 
@@ -586,7 +586,7 @@ inside the client.
 - `:eacl/schema-string` stores a valid schema string was written via `eacl/write-schema!`.
 - `:eacl/schema-version` track the schema revision in Datomic Pro.
 - `:eacl/schema-generation` and `:eacl/schema-write-fence` track schema writes in Datahike and DataScript. Datalevin uses scalar `:eacl.datalevin/schema-generation` and `:eacl.datalevin/schema-write-fence` values in its native `max-tx` domain.
-- `:eacl/storage-version` identifies Relationship storage ABI 9 across the bundled backends (five-slot endpoint pairs).
+- `:eacl/storage-version` identifies Relationship storage ABI 8 across the bundled backends (five-slot endpoint pairs).
 - `:eacl/permission-storage-version` identifies Datomic's canonical permission representation (version 8).
 - `:eacl.fn/assert-relation-unused` is a Transactor function in Datomic that guards removing Relations with active Relationships (to avoids orphaned Relationships).
 
@@ -652,19 +652,19 @@ EACL supports multiple backends. Each adapter will bring in the shared EACL engi
 
 ```clojure
 ;; Datomic Pro
-{:deps {dev.eacl/eacl-datomic {:mvn/version "9.0.0-SNAPSHOT"}}}
+{:deps {dev.eacl/eacl-datomic {:mvn/version "8.0.0-SNAPSHOT"}}}
 
 ;; Datahike
-{:deps {dev.eacl/eacl-datahike {:mvn/version "9.0.0-SNAPSHOT"}}}
+{:deps {dev.eacl/eacl-datahike {:mvn/version "8.0.0-SNAPSHOT"}}}
 
 ;; DataScript
-{:deps {dev.eacl/eacl-datascript {:mvn/version "9.0.0-SNAPSHOT"}}}
+{:deps {dev.eacl/eacl-datascript {:mvn/version "8.0.0-SNAPSHOT"}}}
 
 ;; Datalevin (coordinate reserved; publication remains gated)
-{:deps {dev.eacl/eacl-datalevin {:mvn/version "9.0.0-SNAPSHOT"}}}
+{:deps {dev.eacl/eacl-datalevin {:mvn/version "8.0.0-SNAPSHOT"}}}
 
 ;; Core-only consumers and backend authors (you typically won't need this)
-{:deps {dev.eacl/eacl {:mvn/version "9.0.0-SNAPSHOT"}}}
+{:deps {dev.eacl/eacl {:mvn/version "8.0.0-SNAPSHOT"}}}
 ```
 
 ### Development from source
@@ -842,10 +842,10 @@ the authorization schema directly, follow the recovery procedure in
 
 Datomic and Datahike consumers upgrading a released v7 database must run the
 backend's explicit permission-only v7-to-v8 migration, followed by the
-[Relationship storage 7-to-9 migration](docs/migration-v7-to-v9.md), before
+[Relationship storage 7-to-8 migration](docs/relationship-storage-v7-to-v8.md), before
 constructing an ordinary v8 client. Permission storage remains version 8.
-Storage 9 writes a `nil` qualifier reference in slot five; caveat and expiry
-evaluation belong to later phases.
+Storage 8 uses a nullable qualifier reference in slot five for Caveats and
+expiring Relationships.
 
 ### Permission-tree expansion
 
@@ -986,7 +986,7 @@ order.
 Add the Datomic adapter dependency to your `deps.edn` file:
 
 ```clojure
-{:deps {dev.eacl/eacl-datomic {:mvn/version "9.0.0-SNAPSHOT"}}}
+{:deps {dev.eacl/eacl-datomic {:mvn/version "8.0.0-SNAPSHOT"}}}
 ```
 
 ```clojure
@@ -1085,7 +1085,7 @@ Add the Datomic adapter dependency to your `deps.edn` file:
 For Clojure/JVM applications backed by Datahike, add the Datahike adapter dependency to your `deps.edn` file:
 
 ```clojure
-{:deps {dev.eacl/eacl-datahike {:mvn/version "9.0.0-SNAPSHOT"}}}
+{:deps {dev.eacl/eacl-datahike {:mvn/version "8.0.0-SNAPSHOT"}}}
 ```
 
 ```clojure
@@ -1139,7 +1139,7 @@ commit records.
 For server-side or browser demos, use the DataScript adapter:
 
 ```clojure
-{:deps {dev.eacl/eacl-datascript {:mvn/version "9.0.0-SNAPSHOT"}}}
+{:deps {dev.eacl/eacl-datascript {:mvn/version "8.0.0-SNAPSHOT"}}}
 ```
 
 ```clojure
@@ -1700,7 +1700,7 @@ expire: lossless resume requires indefinite retention of old keys.** A finite
 count per-key encryptions. Default keys are process-local and do not survive
 restarts or provide cross-process verification.
 
-V9 adds shared live `:security-keyring-controller` and dedicated
+V8 adds shared live `:security-keyring-controller` and dedicated
 `:zed-token-keyring-controller` options. See the [security-key guide](docs/security-keyrings.md)
 for the public update APIs, two-Peer runbook, failure recovery, and cache trust
 rules. Key updates do not change authorization proofs or database identity.
@@ -1880,6 +1880,11 @@ Now you can transact relationships. The usual way is `eacl/create-relationships!
 
 ## Limitations, Deficiencies & Gotchas:
 
+- Caveats use a bounded CEL subset. JVM clients need the optional
+  `eacl-caveats-jvm` evaluator; ClojureScript clients must supply a compatible
+  evaluator. See [supported expressions and limits](docs/caveats.md).
+- Client-targeted cursors over expiring Relationships require a restart when
+  their temporal certificate ends; explicit snapshots retain their captured time.
 - *Exact snapshots require backend history:* `at-exact-snapshot` and continued
   cursors require the backend to reconstruct the selected database value.
   Ordinary Datomic history and history-enabled Datahike do not age-expire.
@@ -1936,7 +1941,7 @@ but it is not a byte-for-byte or operational clone:
   Qualified deletion uses bounded native transactions; each transaction removes
   both endpoint values and their owned qualifier together. These operations do
   not have direct SpiceDB API equivalents.
-- V9 supports [Caveats and expiring Relationships](docs/caveats.md), including
+- V8 supports [Caveats and expiring Relationships](docs/caveats.md), including
   conditional results and an exclusive UTC-millisecond expiry. Its bounded CEL
   profile is a subset of SpiceDB's expression language; wildcard subjects and
   subject relations remain unsupported. Qualified activation requires upgrading
@@ -1968,4 +1973,4 @@ Some of this open-source work was generously funded by my former employer, [Clou
 
 - EACL is free and open-source, licensed under the Eclipse Public License v2.0.
 
-See [Caveats and expiring Relationships](docs/caveats.md) for the v9 public APIs, optional JVM evaluator, trusted-clock and cursor semantics, and coordinated rollout.
+See [Caveats and expiring Relationships](docs/caveats.md) for the v8 public APIs, optional JVM evaluator, trusted-clock and cursor semantics, and coordinated rollout.

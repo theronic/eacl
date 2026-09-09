@@ -39,9 +39,9 @@
                   :reason reason}
                  data))))
             forward-attr
-            :eacl.v9.relationship/subject-type+relation+resource-type+resource+qualifier
+            :eacl.v8.relationship/subject-type+relation+resource-type+resource+qualifier
             reverse-attr
-            :eacl.v9.relationship/resource-type+relation+subject-type+subject+qualifier
+            :eacl.v8.relationship/resource-type+relation+subject-type+subject+qualifier
             relation-key-attr
             :eacl.relation/resource-type+relation-name+subject-type
             valid-target?

@@ -1,11 +1,11 @@
 ## Purpose
 
-Defines the sparse immutable entity referenced by a v9 Relationship's trailing qualifier component and the lifecycle of Caveat context and future expiration data.
+Defines the sparse immutable entity referenced by a v8 Relationship's trailing qualifier component and the lifecycle of Caveat context and future expiration data.
 
 ## ADDED Requirements
 
 ### Requirement: Qualified Relationships use sparse qualifier entities
-A v9 Relationship MAY reference one qualifier entity from both endpoint halves. A qualifier entity SHALL exist only when at least one semantic qualifier is present and SHALL carry a versioned, bounded set of supported attributes.
+A v8 Relationship MAY reference one qualifier entity from both endpoint halves. A qualifier entity SHALL exist only when at least one semantic qualifier is present and SHALL carry a versioned, bounded set of supported attributes.
 
 #### Scenario: Ordinary Relationship
 - **WHEN** a Relationship has no Caveat, bound Caveat context, or `valid-until`

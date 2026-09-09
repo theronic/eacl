@@ -4,12 +4,14 @@
   This is the sole production backend boundary for recursive traversal, Relay
   pagination, deletion, consistency selection, and ordered-generation proofs."
   (:require [eacl.authorization.data :as qualification-data]
+            [eacl.uuid :as uuid]
             [eacl.exact-integer :as exact-integer]
+            [eacl.backend.entity-id :as entity-id]
             [eacl.relationships.edge :as edge]
             [eacl.request.counters :as request-counters]
             [eacl.spicedb.consistency :as consistency]))
 
-(def adapter-version 9)
+(def adapter-version 8)
 (def maximum-exact-integer exact-integer/maximum)
 (def minimum-exact-integer exact-integer/minimum)
 
@@ -500,9 +502,16 @@
     ::deterministic? (boolean deterministic?)
     ::identity-contract identity-contract
     ::runtime-guards? (boolean runtime-guards?)
-    ::state state}
+    ::state state
+    ::unmanaged-lifecycle (delay (uuid/fresh))}
     operator-physical-policy
     (assoc ::operator-physical-policy operator-physical-policy))))
+
+(defn unmanaged-lifecycle
+  "Private lifetime identity for cursors from a raw adapter without a source.
+  Public source execution supplies its durable lineage instead."
+  [adapter]
+  (force (::unmanaged-lifecycle adapter)))
 
 (defn adapter?
   [candidate]
@@ -697,7 +706,7 @@
       (if-not remaining
         value
         (let [raw-item (first remaining)
-              valid-item? (if compact? (edge/valid? raw-item) (exact-integer/natural? raw-item))
+              valid-item? (if compact? (edge/valid? raw-item) (entity-id/valid? raw-item))
               item (if (and compact? valid-item?) (edge/endpoint raw-item) raw-item)]
           ;; One combined predicate on the hot path; the failed obligation
           ;; is classified only on the cold violation branch.
@@ -732,7 +741,7 @@
       :object-id->internal
       (do
         (when (and (some? value)
-                   (not (exact-integer/natural? value)))
+                   (not (entity-id/valid? value)))
           (contract-violation!
            backend-id operation-key
            (if (exact-integer/exact? value) :nonnegative :exact-integer)
@@ -1087,7 +1096,7 @@
             accumulator
             (let [item (first items)
                   valid-item? (or (not guarded?)
-                                  (if compact? (edge/valid? item) (exact-integer/natural? item)))
+                                  (if compact? (edge/valid? item) (entity-id/valid? item)))
                   eid (if (and compact? valid-item?) (edge/endpoint item) item)]
               (when guarded?
                 (when-not valid-item?

@@ -82,7 +82,7 @@
 (deftest causal-tokens-use-the-supplied-controller
   (let [c (controller)
         opts {:keyring-controller c :now-seconds 50}
-        native {:backend :test :source-id "source" :source-lifecycle "life" :branch nil
+        native {:backend :test :source-id "source" :source-lifecycle #uuid "22408a55-d517-52ed-ac3b-b66dca0f4b10" :branch nil
                 :revision 1 :exact-locator nil :issued-at 10 :expires-at 100}
         token (causal/issue opts native)]
     (is (= 1 (:revision (causal/token-data opts token))))
@@ -154,8 +154,8 @@
         token (secure/encode-authenticated (options c) payload)
         tampered (replace-envelope-kid token "eacl_ring_" :alias)
         cursor-token (cursor/cursor->token payload {:keyring-controller c})
-        segments (string/split (subs cursor-token (count "eacl_c6_")) #"\.")
-        cursor-tampered (str "eacl_c6_" (string/join "." (assoc segments 0 (secure/b64url-encode (secure/utf8-bytes (secure/encode-canonical :alias))))))]
+        segments (string/split (subs cursor-token (count "eacl_c7_")) #"\.")
+        cursor-tampered (str "eacl_c7_" (string/join "." (assoc segments 0 (secure/b64url-encode (secure/utf8-bytes (secure/encode-canonical :alias))))))]
     (is (= :authentication-failed (:reason (outcome #(secure/decode-authenticated (options c) tampered)))))
     (is (= :authentication-failed (:reason (outcome #(cursor/token->cursor cursor-tampered {:keyring-controller c})))))))
 

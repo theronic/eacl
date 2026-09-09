@@ -13,9 +13,9 @@
               [javax.crypto Mac]
               [javax.crypto.spec IvParameterSpec SecretKeySpec])))
 
-(def cursor-version 6)
-(def cursor-prefix "eacl_c6_")
-(def cursor-domain "eacl/cursor/envelope/v6")
+(def cursor-version 7)
+(def cursor-prefix "eacl_c7_")
+(def cursor-domain "eacl/cursor/envelope/v7")
 (def payload-keys #{:version :cursor :issued-at :expires-at})
 (def ^:private nonce-size 12)
 (def ^:private aes-block-size 16)
@@ -691,7 +691,13 @@
   ([token options]
    (if (nil? token)
      nil
-     (let [options (capture-options options)
+     (let [_ (when (and (string? token)
+                        (re-find #"^eacl_c[1-6]_" token))
+               (throw (ex-info "This cursor format is obsolete; request a fresh cursor."
+                               {:type :eacl.pagination/cursor-upgrade-required
+                                :eacl/error :eacl.pagination/cursor-upgrade-required
+                                :reason :legacy-source-lifecycle :to-version cursor-version})))
+           options (capture-options options)
            context (try (token-context options token)
                         (catch #?(:clj Exception :cljs :default) error
                           (cursor-error! (or (:reason (ex-data error)) :undecodable) {})))

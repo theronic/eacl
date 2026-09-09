@@ -31,7 +31,7 @@
                                       conj {:e e :v v})
                               result))
                           {:forward [] :reverse []} (:tx-data plan)))]
-      (is (= identities (upgrade/inspect-pairs (pairs :db/add) 9)))
+      (is (= identities (upgrade/inspect-pairs (pairs :db/add) 8)))
       (is (= identities (upgrade/inspect-pairs (pairs :db/retract) 7)))
       (is (= (* 4 (count identities)) (count (:tx-data plan))))
       (is (= (set (map #(nth % 2) identities)) (:relations plan)))
@@ -68,14 +68,14 @@
                 :reverse (rows :db/add storage/reverse-attribute)}]
     (is (= #{10 11} (:relations plan)))
     (is (= 12 (count (:tx-data plan))))
-    (is (= identities (upgrade/inspect-pairs target 9)))
+    (is (= identities (upgrade/inspect-pairs target 8)))
     (is (= :pair-mismatch
-           (:reason (error-data #(upgrade/inspect-pairs (update target :reverse rest) 9)))))
+           (:reason (error-data #(upgrade/inspect-pairs (update target :reverse rest) 8)))))
     (is (= :duplicate-identity
-           (:reason (error-data #(upgrade/inspect-pairs (update target :forward concat (:forward target)) 9)))))
+           (:reason (error-data #(upgrade/inspect-pairs (update target :forward concat (:forward target)) 8)))))
     (is (= :malformed-pair
            (:reason (error-data #(upgrade/inspect-pairs
-                                  (assoc target :forward [{:e 1 :v [:user 10 :document 20 99]}]) 9)))))))
+                                  (assoc target :forward [{:e 1 :v [:user 10 :document 20 99]}]) 8)))))))
 
 (deftest durable-transitions-and-certificates-test
   (let [initial (merge (upgrade/bootstrap-state 100)

@@ -139,7 +139,7 @@
            (seq
             (datomic.api/index-range
              db
-             :eacl.v9.relationship/subject-type+relation+resource-type+resource+qualifier
+             :eacl.v8.relationship/subject-type+relation+resource-type+resource+qualifier
              (endpoint-value subject-type relation-eid resource-type 0 nil)
              (endpoint-value subject-type relation-eid resource-type Long/MAX_VALUE Long/MAX_VALUE)))
            ;; Healthy relationships have both tuple halves. Check the reverse
@@ -148,7 +148,7 @@
            (seq
             (datomic.api/index-range
              db
-             :eacl.v9.relationship/resource-type+relation+subject-type+subject+qualifier
+             :eacl.v8.relationship/resource-type+relation+subject-type+subject+qualifier
              (endpoint-value resource-type relation-eid subject-type 0 nil)
              (endpoint-value resource-type relation-eid subject-type Long/MAX_VALUE Long/MAX_VALUE))))
         (throw
@@ -180,7 +180,7 @@
    assert-relation-unused-fn-definition
 
    {:db/ident       :eacl/storage-version
-    :db/doc         "Relationship storage ABI: 9 = five-slot qualifier-reference endpoint pairs. Written only by explicit bootstrap or a verified migration; clients require completed storage 9."
+    :db/doc         "Relationship storage ABI: 8 = five-slot qualifier-reference endpoint pairs. Written only by explicit bootstrap or a verified migration; clients require completed storage 8."
     :db/valueType   :db.type/long
     :db/cardinality :db.cardinality/one
     :db/index       true}
@@ -260,16 +260,16 @@
     :db/cardinality :db.cardinality/one
     :db/index       true}
 
-   ;; v9 Relationships: forward and reverse tuple indexes only.
+   ;; v8 Relationships: forward and reverse tuple indexes only.
    {:db/ident       relationship-storage/forward-attribute
-    :db/doc         "EACL v9 relationship tuple from subject to resource."
+    :db/doc         "EACL v8 relationship tuple from subject to resource."
     :db/valueType   :db.type/tuple
     :db/tupleTypes  relationship-storage/tuple-types
     :db/cardinality :db.cardinality/many
     :db/index       true}
 
    {:db/ident       relationship-storage/reverse-attribute
-    :db/doc         "EACL v9 reverse relationship tuple from resource to subject."
+    :db/doc         "EACL v8 reverse relationship tuple from resource to subject."
     :db/valueType   :db.type/tuple
     :db/tupleTypes  relationship-storage/tuple-types
     :db/cardinality :db.cardinality/many
@@ -287,8 +287,8 @@
                  caveat-schema/datom-schema))))
 
 (defn install!
-  "Explicitly installs and bootstraps fresh Relationship storage 9. Existing
-  v7 databases must use eacl.datomic.migrations.v7-to-v9/migrate! instead."
+  "Explicitly installs and bootstraps fresh Relationship storage 8. Existing
+  v7 databases must use eacl.datomic.migrations.relationships-v7-to-v8/migrate! instead."
   [conn]
   @(d/transact conn v8-schema)
   (target-storage/bootstrap! conn)

@@ -522,7 +522,7 @@
             {:backend :test
              :source-id secret-id
              :branch nil
-             :source-lifecycle "test-lifecycle"
+             :source-lifecycle #uuid "56e42789-dff4-5066-96c9-d275736f47e2"
              :basis-kind :ordinary
              :revision 1
              :exact-locator nil

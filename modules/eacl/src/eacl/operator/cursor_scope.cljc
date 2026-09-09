@@ -4,8 +4,8 @@
   the edge payload's current semantic scope."
   (:require [eacl.secure-format :as secure-format]))
 
-(def scope-version 1)
-(def scope-domain "eacl.operator.cursor-scope.v1")
+(def scope-version 2)
+(def scope-domain "eacl.operator.cursor-scope.v2")
 
 (defn semantic-input
   "Returns the complete portable input authenticated for one operator cursor.
@@ -36,7 +36,6 @@
 
 (defn digest
   [plan cover-plan traversal snapshot-proof-identity]
-  (secure-format/canonical-records-digest
+  (secure-format/canonical-tree-digest
    scope-domain
-   [[:operator-cursor-scope
-     (semantic-input plan cover-plan traversal snapshot-proof-identity)]]))
+   (semantic-input plan cover-plan traversal snapshot-proof-identity)))

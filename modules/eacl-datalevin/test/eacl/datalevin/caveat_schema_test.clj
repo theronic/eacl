@@ -33,7 +33,7 @@
            :transact! #(d/transact! conn % {:datalevin/write-token token})
            :interleave! interleave! :tempid -101 :history-stable? false})
       (hot-path/check-ordinary!
-        {:make-client #(api/make-client conn {:cache cache/no-cache :source-lifecycle "caveat-hot-path"
+        {:make-client #(api/make-client conn {:cache cache/no-cache :source-lifecycle #uuid "0b900068-0fe1-5219-a7a7-7cd794f1201d"
                                              :security-key "01234567890123456789012345678901"
                                              :revision-watermark watermark
                                              :advance-revision-watermark! (fn [revision] (swap! watermark max revision))}) :transact! #(d/transact! conn % {:datalevin/write-token token})})

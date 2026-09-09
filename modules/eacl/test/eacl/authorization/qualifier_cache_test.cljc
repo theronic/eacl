@@ -8,7 +8,7 @@
             [eacl.caveats.definition :as definition]
             [eacl.relationships.qualifier :as qualifier]))
 
-(def basis {:backend :test :source-id "s" :source-lifecycle "l" :branch nil
+(def basis {:backend :test :source-id "s" :source-lifecycle #uuid "a0ecd4fb-4759-5e1f-87c8-cf47b62921c0" :branch nil
             :basis-kind :ordinary :revision 1 :exact-locator 1 :backend-snapshot-id "one"})
 
 (defn request [store options]
@@ -31,7 +31,7 @@
         (is (evidence/has? (qualification/qualify (request store {:basis next-basis :context {"flag" true} :reads reads}) 1 [10 3])))
         (is (= 1 @decodes) "complete content equality permits decode reuse on a later basis")
         (is (= 2 (get @reads 3)) "unknown-writer reuse still reads current qualifier content"))
-      (doseq [changed [(assoc basis :source-lifecycle "reset")
+      (doseq [changed [(assoc basis :source-lifecycle #uuid "36d739b5-ed14-5422-8c59-e374afcb4d96")
                        (assoc basis :source-id "other")
                        (assoc basis :branch "other")
                        (assoc basis :speculative-id "prospective")]]
@@ -62,7 +62,7 @@
   (let [store (cache/cache nil)
         _ (qualification/qualify (request store {}) 1 [10 3])
         replacement (assoc-in fixtures/fixture [3 qualifier/expiration-attribute] 98)]
-    (is (false? (qualification/qualify (request store {:db replacement :basis (assoc basis :source-lifecycle "reset")}) 1 [10 3])))))
+    (is (false? (qualification/qualify (request store {:db replacement :basis (assoc basis :source-lifecycle #uuid "36d739b5-ed14-5422-8c59-e374afcb4d96")}) 1 [10 3])))))
 
 (deftest decode-cache-publication-and-capacity-remain-optional-and-bounded
   (let [store (cache/cache {:max-entries 3})]

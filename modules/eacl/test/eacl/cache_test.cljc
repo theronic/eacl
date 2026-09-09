@@ -14,7 +14,7 @@
 (defrecord TestProvider [])
 
 (def ^:private default-source-id :source)
-(def ^:private default-lifecycle :lifecycle-a)
+(def ^:private default-lifecycle #uuid "366d028f-5470-52d3-8588-6611a57f71e0")
 (def ^:private default-fingerprint :adapter-v1)
 (def ^:private default-identity-contract :identity-v1)
 
@@ -974,8 +974,8 @@
               {:branch :main}
               {:branch :sibling}]
              [:lifecycle
-              {:lifecycle :lifecycle-a}
-              {:lifecycle :lifecycle-b}]]]
+              {:lifecycle #uuid "366d028f-5470-52d3-8588-6611a57f71e0"}
+              {:lifecycle #uuid "359424c3-7c84-556a-a683-c4cbf4ecc11e"}]]]
       (let [store (cache/basis-cache)
             proof (descriptor 1 [[1 5]])
             query (semantic-key label)]
@@ -1146,7 +1146,7 @@
     (is (zero? (get-in (cache/basis-cache-stats store)
                        [:subproblems :tiers :answer :entries])))))
 
-(deftest snapshot-v2-is-flat-deterministic-and-policy-free-test
+(deftest snapshot-v3-is-flat-deterministic-and-policy-free-test
   (let [options {:max-entries 4}
         left (cache/basis-cache options)
         right (cache/basis-cache options)
@@ -1308,7 +1308,7 @@
           malformed-value
           (assoc-in snapshot [:entries 0 :value]
                     {:format :attacker/partial-value})]
-      (is (= :eacl/incompatible-cache-snapshot
+      (is (= :eacl/cache-snapshot-upgrade-required
              (:type
               (error-data
                #(cache/restore-basis-snapshot! target v1 bounds)))))
@@ -1433,9 +1433,9 @@
         read! #(exact-operation! target 1 % :can? (constantly false))]
     (exact-operation! source 1 query :can? (constantly true))
     (let [token (cache/export-authenticated-basis-snapshot source bounds options)
-          envelope (secure/decode-canonical (secure/bytes->utf8 (secure/b64url-decode (subs token (count "eacl_cache1_")))))
+          envelope (secure/decode-canonical (secure/bytes->utf8 (secure/b64url-decode (subs token (count "eacl_cache2_")))))
           payload (:payload (secure/decode-authenticated-envelope
-                             (assoc options :prefix "eacl_cache1_" :domain "eacl/cache-snapshot/envelope/v1") token))]
+                             (assoc options :prefix "eacl_cache2_" :domain "eacl/cache-snapshot/envelope/v2") token))]
       (is (= :old (:kid envelope)))
       (is (= 1 (:entry-count payload)))
       (doseq [material [(pr-str (vec (range 32))) (secure/b64url-encode (vec (range 32)))]]
@@ -1488,7 +1488,7 @@
   (let [ring (rotation-ring) options {:keyring-controller ring} bounds {:max-entries 8}
         store (cache/basis-cache {:max-entries 8}) query (semantic-key :retained)]
     (exact-operation! store 1 query :can? (constantly true))
-    (doseq [token [nil {} "foreign" "eacl_cache1_invalid"]]
+    (doseq [token [nil {} "foreign" "eacl_cache2_invalid"]]
       (let [before (cache/cache-content-revision store)]
         (is (= {:restored? false :cache-miss? true :reason :invalid-cache-artifact}
                (cache/restore-authenticated-basis-snapshot! store token bounds options)))

@@ -1,5 +1,6 @@
 (ns eacl.datalevin.qualified-write-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [clojure.edn :as edn]
+            [clojure.test :refer [deftest is]]
             [datalevin.core :as d]
             [datalevin.util :as util]
             [eacl.caveats.publication-batch-contract :as batch]
@@ -39,7 +40,7 @@
     (try
       (public/check! {:client (api/make-client conn {:clock #(deref now)
                                                      :caveat-evaluator (fixtures/portable-evaluator (atom 0))
-                                                     :source-lifecycle "public-qualified-write"
+                                                     :source-lifecycle #uuid "25d66e31-e6ec-5407-8ceb-10415d4ef400"
                                                      :security-key "01234567890123456789012345678901"
                                                      :revision-watermark watermark
                                                      :advance-revision-watermark! (fn [revision] (swap! watermark max revision))})
@@ -57,7 +58,7 @@
         watermark (atom 0)]
     (try
       (allowance/check! {:client (api/make-client conn {:caveat-evaluator (fixtures/portable-evaluator (atom 0))
-                                                        :source-lifecycle "schema-allowance"
+                                                        :source-lifecycle #uuid "79b4b68c-73d2-5c2d-98c1-1002de29c7e2"
                                                         :security-key "01234567890123456789012345678901"
                                                         :revision-watermark watermark
                                                         :advance-revision-watermark! (fn [revision] (swap! watermark max revision))})
@@ -94,7 +95,7 @@
     (try
       (allowance/check!
        {:client (api/make-client conn {:caveat-evaluator (fixtures/portable-evaluator (atom 0))
-                                       :source-lifecycle "schema-owned-race"
+                                       :source-lifecycle #uuid "943ebf6a-083f-5d2e-863f-099c01d31a33"
                                        :security-key "01234567890123456789012345678901"
                                        :revision-watermark watermark
                                        :advance-revision-watermark! (fn [revision] (swap! watermark max revision))})
@@ -131,7 +132,7 @@
     (try
       (inspection/check! {:client (api/make-client conn {:clock #(deref now)
                                                          :caveat-evaluator (fixtures/portable-evaluator (atom 0))
-                                                         :source-lifecycle "public-qualified-write"
+                                                         :source-lifecycle #uuid "25d66e31-e6ec-5407-8ceb-10415d4ef400"
                                                          :security-key "01234567890123456789012345678901"
                                                          :revision-watermark watermark
                                                          :advance-revision-watermark! (fn [revision] (swap! watermark max revision))})
@@ -145,17 +146,17 @@
 (deftest qualified-cache-traces-match-uncached-authorization
   (let [dir (util/tmp-dir (str "qualified-cache-trace-" (random-uuid)))
         conn (schema/create-conn dir {}) now (atom 99) watermark (atom 0)
-        lifecycle-file (str dir "/trace-lifecycle.txt")
-        _ (spit lifecycle-file "qualified-cache-trace")
+        lifecycle-file (str dir "/trace-lifecycle.edn")
+        _ (spit lifecycle-file (pr-str #uuid "943ebf6a-083f-5d2e-863f-099c01d31a33"))
         make-client #(api/make-client conn {:clock (fn [] @now)
                                             :caveat-evaluator (fixtures/portable-evaluator (atom 0))
-                                            :source-lifecycle (slurp lifecycle-file)
+                                            :source-lifecycle (edn/read-string (slurp lifecycle-file))
                                             :security-key "01234567890123456789012345678901"
                                             :revision-watermark watermark
                                             :advance-revision-watermark! (fn [revision] (swap! watermark max revision))})]
     (try
       (cache-trace/check! {:client (make-client) :writer #(qualifiers/writer conn) :now now
-                           :rotate-client! (fn [_ lifecycle] (spit lifecycle-file lifecycle) (make-client))})
+                           :rotate-client! (fn [_ lifecycle] (spit lifecycle-file (pr-str lifecycle)) (make-client))})
       (finally (d/close conn) (util/delete-files dir)))))
 
 (deftest qualified-object-deletion-is-atomic-and-bounded
@@ -164,7 +165,7 @@
     (try
       (deletion/check! {:client (api/make-client conn {:clock (constantly 200)
                                                        :caveat-evaluator (fixtures/portable-evaluator (atom 0))
-                                                       :source-lifecycle "qualified-deletion"
+                                                       :source-lifecycle #uuid "f1845938-c92f-54bd-bdd9-94f6944a90cc"
                                                        :security-key "01234567890123456789012345678901"
                                                        :revision-watermark watermark
                                                        :advance-revision-watermark! #(swap! watermark max %)})

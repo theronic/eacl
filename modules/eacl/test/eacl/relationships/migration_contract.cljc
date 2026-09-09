@@ -57,7 +57,7 @@ definition document {
       (is (some? (client!)))
       (transact! [[:db/add [:eacl/id "schema-string"] :eacl/storage-version 7]])
       (is (= :incomplete-storage (:reason (error-data client!))))
-      (transact! [[:db/add [:eacl/id "schema-string"] :eacl/storage-version 9]])
+      (transact! [[:db/add [:eacl/id "schema-string"] :eacl/storage-version 8]])
       (is (some? (client!)))
       (transact! [[:db/add alice legacy/forward-attribute
                    (legacy/endpoint-value :user relation :document document)]])
@@ -89,7 +89,7 @@ definition document {
               rev (revision after)]
           (is (= :complete (:state report)))
           (is (= 2 (:source-count report)))
-          (is (= 9 (:version (evidence after))))
+          (is (= 8 (:version (evidence after))))
           (is (empty? (rows after legacy/forward-attribute)))
           (is (empty? (rows after legacy/reverse-attribute)))
           (is (= 2 (count (seq (rows after storage/forward-attribute)))))

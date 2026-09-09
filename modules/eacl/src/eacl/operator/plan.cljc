@@ -17,7 +17,7 @@
             [eacl.secure-format :as secure]))
 
 (def plan-version 1)
-(def fingerprint-domain "eacl/operator-plan/v1")
+(def fingerprint-domain "eacl/operator-plan/v2")
 (def cover-version :recursive-exact-cover-v1)
 (def witness-version :typed-node-bitset-v1)
 (def predicate-version :short-circuit-dag-v1)
@@ -250,7 +250,7 @@
      ;; or commutative spelling. This is a runtime plan/cursor fingerprint, not
      ;; a durable permission attribute or source of schema truth.
      :expression-digest
-     (secure/canonical-digest "eacl/operator-expression/v1" dag)
+     (secure/canonical-tree-digest "eacl/operator-expression/v2" dag)
      :dag dag
      :metrics metrics
      :root (:root dag)
@@ -518,18 +518,10 @@
            :all (vec (sort (into (:positive result)
                                  (:negative result))))})]))))
 
-(defn- fingerprint-records [plan]
-  ;; Derived projections (:expression-roots, :certificate-acyclic?) stay
-  ;; outside the authenticated identity: they are pure recomputations of
-  ;; fingerprinted fields, and validate-plan's fresh-compile equality
-  ;; still covers them. Including them would break every outstanding
-  ;; cursor fingerprint for zero integrity gain.
-  (let [without-fingerprint (dissoc plan :fingerprint
-                                    :expression-roots
-                                    :certificate-acyclic?)]
-    (into [[:header (:format plan) (:version plan) (:root plan)]]
-          (for [key (sort-by str (keys without-fingerprint))]
-            [:field key (get without-fingerprint key)]))))
+(defn- fingerprint-input [plan]
+  ;; These projections are recomputed from authenticated fields; fresh-compile
+  ;; validation also checks them. The complete remaining plan is authenticated.
+  (dissoc plan :fingerprint :expression-roots :certificate-acyclic?))
 
 (defn- compile-operator-plan [adapter root collected]
   (when-not (expression-closure-has-operator? collected)
@@ -629,8 +621,8 @@
                     :physical-policy physical-policy-version}
          :order-contract order-contract}
         fingerprint
-        (secure/canonical-records-digest fingerprint-domain
-                                         (fingerprint-records plan))
+        (secure/canonical-tree-digest fingerprint-domain
+                                      (fingerprint-input plan))
         ;; Derived fields ride outside the fingerprint and outside the
         ;; cursor-scope digest key list: plan identity is unchanged.
         plan (assoc plan :fingerprint fingerprint)]
@@ -665,8 +657,8 @@
                     {:expected-keys operator-plan-keys
                      :actual-keys (set (keys plan))}))
   (let [actual-fingerprint
-        (secure/canonical-records-digest fingerprint-domain
-                                         (fingerprint-records plan))]
+        (secure/canonical-tree-digest fingerprint-domain
+                                      (fingerprint-input plan))]
     (when-not (= actual-fingerprint (:fingerprint plan))
       (compile-error! :fingerprint-mismatch
                       "Operator plan fingerprint does not authenticate its fields."

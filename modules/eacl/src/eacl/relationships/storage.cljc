@@ -1,22 +1,22 @@
 (ns eacl.relationships.storage
   "Canonical relationship-storage attribute identities shared by every backend.
 
-  Relationship storage ABI 9 is independent of the EACL v8 library and
+  Relationship storage ABI 8 matches the EACL v8 library and
   permission representation. Serving adapters consume only this layout.")
 
-(def version 9)
+(def version 8)
 (def value-arity 5)
 (def identity-arity 4)
 (def tuple-types
   [:db.type/keyword :db.type/ref :db.type/keyword :db.type/ref :db.type/ref])
 (def qualifier-capability :qualified)
-(def format-id :eacl.relationship/endpoint-pair-v9-qualifier-ref)
+(def format-id :eacl.relationship/endpoint-pair-v8-qualifier-ref)
 
 (def forward-attribute
-  :eacl.v9.relationship/subject-type+relation+resource-type+resource+qualifier)
+  :eacl.v8.relationship/subject-type+relation+resource-type+resource+qualifier)
 
 (def reverse-attribute
-  :eacl.v9.relationship/resource-type+relation+subject-type+subject+qualifier)
+  :eacl.v8.relationship/resource-type+relation+subject-type+subject+qualifier)
 
 (def attributes
   #{forward-attribute reverse-attribute})

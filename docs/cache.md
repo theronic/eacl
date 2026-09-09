@@ -289,7 +289,7 @@ retention, lookup metrics, database writes, or a library access update. A host t
 must suppress every redundant upload can compare the deterministic exported
 snapshot after observing a revision change.
 
-## Authenticated cache snapshots (v9)
+## Authenticated cache snapshots (v8)
 
 Every backend exposes `export-authenticated-cache-snapshot` and
 `restore-authenticated-cache-snapshot!` with `{:max-entries n}` bounds and an

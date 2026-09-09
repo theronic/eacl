@@ -27,7 +27,7 @@
 (def relationship
   (eacl/->Relationship user :reader document))
 
-(def ^:private source-lifecycle "datascript-consistency-v4-test")
+(def ^:private source-lifecycle #uuid "2d6c6563-c2c5-5be3-bbec-8c32a095cf19")
 
 (defn- reusable-subproblem-hits
   [stats]
@@ -439,7 +439,7 @@
       (ds/reset-conn! conn pre-write)
       (ds/transact! conn [{:eacl/id "unrelated"}])
       (datascript/expire-cache! client
-                                "datascript-consistency-reset-v4-test")
+                                #uuid "c0875242-f003-559f-8f05-b0b412161477")
       (is (= :eacl.consistency/incomparable-scope
              (:type
               (error-data

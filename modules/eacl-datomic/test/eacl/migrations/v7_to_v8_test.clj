@@ -8,7 +8,7 @@
             [eacl.datomic.schema :as schema]
             [eacl.migrations.v7-to-v8 :as migration]
             [eacl.relationships.legacy-v7 :as relationship-storage]
-            [eacl.datomic.migrations.v7-to-v9 :as storage-migration]
+            [eacl.datomic.migrations.relationships-v7-to-v8 :as storage-migration]
             [eacl.schema.expression-persistence :as persistence]
             [eacl.schema.expression-resolver :as resolver]
             [eacl.secure-format :as secure]))

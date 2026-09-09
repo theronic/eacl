@@ -1,11 +1,11 @@
 ## Purpose
 
-Defines how EACL resolves sparse v9 Relationship qualifiers and composes Caveat-derived definite, conditional, and fault evidence through one authorization engine.
+Defines how EACL resolves sparse v8 Relationship qualifiers and composes Caveat-derived definite, conditional, and fault evidence through one authorization engine.
 
 ## ADDED Requirements
 
 ### Requirement: Ordinary Relationships retain a zero-lookup fast path
-A Relationship whose qualifier component is `nil` SHALL participate as permanent unconditional edge evidence without resolving a qualifier entity or evaluating a Caveat. The common path MUST remain on the single v9 endpoint stream.
+A Relationship whose qualifier component is `nil` SHALL participate as permanent unconditional edge evidence without resolving a qualifier entity or evaluating a Caveat. The common path MUST remain on the single v8 endpoint stream.
 
 #### Scenario: Nil-qualified direct edge
 - **WHEN** authorization encounters an ordinary endpoint value

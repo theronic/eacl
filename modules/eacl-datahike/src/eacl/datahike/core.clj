@@ -220,7 +220,7 @@
    (orchestration/refresh-metrics! client opts)))
 
 (defn make-client
-  "Builds an EACL v8 client over explicitly initialized Relationship storage 9.
+  "Builds an EACL v8 client over explicitly initialized Relationship storage 8.
   Storage and permission upgrades must be invoked before construction."
   [conn config-opts]
   (storage-upgrade/reject-auto-migration! config-opts)

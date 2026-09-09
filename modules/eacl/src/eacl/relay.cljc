@@ -6,16 +6,19 @@
             [eacl.authorization.evidence :as evidence]
             [eacl.authorization.temporal :as temporal]
             [eacl.backend.v8 :as backend]
+            [eacl.backend.entity-id :as entity-id]
             [eacl.cache :as cache]
             [eacl.consistency :as consistency]
             [eacl.core :as eacl :refer [spice-object]]
             [eacl.relationships.mutations :as relationship-mutations]
             [eacl.cursor :as cursor]
             [eacl.execution :as execution]
+            [eacl.exact-integer :as exact-integer]
             [eacl.proof-frame :as proof-frame]
             [eacl.request.counters :as request-counters]
             [eacl.request.context :as request-context]
             [eacl.secure-format :as secure]
+            [eacl.uuid :as uuid]
             [eacl.spicedb.consistency :as public-consistency]
             [eacl.subproblem-cache :as subproblem]
             [eacl.verified-kernel :as verified]))
@@ -60,8 +63,8 @@
   Change this value whenever edge identity, dependency-closure construction,
   or traversal boundary semantics change. Exact database identity alone does
   not make a boundary produced by a different evaluator ABI composable."
-  {:version 3
-   :envelope 13
+  {:version 4
+   :envelope 14
    :edge-identity :external-object-id-v1
    :dependency-context :relation-closure-v1
    :emission-order cursor-emission-order-version})
@@ -222,7 +225,7 @@
    {:backend (backend/backend-id adapter)
     :source-id {:unmanaged-basis (backend/invoke adapter :snapshot-id)}
     :branch nil}
-   :source-lifecycle nil})
+   :source-lifecycle (backend/unmanaged-lifecycle adapter)})
 
 (def ^:private exact-snapshot-closure-digest
   (secure/canonical-digest
@@ -364,24 +367,68 @@
      (:snapshot-semantic-identity opts)
      (:request-lineage opts))))
 
+(defn- invalid-cursor!
+  [message data cause]
+  (throw (ex-info message
+                  (merge {:type :eacl.pagination/invalid-cursor
+                          :eacl/error :eacl.pagination/invalid-cursor}
+                         data)
+                  cause)))
+
+(defn- encode-coordinate
+  ;; Keep portable integers unchanged for existing cursors. JVM int64 IDs
+  ;; outside that range travel as decimal strings, never rounded JS numbers.
+  [value]
+  #?(:clj (if (and (integer? value)
+                   (<= Long/MIN_VALUE value Long/MAX_VALUE))
+            (entity-id/wire-value value)
+            value)
+     :cljs value))
+
+(defn- decode-coordinate
+  [value]
+  (if (exact-integer/exact? value)
+    value
+    (let [decoded #?(:clj (when (and (string? value) (<= (count value) 20))
+                           (try (Long/parseLong value)
+                                (catch NumberFormatException _ nil)))
+                     :cljs nil)]
+      ;; Decimal strings are reserved for nonportable int64 coordinates.
+      ;; JS backends cannot use these native IDs: reject before numeric coercion.
+      (if (and (some? decoded)
+               (= value (str decoded))
+               (not (exact-integer/exact? decoded)))
+        decoded
+        (invalid-cursor! "Relay cursor coordinate is malformed or outside the host integer range."
+                         {:reason :invalid-coordinate} nil)))))
+
 (defn- transform-edge-ids
   ;; :stable-edge edges carry only the boundary :result-eid; engine
   ;; checkpoints live exclusively in the private continuation store and never
   ;; cross the cursor envelope.
-  [f edge]
+  [f coordinate-f edge]
   (case (:kind edge)
     :stable-edge
     (cond-> edge
       (:result-eid edge) (update :result-eid f))
 
-    ;; Least-path coordinates pass through UNTRANSFORMED: they interleave
+    ;; Least-path coordinates retain native identity: they interleave
     ;; rule ordinals with eids of several types (no single external
     ;; mapping applies), and the exact basis makes internal ids stable
     ;; for the cursor's whole lifetime (acyclic-keyset-pagination).
     ;; The portable cursor envelope is authenticated encryption, so these
     ;; internal path coordinates remain confidential on every backend.
-    :least-path-edge
-    edge
+    (:least-path-edge :operator-least-path-edge)
+    (update edge :coords
+            (fn [coords]
+              (if (vector? coords)
+                (with-meta (mapv coordinate-f coords) (meta coords))
+                coords)))
+
+    :operator-recursive-edge
+    ;; The cover boundary has always carried native identities. Keep safe
+    ;; IDs unchanged so previously issued recursive cursors still resume.
+    (update edge :cover-edge #(transform-edge-ids coordinate-f coordinate-f %))
 
     :relationship-index
     (-> edge
@@ -404,11 +451,12 @@
                (require-canonical-cursor-object-id!
                 :edge
                 (backend/invoke adapter :internal-id->object %)))
+            encode-coordinate
             edge))
           token
           (cursor/cursor->token
            (merge
-            {:v 13
+            {:v 14
              :scope scope
              :edge public-edge}
             context)
@@ -424,18 +472,10 @@
     (execution/check! (:execution-contract opts) :cursor-encode)
     (let [token
           (cursor/cursor->token
-           (merge {:v 13 :scope scope :edge edge} context)
+           (merge {:v 14 :scope scope :edge edge} context)
            opts)]
       (execution/check! (:execution-contract opts) :cursor-encoded)
       token)))
-
-(defn- invalid-cursor!
-  [message data cause]
-  (throw (ex-info message
-                  (merge {:type :eacl.pagination/invalid-cursor
-                          :eacl/error :eacl.pagination/invalid-cursor}
-                         data)
-                  cause)))
 
 (defn- decode-envelope
   "Authenticates one Relay token and returns its envelope annotated with the
@@ -453,13 +493,16 @@
           (try
             (cursor/token->authenticated-cursor token opts)
             (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+              (when (= :eacl.pagination/cursor-upgrade-required (:type (ex-data error)))
+                (throw error))
               (invalid-cursor!
                "Invalid Relay cursor."
                {:reason (:reason (ex-data error))}
                error)))
           envelope (:cursor decoded)
           _ (execution/check! (:execution-contract opts) :cursor-decoded)]
-      (when-not (and (= 13 (:v envelope))
+      (when-not (and (= 14 (:v envelope))
+                     (uuid/owned? (get-in envelope [:lineage :source-lifecycle]))
                      (map? (:edge envelope))
                      (if (:qualification opts)
                        (temporal/cursor-certificate-valid? (:qualification-temporal envelope))
@@ -905,6 +948,7 @@
              (when (nil? internal-id)
                (vreset! missing? true))
              internal-id))
+         decode-coordinate
          edge)]
     {:edge transformed
      :missing? @missing?}))
@@ -1123,6 +1167,7 @@
                    (if (contains? identities internal-id)
                      (get identities internal-id)
                      (internal-id->object adapter internal-id))))
+                encode-coordinate
                 edge)))
              page-info))
          (:page-info page)

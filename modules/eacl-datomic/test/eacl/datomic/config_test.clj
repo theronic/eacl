@@ -23,7 +23,7 @@
           before (core/cache-content-revision client)
           snapshot (core/export-cache-snapshot client bounds)
           restored (core/restore-cache-snapshot! client snapshot bounds)]
-      (is (= :eacl.cache/basis-snapshot-v2 (:format snapshot)))
+      (is (= :eacl.cache/basis-snapshot-v3 (:format snapshot)))
       (is (zero? (:entry-count snapshot)))
       (is (true? (:restored? restored)))
       (is (> (core/cache-content-revision client) before)))))

@@ -23,7 +23,7 @@ Phase 1 supported writers MUST emit `nil` in slot five. A non-`nil` value encoun
 - **AND** authorization does not select a precedence rule between them
 
 #### Scenario: Non-nil qualifier before activation
-- **WHEN** a Phase 1 reader encounters a v9 Relationship whose qualifier component is non-`nil`
+- **WHEN** a Phase 1 reader encounters a v8 Relationship whose qualifier component is non-`nil`
 - **THEN** the operation fails closed as unsupported qualified data
 - **AND** the Relationship is never interpreted as permanent or unconditional
 
@@ -32,18 +32,18 @@ Phase 1 supported writers MUST emit `nil` in slot five. A non-`nil` value encoun
 - **THEN** backend set semantics retain one datom for that complete value
 
 ### Requirement: Ordered endpoint index access
-Each adapter SHALL implement exact logical matching, adjacency, Relationship filtering, Relation-in-use checks, and forward/reverse pagination using guarded access to the v9 endpoint attributes. The first three tuple components SHALL remain the typed Relation scan prefix, component four SHALL remain the opposite endpoint ordering key, and component five SHALL never precede or disturb that ordering.
+Each adapter SHALL implement exact logical matching, adjacency, Relationship filtering, Relation-in-use checks, and forward/reverse pagination using guarded access to the v8 endpoint attributes. The first three tuple components SHALL remain the typed Relation scan prefix, component four SHALL remain the opposite endpoint ordering key, and component five SHALL never precede or disturb that ordering.
 
 Every vector seek bound SHALL use the full stored arity where the backend's vector comparator requires it. A logical point match SHALL seek by owner, attribute, and first-four identity and SHALL validate that at most one qualifier variant exists.
 
 #### Scenario: Forward endpoint scan
 - **WHEN** authorization or Relationship pagination scans outward from a known subject
-- **THEN** the adapter seeks only the v9 forward attribute under `[subject-type relation-eid resource-type]`
+- **THEN** the adapter seeks only the v8 forward attribute under `[subject-type relation-eid resource-type]`
 - **AND** returns opposite endpoints in component-four order without consulting a v7 or supplemental store
 
 #### Scenario: Reverse endpoint scan
 - **WHEN** authorization or Relationship pagination scans inward from a known resource
-- **THEN** the adapter seeks only the v9 reverse attribute under `[resource-type relation-eid subject-type]`
+- **THEN** the adapter seeks only the v8 reverse attribute under `[resource-type relation-eid subject-type]`
 - **AND** returns opposite endpoints in component-four order without consulting a v7 or supplemental store
 
 #### Scenario: Exact logical Relationship probe
@@ -60,12 +60,12 @@ Every vector seek bound SHALL use the full stored arity where the backend's vect
 - **THEN** explicit owner, attribute, and component guards prevent the adjacent value from being returned
 
 ### Requirement: Atomic pair mutation and repair
-Relationship mutation through EACL SHALL add, replace, or retract both v9 endpoint values in one admitted transaction and SHALL preserve public `:create`, `:touch`, and `:delete` semantics. Conflict and delete identity SHALL be subject, Relation, and resource rather than the complete five-component value.
+Relationship mutation through EACL SHALL add, replace, or retract both v8 endpoint values in one admitted transaction and SHALL preserve public `:create`, `:touch`, and `:delete` semantics. Conflict and delete identity SHALL be subject, Relation, and resource rather than the complete five-component value.
 
 The `:create` conflict decision SHALL be made against the transaction-time database. `:touch` SHALL repair a missing half and, once qualifiers are activated, SHALL replace both exact old tuple values when slot five changes. `:delete` SHALL remove whichever exact qualifier value is stored without requiring the caller to name it.
 
 #### Scenario: Complete relationship conflict
-- **WHEN** `:create` targets a logical Relationship whose complete v9 pair already exists
+- **WHEN** `:create` targets a logical Relationship whose complete v8 pair already exists
 - **THEN** EACL reports `:eacl/relationship-conflict`
 
 #### Scenario: Racing creates of one relationship
@@ -84,7 +84,7 @@ The `:create` conflict decision SHALL be made against the transaction-time datab
 - **THEN** EACL rejects the batch with `:eacl/invalid-relationship-update-batch` before submission
 
 #### Scenario: Incomplete relationship repair
-- **WHEN** `:touch` targets a Relationship with either v9 endpoint half missing
+- **WHEN** `:touch` targets a Relationship with either v8 endpoint half missing
 - **THEN** EACL writes the canonical pair using one qualifier value on both halves
 
 #### Scenario: Touch replaces qualifier reference
@@ -94,7 +94,7 @@ The `:create` conflict decision SHALL be made against the transaction-time datab
 
 #### Scenario: Unconditional deletion
 - **WHEN** `:delete` targets a complete, incomplete, or absent logical Relationship without specifying a qualifier
-- **THEN** EACL retracts any exact v9 halves found for that first-four identity
+- **THEN** EACL retracts any exact v8 halves found for that first-four identity
 - **AND** absence remains an idempotent no-op
 
 ### Requirement: Endpoint deletion and integrity
@@ -144,38 +144,38 @@ The core workspace SHALL provide backend-neutral pure functions for five-compone
 - **THEN** it uses its native database API without introducing backend runtime dependencies into the backend-neutral core module
 
 ### Requirement: Prerelease compatibility boundary
-A serving EACL v8 client using the v9 Relationship implementation SHALL require storage ABI 9 and SHALL read only populated v9 Relationship attributes. It SHALL NOT add a v7 fallback, dual read, dual write, merged pagination stream, or automatic startup conversion.
+A serving EACL v8 client using the v8 Relationship implementation SHALL require storage ABI 8 and SHALL read only populated v8 Relationship attributes. It SHALL NOT add a v7 fallback, dual read, dual write, merged pagination stream, or automatic startup conversion.
 
 #### Scenario: Populated v7 database
 - **WHEN** client construction observes current v7 Relationship datoms or storage stamp 7
 - **THEN** construction fails with `:eacl/storage-version`
-- **AND** the error identifies the explicit backend v7-to-v9 migration function and documentation
+- **AND** the error identifies the explicit backend v7-to-v8 migration function and documentation
 
 #### Scenario: Interrupted mixed database
-- **WHEN** client construction observes both current v7 and v9 Relationship data or a non-complete migration marker
+- **WHEN** client construction observes both current v7 and v8 Relationship data or a non-complete migration marker
 - **THEN** construction fails before authorization or cache publication
 - **AND** directs the operator to rerun the same migration
 
-#### Scenario: Completed v9 database
-- **WHEN** the database is stamped storage 9, has a complete migration/fresh-bootstrap marker, contains no current v7 Relationship datoms under bounded probes, and has compatible target attribute shapes
-- **THEN** client construction succeeds and all Relationship operations use only v9 attributes
-- **AND** startup does not enumerate the complete v9 graph
+#### Scenario: Completed v8 database
+- **WHEN** the database is stamped storage 8, has a complete migration/fresh-bootstrap marker, contains no current v7 Relationship datoms under bounded probes, and has compatible target attribute shapes
+- **THEN** client construction succeeds and all Relationship operations use only v8 attributes
+- **AND** startup does not enumerate the complete v8 graph
 
 #### Scenario: Old cache or cursor artifact
-- **WHEN** a v9 client receives an artifact whose storage/adapter/order ABI identifies the four-component layout
+- **WHEN** a v8 client receives an artifact whose storage/adapter/order ABI identifies the four-component layout
 - **THEN** it rejects the cursor with a typed compatibility error or treats the cache artifact as a miss
 - **AND** it never replays the artifact through a v7 reader
 
 #### Scenario: Existing prerelease demo database
-- **WHEN** a DataScript or other prerelease database contains the discarded Relationship-entity representation rather than v9 endpoint pairs
-- **THEN** the v9 adapter does not treat those entities as active Relationships
+- **WHEN** a DataScript or other prerelease database contains the discarded Relationship-entity representation rather than v8 endpoint pairs
+- **THEN** the v8 adapter does not treat those entities as active Relationships
 - **AND** documentation directs the operator to recreate/reload that prerelease database rather than enabling another compatibility reader
 
 ### Requirement: Cross-runtime validation
 The five-component endpoint implementation SHALL satisfy shared authorization, Relationship, mutation, pagination, proof, deletion, integrity, and migration conformance on every bundled backend and on both DataScript runtimes.
 
 #### Scenario: JVM suite
-- **WHEN** Datomic, Datahike, Datalevin, and DataScript JVM suites run against storage 9
+- **WHEN** Datomic, Datahike, Datalevin, and DataScript JVM suites run against storage 8
 - **THEN** direct and recursive authorization, forward/reverse lookup, count, Relationship read/write, cache proof, deletion, and integrity results match the four-component semantic baseline for ordinary Relationships
 
 #### Scenario: ClojureScript suite
@@ -184,5 +184,5 @@ The five-component endpoint implementation SHALL satisfy shared authorization, R
 
 #### Scenario: Single-source traversal measurement
 - **WHEN** release benchmarks instrument endpoint access
-- **THEN** each logical Relation scan uses one v9 attribute stream and zero v7 or supplemental Relationship scans
+- **THEN** each logical Relation scan uses one v8 attribute stream and zero v7 or supplemental Relationship scans
 - **AND** measured budgets cover positive/negative point checks, pages, arrows, counts, allocation, and storage density

@@ -85,7 +85,7 @@
           snapshot-a (eacl/snapshot client-a)
           snapshot-b (eacl/snapshot client-b)]
       (try
-        (is (= "eacl/initial"
+        (is (= #uuid "00000000-0000-0000-0000-000000000000"
                (get-in client-a [:runtime :source-lifecycle])
                (get-in client-b [:runtime :source-lifecycle])
                (:source-lifecycle (eacl/basis snapshot-a))

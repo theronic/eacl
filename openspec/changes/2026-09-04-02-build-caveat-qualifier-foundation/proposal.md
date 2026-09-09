@@ -6,7 +6,7 @@ This phase builds and formally specifies that foundation before any non-`nil` qu
 
 ## What Changes
 
-- Require completion of `2026-09-04-01-adopt-v9-qualifier-reference-storage` and storage ABI 9.
+- Require completion of `2026-09-04-01-adopt-v8-qualifier-reference-storage` and storage ABI 8.
 - Qualify the exact `cel-parser` behavior and target SpiceDB/CEL corpus in read-only exploration first, then apply a **FORMAL GATE**: define and verify qualifier lifecycle, Caveat typing, stored/request context precedence, complete/partial/error outcomes, and the selected CEL profile before editing production qualifier/Caveat source.
 - Add sparse immutable Relationship qualifier entities referenced by slot five. Qualifiers may carry a shared Caveat-definition ref, canonical Relationship-bound Caveat context, and optional epoch-millisecond `valid-until` for Phase 3.
 - Keep qualifiers singly owned and immutable. Updating any qualifier creates a new entity and later replaces both endpoint tuple refs; sharing or mutating a qualifier in place is unsupported and detectable.

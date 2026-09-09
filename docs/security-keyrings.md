@@ -1,6 +1,6 @@
 # Security keys and live rotation
 
-EACL v9 accepts externally supplied keys through an opaque, in-memory
+EACL v8 accepts externally supplied keys through an opaque, in-memory
 `SecurityKeyring`. Clients sharing a controller observe its updates without
 being recreated. Cursors, Zed tokens, and authenticated cache snapshots each
 name one authenticated key ID. Their cryptographic domains remain separate.

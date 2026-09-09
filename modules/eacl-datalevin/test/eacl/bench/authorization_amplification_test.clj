@@ -328,7 +328,7 @@
   (let [watermark (atom 0)]
     (datalevin/make-client
      conn
-     {:source-lifecycle "authorization-amplification-baseline"
+     {:source-lifecycle #uuid "6c89ee77-28b0-5d74-9020-264298d30f9c"
       :revision-watermark watermark
       :advance-revision-watermark! #(swap! watermark max %)
       :security-key test-key})))

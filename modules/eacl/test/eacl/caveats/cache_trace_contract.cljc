@@ -100,8 +100,8 @@
       (sample :changed-caveat-definition)
       (is (= :no-permission (point :direct)))
       (if rotate-client!
-        (reset! active-client (rotate-client! @active-client "qualified-cache-trace-reset"))
-        (expire-cache! @active-client "qualified-cache-trace-reset"))
+        (reset! active-client (rotate-client! @active-client #uuid "5e23763b-7bfd-5575-aa9f-05dfa18fe99b"))
+        (expire-cache! @active-client #uuid "5e23763b-7bfd-5575-aa9f-05dfa18fe99b"))
       (sample :new-source-lifecycle)
       (touch! (assoc ban :valid-until-ms 250))
       (touch! member)

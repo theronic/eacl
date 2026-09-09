@@ -1,6 +1,6 @@
 ## Context
 
-Phase 1 supplies one v9 endpoint pair with an optional trailing `qualifier-eid`, but only `nil` is legal in current-serving data. This phase defines the data and evaluator behind that reference. Phase 3 will be the first change allowed to route a non-`nil` qualifier through authorization.
+Phase 1 supplies one v8 endpoint pair with an optional trailing `qualifier-eid`, but only `nil` is legal in current-serving data. This phase defines the data and evaluator behind that reference. Phase 3 will be the first change allowed to route a non-`nil` qualifier through authorization.
 
 The selected JVM library, `com.exoscale/cel-parser` 0.1.8, provides `make-program` and `eval-for`; its evaluator returns error objects by default, has documented CEL divergences, and is not a ClojureScript library. EACL therefore needs a narrow compatibility profile and cannot equate “the library evaluated something” with SpiceDB-compatible Caveat semantics.
 
@@ -181,7 +181,7 @@ Absent or mismatched evaluator capability is detected before serving a schema th
 
 ## Migration Plan
 
-1. Apply Phase 1 and confirm storage ABI 9 before beginning this change.
+1. Apply Phase 1 and confirm storage ABI 8 before beginning this change.
 2. Complete and lock the abstract qualifier/Caveat formal model and mutation controls; do not edit production qualifier/Caveat source before the gate is green.
 3. Add schemas and portable codecs additively; no existing ordinary Relationship is rewritten.
 4. Qualify each bundled backend's concrete-eid publication behavior and implement either certified inline allocation or safe prepare-then-publish; leave unsupported backends incapable of qualified writes.

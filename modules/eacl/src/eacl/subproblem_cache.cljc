@@ -282,7 +282,7 @@
   ;; legitimately contain a :value key and must not inherit the page rule.
   (let [candidate
         (if (and (map? value)
-                 (= :eacl.cache/completed-answer-v2 (:format value))
+                 (= :eacl.cache/completed-answer-v3 (:format value))
                  (= #{:format :value :cache-basis :computed-revision
                       :computed-exact-locator}
                     (set (keys value))))

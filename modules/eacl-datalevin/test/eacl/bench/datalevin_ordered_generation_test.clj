@@ -77,7 +77,7 @@
         (datalevin/make-client
          conn
          {:security-key test-key
-          :source-lifecycle "ordered-generation-benchmark"
+          :source-lifecycle #uuid "9614bfbf-a978-586e-b7f5-ec0f62f03099"
           :revision-watermark watermark
           :advance-revision-watermark! #(swap! watermark max %)})]
     (try

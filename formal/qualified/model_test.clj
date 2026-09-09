@@ -191,3 +191,18 @@
     (is (m/accept-decode? prior (assoc later :writer-certified? false)))
     (is (not (m/accept-decode? prior (assoc later :writer-certified? false :content [1 2 4]))))
     (is (not (m/accept-decode? (dissoc opaque-prior :version) (dissoc opaque-later :version))))))
+
+(deftest recursive-alternative-witnesses-converge
+  (let [truth (m/evidence (m/value universe) nil)
+        empty-value (m/evidence (m/value #{}) nil)
+        base {0 empty-value 1 empty-value
+              2 (m/evidence (m/value universe) 101)
+              3 (m/evidence (m/value universe) 102)}
+        rules {0 [[truth 1] [truth 2]] 1 [[truth 0] [truth 3]]}
+        result (m/fixed-point universe base rules 16)]
+    ;; Both nodes have grounded grants, but recomputation alone swaps their
+    ;; chosen deadlines on every iteration after membership has stabilized.
+    (is (:complete? result))
+    (is (= [(m/value universe) (m/value universe)]
+           (mapv #(get-in result [:values % :value]) [0 1])))
+    (is (= [101 102] (mapv #(get-in result [:values % :end]) [0 1])))))

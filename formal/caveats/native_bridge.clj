@@ -19,8 +19,8 @@
 
 (def schema-source "definition user {}\ndefinition doc {\n  relation viewer: user\n}\n")
 (def app-schema [{:db/ident :app/seen :db/valueType :db.type/long :db/cardinality :db.cardinality/many}])
-(def forward-attribute :eacl.v9.relationship/subject-type+relation+resource-type+resource+qualifier)
-(def reverse-attribute :eacl.v9.relationship/resource-type+relation+subject-type+subject+qualifier)
+(def forward-attribute :eacl.v8.relationship/subject-type+relation+resource-type+resource+qualifier)
+(def reverse-attribute :eacl.v8.relationship/resource-type+relation+subject-type+subject+qualifier)
 (def marker :eacl.relationship-qualifier/format-version)
 (def until :eacl.relationship-qualifier/valid-until-ms)
 

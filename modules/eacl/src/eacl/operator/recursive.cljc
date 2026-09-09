@@ -11,6 +11,7 @@
             [eacl.authorization.qualification :as qualification]
             [eacl.relationships.edge :as edge]
             [eacl.backend.direct-membership :as direct]
+            [eacl.backend.entity-id :as entity-id]
             [eacl.backend.v8 :as backend]
             [eacl.execution :as execution]
             [eacl.operator.batch-schedule :as batch-schedule]
@@ -148,10 +149,8 @@
   (when-not (and (map? candidate)
                  (contains? #{:forward :reverse} (:direction candidate))
                  (keyword? (:subject-type candidate))
-                 (integer? (:subject-eid candidate))
-                 (not (neg? (:subject-eid candidate)))
-                 (integer? (:resource-eid candidate))
-                 (not (neg? (:resource-eid candidate))))
+                 (entity-id/valid? (:subject-eid candidate))
+                 (entity-id/valid? (:resource-eid candidate)))
     (invalid! :invalid-candidate
               "Recursive candidate must contain a complete typed point context."
               {:candidate candidate})))
@@ -895,18 +894,24 @@
   (evidence/combine :arrow (get dependency :via true)
                     (get (:facts state) (:key dependency) false)))
 
-(defn- enqueue-evidence! [state head value limits counters]
-  (if (= value (get (:facts state) head false))
-    state
-    (let [facts (assoc (:facts state) head value)
-          pending? (contains? (:queued state) head)
-          queue-size (+ (- (count (:agenda state)) (:agenda-index state)) (if pending? 0 1))]
-      (limit-counter! limits counters :facts :maximum-facts (count facts))
-      (limit-counter! limits counters :queue :maximum-queue queue-size)
-      (vswap! counters #(-> % (assoc :facts (count facts)) (update :maximum-queue max queue-size)))
-      (cond-> (assoc state :facts facts)
-        (not pending?) (update :agenda conj head)
-        (not pending?) (update :queued conj head)))))
+(defn- enqueue-evidence! [state head derived limits counters]
+  ;; Positive components accumulate derivations, including their certificates.
+  ;; Replacing a grounded grant with a cyclic alternative can circulate distinct
+  ;; deadlines forever. Union retains that witness while still propagating
+  ;; residual growth, incomplete absence evidence, and every encountered fault.
+  (let [prior (get (:facts state) head false)
+        value (evidence/combine :union prior derived)]
+    (if (= value prior)
+      state
+      (let [facts (assoc (:facts state) head value)
+            pending? (contains? (:queued state) head)
+            queue-size (+ (- (count (:agenda state)) (:agenda-index state)) (if pending? 0 1))]
+        (limit-counter! limits counters :facts :maximum-facts (count facts))
+        (limit-counter! limits counters :queue :maximum-queue queue-size)
+        (vswap! counters #(-> % (assoc :facts (count facts)) (update :maximum-queue max queue-size)))
+        (cond-> (assoc state :facts facts)
+          (not pending?) (update :agenda conj head)
+          (not pending?) (update :queued conj head))))))
 
 (defn- unanchored-evidence [state rule slot anchor]
   ;; No join is retained before an anchor has a nonempty completion set.
@@ -1096,7 +1101,8 @@
    [[:recursive-command
      {:version checkpoint-version
       :plan-fingerprint (:fingerprint plan)
-      :questions (vec root-questions)
+      :questions (mapv #(-> % (update 4 entity-id/wire-value)
+                              (update 5 entity-id/wire-value)) root-questions)
       :scope scope-identity}]]))
 
 (defn- make-checkpoint

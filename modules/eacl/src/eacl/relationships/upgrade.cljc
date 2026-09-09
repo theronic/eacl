@@ -1,5 +1,5 @@
 (ns eacl.relationships.upgrade
-  "Portable v7-to-v9 migration planning and verification. Native schema,
+  "Portable v7-to-v8 migration planning and verification. Native schema,
   snapshot and transaction operations are supplied by the adapter. No serving
   path calls this namespace's source enumeration or migration runner."
   (:require [eacl.relationships.endpoint-pair :as pair]
@@ -63,7 +63,7 @@
   (when-not (and (= storage/version version) (= :complete (:phase state))
                  (= storage/format-id (:storage-format state))
                  (not legacy?) (not v6?) schema-compatible?)
-    (throw (ex-info "EACL v8 requires Relationship storage ABI 9; run the explicit upgrade."
+    (throw (ex-info "EACL v8 requires Relationship storage ABI 8; run the explicit upgrade."
                     {:type :eacl/storage-version :eacl/error :eacl/storage-version
                      :backend backend :required-version storage/version
                      :detected-version version
@@ -72,8 +72,8 @@
                                    (not schema-compatible?) :incompatible-schema
                                    :else :incomplete-storage)
                      :migration-ns (if v6? 'eacl.migrations.v6-to-v7
-                                       (symbol (str "eacl." (name backend) ".migrations.v7-to-v9")))
-                     :documentation "docs/migration-v7-to-v9.md"})))
+                                       (symbol (str "eacl." (name backend) ".migrations.relationships-v7-to-v8")))
+                     :documentation "docs/relationship-storage-v7-to-v8.md"})))
   evidence)
 
 (defn reject-auto-migration! [options]
@@ -117,7 +117,7 @@
 (defn certificate [identities]
   {:source-count (count identities)
    :source-digest (secure/canonical-records-digest
-                   "eacl.relationships/v7-to-v9/logical-identity-v1" (sort identities))})
+                   "eacl.relationships/v7-to-v8/logical-identity-v1" (sort identities))})
 
 (defn validate-references!
   "Checks endpoint presence and the selected Relation's exact typed identity."

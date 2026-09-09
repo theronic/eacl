@@ -6,6 +6,7 @@
             [eacl.datahike.schema :as schema]
             [eacl.datahike.safe-retraction :as safe]
             [eacl.datahike.db :as ddb]
+            [eacl.datahike.storage :as admission]
             [eacl.relationships.storage-contract :as contract]))
 
 (defn direct-probe [& args]
@@ -29,4 +30,14 @@
         :transact! #(d/transact conn %) :entid ddb/entid
         :stamp #(vector :db/add % :eacl/relation-version :db/current-tx)
         :rows #(d/datoms %1 {:index :aevt :components [%2]}) :safe-retract! #(d/transact conn (safe/retract-entity-tx-data (d/db conn) %))})
+      (finally (d/release conn) (d/delete-database config)))))
+
+(deftest bootstrap-is-idempotent-and-validates-completed-storage-test
+  (let [conn (schema/create-conn)
+        config (:config (d/db conn))]
+    (try
+      (contract/exercise-bootstrap!
+       {:bootstrap! #(admission/bootstrap! conn)
+        :evidence #(admission/evidence (d/db conn))
+        :transact! #(d/transact conn %)})
       (finally (d/release conn) (d/delete-database config)))))

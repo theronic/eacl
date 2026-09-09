@@ -53,7 +53,7 @@
         client
         (datalevin/make-client
          conn
-         {:source-lifecycle "race-lifecycle"
+         {:source-lifecycle #uuid "aeb95f20-d4db-519f-a5ee-12558468ca95"
           :revision-watermark watermark
           :advance-revision-watermark! #(swap! watermark max %)
           :security-key test-key})]
@@ -213,7 +213,7 @@
           (let [second-client
                 (datalevin/make-client
                  second-conn
-                 {:source-lifecycle "race-lifecycle"
+                 {:source-lifecycle #uuid "aeb95f20-d4db-519f-a5ee-12558468ca95"
                   :revision-watermark watermark
                   :advance-revision-watermark! #(swap! watermark max %)
                   :security-key test-key})

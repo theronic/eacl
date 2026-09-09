@@ -617,7 +617,7 @@
                            (filter
                             #(and (vector? %)
                                   (= :db/add (first %))
-                                  (= :eacl.v9.relationship/subject-type+relation+resource-type+resource+qualifier
+                                  (= :eacl.v8.relationship/subject-type+relation+resource-type+resource+qualifier
                                      (nth % 2 nil)))
                             tx-data))]
         @(d/transact conn tx-data)

@@ -1,5 +1,5 @@
 (ns eacl.examples.caveats
-  "Executable v9 guide. Load through the project nREPL with :caveats-jvm."
+  "Executable v8 guide. Load through the project nREPL with :caveats-jvm."
   (:require [datascript.core :as ds]
             [eacl.caveats.jvm :as caveats]
             [eacl.core :as eacl]

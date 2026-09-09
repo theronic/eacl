@@ -18,7 +18,7 @@
     exact steps). It is idempotent and converges storage forward: verified v7
     tuples replace the v6 relationship entities in the same run.
   - `assert-storage-compatible!` is a read-only legacy-source diagnostic.
-    Ordinary clients require the subsequent storage 7-to-9 migration.
+    Ordinary clients require the subsequent storage 7-to-8 migration.
 
 
   Flat v6 permissions are converted once to canonical expression entities.

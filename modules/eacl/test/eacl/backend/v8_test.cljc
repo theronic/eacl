@@ -107,6 +107,26 @@
              (:eacl/error (error-data #(backend/reduce-scan (make bad) :subject->resources
                                                                [:user 10 20 :doc options] [] {:step conj}))))))))
 
+(deftest native-entity-id-guards-retain-the-host-integer-range-test
+  (let [maximum #?(:clj Long/MAX_VALUE :cljs js/Number.MAX_SAFE_INTEGER)
+        make (fn [id]
+               (backend/make-adapter
+                {:id :test :runtime-guards? true :capabilities {}
+                 :operations (assoc (operation-map)
+                                    :object-id->internal (constantly id)
+                                    :subject->resources (fn [& _] [id])
+                                    :direct-edge (fn [& _] [id id]))}))
+        adapter (make maximum)]
+    (is (= maximum (backend/invoke adapter :object-id->internal "object")))
+    (is (= [maximum] (backend/invoke adapter :subject->resources :user 1 2 :doc {})))
+    (is (= [maximum] (backend/reduce-scan adapter :subject->resources
+                                         [:user 1 2 :doc {}] [] {:step conj})))
+    (is (= [maximum maximum] (backend/invoke adapter :direct-edge :user 1 2 :doc maximum)))
+    (doseq [invalid [-1 1.5 "1" #?(:clj (inc' Long/MAX_VALUE)
+                                   :cljs (inc js/Number.MAX_SAFE_INTEGER))]]
+      (is (= :eacl/backend-contract-violation
+             (:type (error-data #(backend/invoke (make invalid) :object-id->internal "object"))))))))
+
 (deftest qualification-data-capability-is-paired-and-guarded
   (let [make (fn [capabilities operation guards?]
                (backend/make-adapter
@@ -191,7 +211,7 @@
            [{:conn ::connection} :conn]
            [{:source ::source} :source]
            [{:writer ::writer} :writer]
-           [{:source-lifecycle "leaked"} :source-lifecycle]]]
+           [{:source-lifecycle #uuid "c8dc503f-b396-58e8-bb56-31133ceb969f"} :source-lifecycle]]]
     (let [data
           (error-data
            #(backend/validate-adapter-config!
@@ -238,6 +258,12 @@
 (deftest validated-v8-adapter-test
   (let [adapter (test-adapter)]
     (is (backend/adapter? adapter))
+    (is (= 8 (::backend/version adapter)
+           (:adapter-version (::backend/fingerprint adapter))
+           (:engine-version engine/derived-schema-cache-abi)
+           (:backend-adapter-version engine/derived-schema-cache-abi)))
+    (is (not (backend/adapter? (assoc adapter ::backend/version (inc backend/adapter-version)))))
+    (is (not (backend/adapter? (dissoc adapter ::backend/traversal-execution))))
     (is (= :test (backend/backend-id adapter)))
     (is (backend/supports? adapter :consistency :fully-consistent))
     (is (not (backend/supports? adapter :consistency :at-exact-snapshot)))
@@ -276,7 +302,7 @@
              {:backend :test
               :source-id :one
               :branch nil
-              :source-lifecycle "test/initial"
+              :source-lifecycle #uuid "2bc796bc-3644-5ebf-b129-6ad973575a98"
               :basis-kind :ordinary
               :revision generation
               :exact-locator generation
@@ -295,7 +321,7 @@
            {:backend :test
             :source-id :one
             :branch nil
-            :source-lifecycle "test/initial"
+            :source-lifecycle #uuid "2bc796bc-3644-5ebf-b129-6ad973575a98"
             :basis-kind :ordinary
             :revision 99
             :exact-locator 99
@@ -523,7 +549,8 @@
                    #(apply backend/invoke adapter operation args))))]
         (doseq [[operation implementation args obligation]
                 [[:object-id->internal
-                  (fn [& _] (inc backend/maximum-exact-integer)) [:external]
+                  (fn [& _] #?(:clj (inc' Long/MAX_VALUE)
+                                :cljs (inc backend/maximum-exact-integer))) [:external]
                   :exact-integer]
                  [:order-hint
                   (fn [& _] (dec backend/minimum-exact-integer))
@@ -893,7 +920,7 @@
   [semantic]
   (cache-key/exact-denotation-key
    {:tier :denotation
-    :source-lifecycle {:source :projection-test :lifecycle :one}
+    :source-lifecycle #uuid "cb7f5992-d14c-5aa9-b1de-7b5e45cedc1f"
     :abi :projection-test-v2
     :semantic semantic
     :reuse [:projection-test-basis 1]}))

@@ -34,7 +34,7 @@
   [revision]
   (fn [semantic]
     (let [identity {:tier :denotation
-                    :source-lifecycle {:source :primary :lifecycle :one}
+                    :source-lifecycle #uuid "8ac290d0-0257-515a-b9b3-20d547d651a0"
                     :abi :test-authorization-v2
                     :semantic semantic
                     :reuse [:basis revision]}]
@@ -43,7 +43,7 @@
 (defn- storage-key
   [tier semantic]
   (let [identity {:tier tier
-                  :source-lifecycle {:source :primary :lifecycle :one}
+                  :source-lifecycle #uuid "8ac290d0-0257-515a-b9b3-20d547d651a0"
                   :abi :test-authorization-v2
                   :semantic semantic
                   :reuse [:basis 1]}]
@@ -436,7 +436,7 @@
             (subproblem/publish!
              store :answer (storage-key :answer :p1001)
              accept-any-publication
-             {:format :eacl.cache/completed-answer-v2
+             {:format :eacl.cache/completed-answer-v3
               :value p1001
               :cache-basis {:basis 1}
               :computed-revision 1
@@ -446,7 +446,7 @@
             (subproblem/publish!
              store :answer (storage-key :answer :p10000)
              accept-any-publication
-             {:format :eacl.cache/completed-answer-v2
+             {:format :eacl.cache/completed-answer-v3
               :value p10000
               :cache-basis {:basis 1}
               :computed-revision 1
@@ -585,7 +585,7 @@
              :entries [{:tier :answer
                         :key (storage-key :answer :large-page)}
                        :value
-                       {:format :eacl.cache/completed-answer-v2
+                       {:format :eacl.cache/completed-answer-v3
                         :value (page 1001)
                         :cache-basis {:basis 1}
                         :computed-revision 1

@@ -8,7 +8,7 @@
   [semantic]
   (cache-key/exact-denotation-key
    {:tier :denotation
-    :source-lifecycle {:source :test :lifecycle :maintenance}
+    :source-lifecycle #uuid "124ca28a-c246-58d5-9ac4-fa200f0e9159"
     :abi :test-authorization-v2
     :semantic semantic
     :reuse [:basis 1]}))

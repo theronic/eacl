@@ -62,7 +62,7 @@
        :basis-ownership :owned
        :operations
        {:source-scope (constantly {:source-id ::source :branch nil})
-        :source-lifecycle (constantly ::lifecycle)
+        :source-lifecycle (constantly #uuid "ed7fe2aa-2d67-5ee3-9029-5cec76fec379")
         :acquire-current! acquire
         :acquire-authoritative! acquire
         :acquire-at-least! acquire
@@ -118,7 +118,7 @@
   {:backend :request-context-test
    :source-id ::source
    :branch nil
-   :source-lifecycle ::lifecycle
+   :source-lifecycle #uuid "ed7fe2aa-2d67-5ee3-9029-5cec76fec379"
    :basis-kind :ordinary
    :revision 7
    :exact-locator 7
@@ -130,7 +130,7 @@
                   {:backend :request-context-test
                    :source-id ::source
                    :branch nil}
-                  :source-lifecycle ::lifecycle}]
+                  :source-lifecycle #uuid "ed7fe2aa-2d67-5ee3-9029-5cec76fec379"}]
     (is (= expected (context/lineage-for-basis identity)))
     (is (= expected
            (context/lineage-for-basis
@@ -159,7 +159,7 @@
     (is (= {:backend :request-context-test
             :source-id ::source
             :branch nil
-            :source-lifecycle ::lifecycle
+            :source-lifecycle #uuid "ed7fe2aa-2d67-5ee3-9029-5cec76fec379"
             :basis-kind :ordinary
             :revision 7
             :exact-locator 7

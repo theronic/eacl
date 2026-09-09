@@ -1,6 +1,6 @@
 ## Purpose
 
-Defines native exclusive `valid-until` behavior for v9 qualified Relationships, including trusted time capture, positive and negative evidence, renewal, and collection-independent correctness.
+Defines native exclusive `valid-until` behavior for v8 qualified Relationships, including trusted time capture, positive and negative evidence, renewal, and collection-independent correctness.
 
 ## ADDED Requirements
 

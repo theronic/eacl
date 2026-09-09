@@ -42,7 +42,7 @@
         client (datascript/make-client
                 conn
                 {:cache cache/no-cache
-                 :source-lifecycle "stable-discovery-perf-baseline"})]
+                 :source-lifecycle #uuid "6cc532c5-3555-56b6-917a-c93721b4ee84"})]
     (eacl/write-schema! client schema)
     (ds/transact! conn (vec (fixture/object-transactions shape)))
     (doseq [batch (if recursive?

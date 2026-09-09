@@ -11,7 +11,7 @@
    :source {:backend :test
             :source-id :expression-test
             :branch nil
-            :source-lifecycle "expression-test/initial"}
+            :source-lifecycle #uuid "f55669c3-4254-5dbe-8791-aa5983b963b2"}
    :adapter {:backend :test
              :fingerprint :expression-test-v1
              :identity-contract :immutable-v1

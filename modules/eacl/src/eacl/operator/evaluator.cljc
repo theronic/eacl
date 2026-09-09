@@ -10,6 +10,7 @@
             [eacl.authorization.qualification :as qualification]
             [eacl.backend.v8 :as backend]
             [eacl.exact-integer :as exact]
+            [eacl.backend.entity-id :as entity-id]
             [eacl.execution :as execution]
             [eacl.operator.plan :as operator-plan]
             [eacl.request.counters :as request-counters]
@@ -201,7 +202,7 @@
       (when-not (and (= :arrow-membership (:instruction predicate))
                      (exact/natural? partition)
                      (< partition (count (get-in predicate [:descriptor :partitions])))
-                     (exact/natural? (:intermediate witness)))
+                     (entity-id/valid? (:intermediate witness)))
         (invalid! :arrow-witness-binding "Arrow witness names an invalid binding." {})))
     (when-not (boolean? (:evidence witness)) (evidence/encode (:evidence witness)))
     (when-not (evidence/before? (:time qualification) (evidence/valid-until (:evidence witness)))

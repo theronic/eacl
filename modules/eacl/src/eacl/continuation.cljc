@@ -11,7 +11,7 @@
             [eacl.security.imports :as imports]
             [eacl.security.retention :as retention]))
 
-(def ^:private context-version 4)
+(def ^:private context-version 5)
 (def ^:private default-max-entries 1024)
 
 (defrecord BoundedContinuationStore
