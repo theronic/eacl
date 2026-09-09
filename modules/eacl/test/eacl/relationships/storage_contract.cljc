@@ -4,7 +4,28 @@
             [eacl.client.orchestration :as orchestration]
             [eacl.relationships.endpoint-pair :as pair]
             [eacl.relationships.storage :as storage]
+            [eacl.relationships.upgrade :as upgrade]
             [eacl.relationships.upgrade-test :refer [error-data]]))
+
+(defn exercise-bootstrap!
+  [{:keys [bootstrap! evidence transact!]}]
+  (let [before (evidence)]
+    (is (= storage/version (:version before)))
+    (is (= :ok (try (bootstrap!) :ok
+                    (catch #?(:clj Exception :cljs :default) _ :failed)))
+        "completed storage can be bootstrapped again")
+    (is (= before (evidence)) "repeated bootstrap preserves the completion record")
+    (doseq [version [storage/version (inc storage/version)]
+            format [storage/format-id :unsupported-format]
+            :when (not= [version format] [storage/version storage/format-id])]
+      (transact! [{:eacl/id upgrade/metadata-id
+                   :eacl/storage-version version
+                   upgrade/state-attribute
+                   (upgrade/encode-state (assoc (:state before) :storage-format format))}])
+      (is (= (if (= storage/format-id format)
+               :eacl/storage-version :eacl.storage/upgrade-failed)
+             (:type (error-data bootstrap!)))
+          "completion alone cannot bypass version or format admission"))))
 
 (def schema
   "definition user {}

@@ -24,11 +24,11 @@ A serving v8-storage client SHALL establish through bounded metadata, physical-s
 - **THEN** client construction refuses to serve and directs the operator to resume migration
 
 #### Scenario: Target store is qualified
-- **WHEN** the database is stamped version 9, the migration marker is complete or the store was freshly bootstrapped, bounded legacy probes are empty, and target attribute shapes are compatible
+- **WHEN** the database is stamped version 8, the migration marker is complete or the store was freshly bootstrapped, bounded legacy probes are empty, and target attribute shapes are compatible
 - **THEN** the client starts with one v8 Relationship source
 
 #### Scenario: Large target store starts without revalidation
-- **WHEN** a completed version-9 database contains a large number of Relationships
+- **WHEN** a completed version-8 database contains a large number of Relationships
 - **THEN** client construction checks only bounded compatibility evidence and does not scan the complete v8 graph
 
 ### Requirement: Upgrade is an explicit side-effecting operation
@@ -68,10 +68,10 @@ Reinvoking the migration after interruption SHALL continue from recognized durab
 
 #### Scenario: Process stops before final stamp
 - **WHEN** all source pairs were converted but completion was not stamped
-- **THEN** rerunning performs final source-empty, pair-parity, uniqueness, and content verification before stamping version 9
+- **THEN** rerunning performs final source-empty, pair-parity, uniqueness, and content verification before stamping version 8
 
 #### Scenario: Completed migration is rerun
-- **WHEN** the same migration function is called on a fully qualified version-9 store
+- **WHEN** the same migration function is called on a fully qualified version-8 store
 - **THEN** it returns an idempotent already-complete report without rewriting Relationships
 
 ### Requirement: Migration requires a quiesced writer boundary
@@ -94,7 +94,7 @@ Before writing storage version 8, migration SHALL prove that no current v7 Relat
 
 #### Scenario: Any final check fails
 - **WHEN** source residue, a dangling target half, duplicate identity, content mismatch, or missing Relation stamp is found
-- **THEN** version 9 is not stamped and serving clients remain fenced
+- **THEN** version 8 is not stamped and serving clients remain fenced
 
 ### Requirement: Upgrade operations and rollback are documented
 Documentation SHALL give backend-specific backup, rehearsal, quiescence, invocation, progress, verification, deployment, cursor/cache invalidation, and rollback instructions. Rollback SHALL be described as restore or database switch, not an in-place target-to-source migration.
