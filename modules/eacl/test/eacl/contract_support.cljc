@@ -12,6 +12,7 @@
             [eacl.continuation :as continuation]
             [eacl.core :as eacl]
             [eacl.engine.sealed-plan :as sealed-plan]
+            [eacl.engine.v8 :as engine]
             [eacl.engine.stable-route :as stable-route]
             [eacl.request.counters :as request-counters]
             [eacl.spicedb.consistency :as consistency]))
@@ -428,9 +429,8 @@
   (mapv :id (into [] cat (map :data pages))))
 
 (defn assert-v8-aggregate-pagination-contract!
-  "Backend-neutral batch, scan, and enumerate-route conformance over the
-  shared smoke fixture. The page oracle is the stable physical stream filtered
-  by scalar authorization and direct relationship membership on one snapshot."
+  "Backend-neutral batch, direct-read and filtered-lookup conformance over
+  the shared smoke fixture, whose anchored servers are all allowed to user-1."
   [client]
   (let [subject (->user "user-1")
         denied (->user "user-2")
@@ -441,9 +441,6 @@
          :subject/id "account-1"
          :resource/type :server
          :resource/relation :account
-         :authorization {:subject subject
-                         :permission :view
-                         :on :resource}
          :first 1
          :aggregate-limits {:candidate-window 1}}
         enumerate-query
@@ -454,7 +451,7 @@
          :first 1
          :aggregate-limits {:candidate-window 1}}
         expected ["server-1" "server-2"]]
-    (testing "scan and enumerate routes refine the same filter-then-window oracle"
+    (testing "direct reads and allowed lookups page through the smoke fixture"
       (let [scan-pages
             (walk-pages #(eacl/read-relationships client %) scan-query)
             enumerate-pages
@@ -464,25 +461,16 @@
         (is (= (set (relationship-resource-ids scan-pages))
                (set (object-ids enumerate-pages))))
         (is (= [true false]
-               (mapv #(get-in % [:page-info :bounded?]) scan-pages)))
-        (is (= [true false]
                (mapv #(get-in % [:page-info :bounded?]) enumerate-pages)))))
 
     (testing "all-rejected windows progress without converting work bounds to denial"
-      (let [scan-pages
-            (walk-pages
-             #(eacl/read-relationships client %)
-             (assoc-in scan-query [:authorization :subject] denied))
-            enumerate-pages
+      (let [enumerate-pages
             (walk-pages
              #(eacl/lookup-resources client %)
              (assoc-in enumerate-query
                        [:resource/relationship :subject]
                        missing-account))]
-        (is (empty? (relationship-resource-ids scan-pages)))
         (is (empty? (object-ids enumerate-pages)))
-        (is (= [true false]
-               (mapv #(get-in % [:page-info :bounded?]) scan-pages)))
         (is (= [true false]
                (mapv #(get-in % [:page-info :bounded?]) enumerate-pages)))))
 
@@ -878,6 +866,18 @@
                         :first 5})]
       (is (= :eacl.filters/unknown-filter (:eacl/error data)))
       (is (= [:resouce/id] (:unknown-keys data)))))
+  (testing "removed authorization is rejected before acquiring or evaluating"
+    (doseq [authorization [nil false {} {:subject (->user "user-1") :permission :view :on :resource}
+                          {:subject (->user "user-1") :permission :view :on :subject}
+                          {:unexpected true}]]
+      (let [stats (atom {})
+            data (binding [source/*source-op-stats* stats]
+                   (with-redefs [engine/can? (fn [& _] (throw (ex-info "Unexpected permission check" {})))]
+                     (read-relationships-error-data client
+                       {:resource/type :server :first 5 :authorization authorization})))]
+        (is (= :eacl.filters/unknown-filter (:eacl/error data)))
+        (is (= [:authorization] (:unknown-keys data)))
+        (is (zero? (:acquire-current! @stats 0))))))
   (testing "a valid anchored read still succeeds"
     (is (vector?
          (:data (eacl/read-relationships

@@ -43,47 +43,6 @@
               {:position position :key :id :value (:id endpoint)}))
   endpoint)
 
-(defn validate-scan-authorization!
-  "Validates read-relationships' closed authorization clause."
-  [filters]
-  (when (contains? filters :authorization)
-    (let [authorization (:authorization filters)]
-    (when-not (map? authorization)
-      (invalid! ":authorization must be a map."
-                {:position :authorization :value authorization}))
-    (let [known #{:subject :permission :on}]
-      (when-let [unknown (seq (remove known (keys authorization)))]
-        (invalid! ":authorization contains unknown keys."
-                  {:position :authorization
-                   :unknown-keys (vec unknown)
-                   :known-keys known}))
-      (when-let [missing (seq (remove #(contains? authorization %) known))]
-        (invalid! ":authorization is missing required keys."
-                  {:position :authorization
-                   :missing-keys (vec missing)})))
-    (validate-endpoint! (:subject authorization) :authorization/subject)
-    (when-not (keyword? (:permission authorization))
-      (invalid! ":authorization :permission must be a keyword."
-                {:position :authorization
-                 :key :permission
-                 :value (:permission authorization)}))
-    (when-not (contains? #{:subject :resource} (:on authorization))
-      (invalid! ":authorization :on must be :subject or :resource."
-                {:position :authorization
-                 :key :on
-                 :value (:on authorization)}))
-    (let [required-type (case (:on authorization)
-                          :subject :subject/type
-                          :resource :resource/type)]
-      (when-not (keyword? (get filters required-type))
-        (invalid!
-         "An authorization scan requires the designated endpoint type."
-         {:position :authorization
-          :on (:on authorization)
-          :required-filter required-type
-          :value (get filters required-type)})))))
-  filters)
-
 (defn- validate-relationship-clause!
   [clause clause-key anchor-key]
   (when-not (map? clause)

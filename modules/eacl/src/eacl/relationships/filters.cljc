@@ -20,7 +20,7 @@
         [:first :last :after :before :cursor :limit
          :page/basis :consistency :cache? :populate-cache?
          :evaluation :timeout-ms :caveat-context :relationship-state
-         :cancellation-token :aggregate-limits :authorization]))
+         :cancellation-token :aggregate-limits]))
 
 (def ^:dynamic ^:no-doc *validated-request?* false)
 

@@ -444,16 +444,6 @@
 
 (declare environment)
 
-(defn- scan-route-page
-  [client subject candidate-window]
-  (eacl/read-relationships
-   client
-   (assoc (relationship-query page-size nil)
-          :authorization {:subject subject
-                          :permission :view
-                          :on :resource}
-          :aggregate-limits {:candidate-window candidate-window})))
-
 (defn- enumerate-route-page
   [client subject catalog candidate-window]
   (eacl/lookup-resources
@@ -479,13 +469,7 @@
 
 (def ^:private aggregate-absolute-ceilings
   {["Mac OS X" "aarch64" "26"]
-   {:scan-route-dense
-    {:latency-p50-us 1000
-     :allocation-p50-bytes 1200000}
-    :scan-route-sparse
-    {:latency-p50-us 2500
-     :allocation-p50-bytes 3200000}
-    :enumerate-route-all-rejected
+   {:enumerate-route-all-rejected
     {:latency-p50-us 750
      :allocation-p50-bytes 500000}}})
 
@@ -512,15 +496,7 @@
       (let [paired-report
             (paired/run-paired!
              {:arms
-              [[:scalar-loop-dense
-                (fn [_] (measured-scalar-loop client alice))]
-               [:scan-route-dense
-                (fn [_] (scan-route-page client alice 11))]
-               [:scalar-loop-sparse
-                (fn [_] (measured-scalar-loop client bob))]
-               [:scan-route-sparse
-                (fn [_] (scan-route-page client bob 64))]
-               [:scalar-loop-all-rejected
+              [[:scalar-loop-all-rejected
                 (fn [_] (measured-scalar-loop client carol))]
                [:enumerate-route-all-rejected
                 (fn [_]
@@ -530,25 +506,13 @@
               :samples page-samples
               :absolute-ceilings aggregate-absolute-ceilings
               :comparisons
-              [{:baseline :scalar-loop-dense
-                :candidate :scan-route-dense
-                :minimum-latency-reduction 0.30
-                :minimum-allocation-reduction 0.40}
-               {:baseline :scalar-loop-sparse
-                :candidate :scan-route-sparse
-                :minimum-latency-reduction 0.40
-                :minimum-allocation-reduction 0.40}
-               {:baseline :scalar-loop-all-rejected
+              [{:baseline :scalar-loop-all-rejected
                 :candidate :enumerate-route-all-rejected
                 :minimum-latency-reduction 0.90
                 :minimum-allocation-reduction 0.90}]})
             arms (:arms paired-report)
             release
-            {:dense
-             (release-comparison
-              (:scan-route-dense arms)
-              (:dense pre-change-release-p50) 0.70)
-             :all-rejected
+            {:all-rejected
              (release-comparison
               (:enumerate-route-all-rejected arms)
               (:all-rejected pre-change-release-p50) 0.90)}]
@@ -575,7 +539,7 @@
                (d/active-read-snapshot-info))))))
 
 (defn run-aggregate-counter-gate!
-  "Captures deterministic amplification counters for both page routes."
+  "Captures deterministic amplification counters for direct reads and filtered lookups."
   []
   (with-system
     (fn [{:keys [client catalog alice]}]
@@ -587,7 +551,7 @@
                       (f))]
                 {:value value
                  :counters (request-counters/snapshot ledger)}))
-            scan (capture #(scan-route-page client alice 11))
+            scan (capture #(eacl/read-relationships client (relationship-query page-size nil)))
             enumerate
             (capture #(enumerate-route-page client alice catalog 11))]
         {:format-version 1
@@ -610,8 +574,8 @@
                  [:acquisitions :releases :public-entries
                   :context-constructions])))
            [scan enumerate])
-          (<= (get-in scan [:counters :candidates-examined]) 11)
-          (zero? (get-in scan [:counters :probes]))
+          (<= (count (get-in scan [:value :data])) page-size)
+          (zero? (get-in scan [:counters :probes] 0))
           (= (get-in enumerate [:counters :candidates-examined])
              (get-in enumerate [:counters :probes]))
           (<= (get-in enumerate [:counters :candidates-examined]) 11))
@@ -656,11 +620,11 @@
 
 (defn run-aggregate-resource-gate!
   "Exercises retained memory, native address space, reader pressure, and
-  repeated post-acquisition failures for both aggregate page routes."
+  repeated post-acquisition failures for direct reads, filtered lookups and point-check batches."
   []
   (with-system
     (fn [{:keys [conn client catalog alice bob]}]
-      (let [scan #(scan-route-page client alice 11)
+      (let [scan #(eacl/read-relationships client (relationship-query page-size nil))
             enumerate #(enumerate-route-page client alice catalog 11)]
         (dotimes [index 40]
           ((if (even? index) scan enumerate)))
@@ -705,18 +669,12 @@
                          failure
                          (caught-data
                           (if scan?
-                            #(eacl/read-relationships
+                            #(eacl/check-permissions
                               client
-                              (assoc
-                               (relationship-query page-size nil)
+                              {:checks [{:subject bob :permission :view
+                                         :resource (eacl/spice-object :document "document-0")}]
                                :cache? false
-                               :authorization
-                               {:subject bob
-                                :permission :view
-                                :on :resource}
-                               :aggregate-limits
-                               {:candidate-window 64
-                                :max-commands 1}))
+                               :aggregate-limits {:max-commands 1}})
                             #(eacl/lookup-resources
                               client
                               {:subject alice

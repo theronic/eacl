@@ -174,23 +174,6 @@
        operation resource-type relation :relation)))
   schema)
 
-(defn validate-authorized-relationship-read!
-  "Validates the ordinary relationship filters plus the permission root used
-  to authorize the designated endpoint. Shape validation has already proved
-  that the designated endpoint type is present."
-  [schema filters]
-  (validate-relationship-read! schema filters)
-  (when-let [{:keys [subject permission on]} (:authorization filters)]
-    (validate-permission-request!
-     schema
-     :read-relationships
-     {:resource-type (get filters (case on
-                                    :subject :subject/type
-                                    :resource :resource/type))
-      :subject-type (:type subject)
-      :permission permission}))
-  schema)
-
 (defn validate-lookup-relationship!
   "Validates an enumerate-route direct relationship predicate against the
   same selected schema as the permission root."

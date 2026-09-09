@@ -160,8 +160,6 @@
   (cond-> query
     (:subject query) (update :subject plain-scope-object)
     (:resource query) (update :resource plain-scope-object)
-    (get-in query [:authorization :subject])
-    (update-in [:authorization :subject] plain-scope-object)
     (get-in query [:resource/relationship :subject])
     (update-in [:resource/relationship :subject] plain-scope-object)
     (get-in query [:subject/relationship :resource])
@@ -191,8 +189,7 @@
         (require-portable-cursor-query! (scoped-query-form query))
         authorized-page?
         (boolean
-         (or (:authorization query)
-             (:resource/relationship query)
+         (or (:resource/relationship query)
              (:subject/relationship query)))
         execution-scope
         (cond->
@@ -1074,7 +1071,6 @@
           current (or (:page-qualification-certificate opts) (:qualification-certificate page)
                       (temporal/interval time nil
                                          (and (= :read-relationships operation)
-                                              (nil? (:authorization query))
                                               (not= :expiry-active (:relationship-state query)))))
           prior (:cursor-qualification-certificate opts)]
       (when-not (and (temporal/interval-valid? current)

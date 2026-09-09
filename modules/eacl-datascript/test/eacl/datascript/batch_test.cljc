@@ -6,12 +6,12 @@
             [datascript.core :as ds]
             [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
-            [eacl.authorization.filters :as authorization-filters]
             [eacl.cache :as cache]
             [eacl.client.orchestration :as orchestration]
             [eacl.core :as eacl]
             [eacl.datascript.core :as datascript]
             [eacl.execution :as execution]
+            [eacl.engine.v8 :as engine]
             [eacl.request.counters :as request-counters]))
 
 (def ^:private batch-schema
@@ -153,30 +153,9 @@
       :marker marker
       :documents documents})))
 
-(defn- scan-query
-  [principal page]
-  (merge
-   {:resource/type :document
-    :resource/relation :candidate
-    :authorization {:subject principal
-                    :permission :view
-                    :on :resource}}
-   page))
-
 (defn- page-resource-ids
   [page]
   (mapv #(get-in % [:resource :id]) (:data page)))
-
-(defn- walk-scan-forward
-  [client query]
-  (loop [query query
-         pages []]
-    (let [page (eacl/read-relationships client query)
-          pages (conj pages page)]
-      (if (get-in page [:page-info :has-next-page?])
-        (recur (assoc query :after (get-in page [:page-info :end-cursor]))
-               pages)
-        pages))))
 
 (defn- page-object-ids
   [page]
@@ -220,19 +199,6 @@
                :timeout-ms 1000
                :cancellation-token token}))
 
-          :scan
-          (let [{:keys [client dense]} (scan-fixture)]
-            #(eacl/read-relationships
-              client
-              (assoc
-               (scan-query
-                dense
-                {:first 5
-                 :cache? false
-                 :timeout-ms 1000
-                 :aggregate-limits {:candidate-window 10}})
-               :cancellation-token token)))
-
           :enumerate
           (let [{:keys [client dense marker]} (scan-fixture)]
             #(eacl/lookup-resources
@@ -259,7 +225,7 @@
      :clock-calls @calls}))
 
 (deftest aggregate-deadline-and-cancellation-share-semantic-cut-points-test
-  (doseq [[route cutoff] [[:batch 12] [:scan 16] [:enumerate 25]]]
+  (doseq [[route cutoff] [[:batch 12] [:enumerate 25]]]
     (let [deadline (aggregate-cut-point-trace route :deadline cutoff)
           cancellation
           (aggregate-cut-point-trace route :cancellation cutoff)]
@@ -285,14 +251,14 @@
          (demand alice :view document)]
         result
         (eacl/with-snapshot [snapshot (eacl/snapshot client)]
-            (let [oracle
-                  (mapv #(eacl/check-permission
-                          snapshot (assoc % :cache? false))
-                        checks)
-                  actual
-                  (eacl/check-permissions
-                   snapshot {:checks checks :cache? false})]
-              {:oracle oracle :actual actual}))]
+          (let [oracle
+                (mapv #(eacl/check-permission
+                        snapshot (assoc % :cache? false))
+                      checks)
+                actual
+                (eacl/check-permissions
+                 snapshot {:checks checks :cache? false})]
+            {:oracle oracle :actual actual}))]
     (is (= (:oracle result) (:actual result)))
     (is (= [true true false false false true true]
            (mapv :allowed? (:actual result))))
@@ -323,10 +289,10 @@
             (observed-call
              conn
              #(eacl/with-snapshot [snapshot (eacl/snapshot client)]
-                  (eacl/check-permissions
-                   snapshot
-                   {:checks [(demand alice :view document)]
-                    :cache? false}))))
+                (eacl/check-permissions
+                 snapshot
+                 {:checks [(demand alice :view document)]
+                  :cache? false}))))
           counts (request-counters/snapshot ledger)]
       (is (true? (get-in observation [:value 0 :allowed?])))
       (is (= 1 (:acquire-current! (:provider-calls observation) 0)))
@@ -578,9 +544,9 @@
               (throw
                (ex-info "injected backend failure"
                         {:type :test/backend-failure}))))]
-         (caught
-          #(eacl/check-permissions
-            client {:checks [first-demand second-demand]})))]
+          (caught
+           #(eacl/check-permissions
+             client {:checks [first-demand second-demand]})))]
     (is (= :test/backend-failure (:type (ex-data error))))
     (is (= 1 (:demand-index (ex-data error))))
     (is (true? (:cached?
@@ -604,324 +570,23 @@
     (is (zero? (:release! (:provider-calls observation) 0)))
     (is (zero? (:db-calls observation)))))
 
-(deftest authorization-page-clauses-are-closed-before-selection-test
+(deftest lookup-page-clauses-are-closed-before-selection-test
   (let [{:keys [conn client alice]} (fixture)
-        invalid-scan
-        {:resource/relation :viewer
-         :authorization {:subject alice :permission :view :on :resource}
-         :first 1}
-        invalid-lookup
-        {:subject alice
-         :permission :view
-         :resource/type :document
-         :resource/relationship
-         {:relation :viewer :subject alice :surprise true}
-         :first 1}]
-    (doseq [call [#(eacl/read-relationships client invalid-scan)
-                  #(eacl/lookup-resources client invalid-lookup)]]
-      (let [observation (observed-call conn #(caught call))]
-        (is (= :eacl.filters/invalid-authorization-clause
-               (:type (ex-data (:value observation)))))
-        (is (zero? (:acquire-current! (:provider-calls observation) 0)))
-        (is (zero? (:db-calls observation)))))
-
-    (testing "selected-snapshot schema validation covers both clauses"
-      (let [scan-error
-            (caught
-             #(eacl/read-relationships
-               client
-               {:resource/type :team
-                :authorization
-                {:subject alice :permission :admin :on :resource}
-                :first 1}))
-            lookup-error
-            (caught
-             #(eacl/lookup-resources
-               client
-               {:subject alice
-                :permission :view
-                :resource/type :document
-                :resource/relationship
-                {:relation :missing-relation :subject alice}
-                :first 1}))]
-        (is (= :eacl/unknown-relation-or-permission
-               (:type (ex-data scan-error))))
-        (is (= :admin (:permission (ex-data scan-error))))
-        (is (= :eacl/unknown-relation-or-permission
-               (:type (ex-data lookup-error))))
-        (is (= :missing-relation (:relation (ex-data lookup-error))))))
-
-    (is (= {:subject alice :permission :view :on :resource}
-           (:authorization
-            (authorization-filters/validate-scan-authorization!
-             {:resource/type :document
-              :authorization
-              {:subject alice :permission :view :on :resource}}))))))
-
-(deftest authorization-scan-dense-sentinel-pages-do-not-skip-test
-  (let [{:keys [client dense documents]} (scan-fixture)
-        query (scan-query dense {:first 2
-                                 :aggregate-limits {:candidate-window 10}})
-        ledger (request-counters/make-ledger)
-        first-page
-        (binding [request-counters/*ledger* ledger]
-          (eacl/read-relationships client query))
-        pages (walk-scan-forward client query)
-        ids (mapcat page-resource-ids pages)
-        counts (request-counters/snapshot ledger)]
-    (is (= (mapv :id (take 2 documents))
-           (page-resource-ids first-page)))
-    (is (true? (get-in first-page [:page-info :has-next-page?])))
-    (is (false? (get-in first-page [:page-info :bounded?])))
-    (is (= 3 (:candidates-examined counts))
-        "the dense page examines exactly the N+1 accepted sentinel")
-    (is (= 1 (:public-entries counts)))
-    (is (= 1 (:context-constructions counts)))
-    (is (= (mapv :id documents) (vec ids))
-        "the inclusive sentinel anchor is replayed, never omitted")
-    (is (= (count ids) (count (distinct ids))))))
-
-(deftest authorization-scan-sparse-and-all-rejected-windows-progress-test
-  (let [{:keys [client sparse none]} (scan-fixture)
-        sparse-query
-        (scan-query sparse {:first 2
-                            :aggregate-limits {:candidate-window 2}})
-        sparse-pages (walk-scan-forward client sparse-query)]
-    (is (= [["document-0"] ["document-3"] []]
-           (mapv page-resource-ids sparse-pages)))
-    (is (= [true true false]
-           (mapv #(get-in % [:page-info :has-next-page?]) sparse-pages)))
-    (is (= [true true false]
-           (mapv #(get-in % [:page-info :bounded?]) sparse-pages)))
-    (is (every? string?
-                (map #(get-in % [:page-info :end-cursor])
-                     (butlast sparse-pages))))
-
-    (let [none-query
-          (scan-query none {:first 2
-                            :aggregate-limits {:candidate-window 2}})
-          none-pages (walk-scan-forward client none-query)]
-      (is (= [[] [] []] (mapv page-resource-ids none-pages)))
-      (is (= [true true false]
-             (mapv #(get-in % [:page-info :has-next-page?]) none-pages)))
-      (is (= [true true false]
-             (mapv #(get-in % [:page-info :bounded?]) none-pages)))
-      (is (every? string?
-                  (map #(get-in % [:page-info :end-cursor])
-                       (butlast none-pages)))))))
-
-(deftest authorization-scan-backward-and-recursive-permission-test
-  (let [{:keys [client dense recursive]} (scan-fixture)
-        dense-query
-        (scan-query dense {:last 2
-                           :aggregate-limits {:candidate-window 10}})
-        last-page (eacl/read-relationships client dense-query)
-        previous-page
-        (eacl/read-relationships
-         client
-         (assoc dense-query
-                :before (get-in last-page [:page-info :start-cursor])))]
-    (is (= ["document-4" "document-5"]
-           (page-resource-ids last-page)))
-    (is (true? (get-in last-page [:page-info :has-previous-page?])))
-    (is (false? (get-in last-page [:page-info :bounded?])))
-    (is (= ["document-2" "document-3"]
-           (page-resource-ids previous-page)))
-
-    (is (= ["document-5"]
-           (->> (walk-scan-forward
-                 client
-                 (scan-query
-                  recursive
-                  {:first 2
-                   :aggregate-limits {:candidate-window 10}}))
-                (mapcat page-resource-ids)
-                vec)))))
-
-(deftest authorization-scan-cursor-and-window-scope-are-closed-test
-  (let [{:keys [client dense sparse]} (scan-fixture)
-        query (scan-query dense {:first 1
-                                 :aggregate-limits {:candidate-window 2}})
-        page (eacl/read-relationships client query)
-        cursor (get-in page [:page-info :end-cursor])]
-    (doseq [changed [(assoc query :authorization
-                            {:subject sparse :permission :view :on :resource})
-                     (assoc-in query [:authorization :permission] :missing)
-                     (-> query
-                         (assoc :subject/type :user)
-                         (assoc-in [:authorization :on] :subject))
-                     (assoc query :first 2)
-                     (assoc-in query [:aggregate-limits :candidate-window] 3)]]
-      (let [error (caught #(eacl/read-relationships
-                            client (assoc changed :after cursor)))]
-        (is (= :eacl.pagination/invalid-cursor
-               (:type (ex-data error)))
-            (pr-str changed)))))
-
-  (let [{:keys [conn client]} (scan-fixture)]
-    (doseq [filters [{:resource/type :document :authorization nil :first 1}
-                     {:resource/type :document
-                      :authorization {:subject (object :user "dense")
-                                      :permission :view
-                                      :on :subject}
-                      :first 1}]]
-      (let [observation (observed-call
-                         conn #(caught
-                                (fn []
-                                  (eacl/read-relationships client filters))))]
-        (is (= :eacl.filters/invalid-authorization-clause
-               (:type (ex-data (:value observation)))))
-        (is (zero? (:acquire-current! (:provider-calls observation) 0)))))))
-
-(deftest authorization-scan-cursor-proof-covers-stream-and-permission-test
-  (testing "one complete cursor proof is derived for the combined closure"
-    (let [{:keys [client dense]} (scan-fixture)
-          backend-stats (atom {})]
-      (binding [backend/*backend-op-stats* backend-stats]
-        (eacl/read-relationships
-         client
-         (scan-query dense {:first 2
-                            :aggregate-limits {:candidate-window 10}})))
-      (is (= (if orchestration/*qualified-authorization-enabled?* 0 1) (:proof-frame @backend-stats 0)))))
-
-  (testing "candidate-stream mutation invalidates continuation"
-    (let [{:keys [client dense marker documents]} (scan-fixture)
-          query (scan-query dense {:first 2
-                                   :aggregate-limits {:candidate-window 10}})
-          page (eacl/read-relationships client query)
-          _ (eacl/delete-relationship!
-             client
-             (eacl/->Relationship marker :candidate (last documents)))
-          error
-          (caught #(eacl/read-relationships
-                    client
-                    (assoc query :after
-                           (get-in page [:page-info :end-cursor]))))]
-      (is (= :eacl.pagination/stale-cursor
-             (:type (ex-data error))))))
-
-  (testing "authorization dependency mutation invalidates continuation"
-    (let [{:keys [client dense documents]} (scan-fixture)
-          query (scan-query dense {:first 2
-                                   :aggregate-limits {:candidate-window 10}})
-          page (eacl/read-relationships client query)
-          _ (eacl/delete-relationship!
-             client
-             (eacl/->Relationship dense :viewer (nth documents 4)))
-          error
-          (caught #(eacl/read-relationships
-                    client
-                    (assoc query :after
-                           (get-in page [:page-info :end-cursor]))))]
-      (is (= :eacl.pagination/stale-cursor
-             (:type (ex-data error)))))))
-
-(deftest authorization-scan-boundaries-unknowns-and-confidentiality-test
-  (let [{:keys [client dense sparse documents]} (scan-fixture)
-        one-page
-        (eacl/read-relationships
-         client
-         (scan-query sparse {:first 1
-                             :aggregate-limits {:candidate-window 2}}))
-        cursor (get-in one-page [:page-info :end-cursor])]
-    (is (= ["document-0"] (page-resource-ids one-page)))
-    (is (true? (get-in one-page [:page-info :bounded?])))
-    (is (not (str/includes? (pr-str one-page) "document-1"))
-        "a rejected candidate is absent from public row metadata")
-    (is (not (str/includes? cursor "document-1"))
-        "the progress anchor is encrypted")
-
-    (let [maximum-page
-          (eacl/read-relationships
-           client
-           (scan-query sparse {:first 10000
-                               :aggregate-limits {:candidate-window 10000}}))]
-      (is (= ["document-0" "document-3"]
-             (page-resource-ids maximum-page)))
-      (is (false? (get-in maximum-page [:page-info :has-next-page?])))
-      (is (false? (get-in maximum-page [:page-info :bounded?]))))
-
-    (doseq [page-control [{:first 0} {:first 10001}]]
-      (is (= :eacl.pagination/invalid-cursor
-             (:type
-              (ex-data
-               (caught
-                #(eacl/read-relationships
-                  client
-                  (scan-query sparse page-control))))))))
-
-    (let [missing-principal (object :user "missing-principal")
-          missing-pages
-          (walk-scan-forward
-           client
-           (scan-query
-            missing-principal
-            {:first 1 :aggregate-limits {:candidate-window 3}}))]
-      (is (= [[] []] (mapv page-resource-ids missing-pages)))
-      (is (= [true false]
-             (mapv #(get-in % [:page-info :bounded?]) missing-pages))))
-
-    (let [missing-anchor
-          (eacl/read-relationships
-           client
-           (assoc
-            (scan-query sparse {:first 1})
-            :resource/id "missing-document"))]
-      (is (= [] (:data missing-anchor)))
-      (is (= false (get-in missing-anchor [:page-info :bounded?])))
-      (is (nil? (get-in missing-anchor [:page-info :end-cursor]))))
-
-    (is (= (mapv :id documents)
-           (->> (walk-scan-forward
-                 client
-                 (scan-query
-                  dense
-                  {:first 1 :aggregate-limits {:candidate-window 2}}))
-                (mapcat page-resource-ids)
-                vec))
-        "one-row pages preserve every candidate boundary")))
-
-(deftest authorization-scan-failures-are-atomic-test
-  (testing "cancellation inside a candidate decision returns no partial page"
-    (let [{:keys [conn client dense]} (scan-fixture)
-          token (execution/cancellation-token)
-          cancelled? (atom false)
-          observation
-          (observed-call
-           conn
-           #(binding [backend/*invoke-observer*
-                      (fn [{:keys [phase operation]}]
-                        (when (and (= :before phase)
-                                   (= :resource->subjects operation)
-                                   (compare-and-set! cancelled? false true))
-                          (execution/cancel! token)))]
-              (caught
-               (fn []
-                 (eacl/read-relationships
-                  client
-                  (assoc
-                   (scan-query dense {:first 2})
-                   :cancellation-token token))))))]
-      (is @cancelled?)
-      (is (= :eacl.execution/cancelled
-             (:type (ex-data (:value observation)))))
-      (is (= 1 (:acquire-current! (:provider-calls observation) 0)))
-      (is (= 1 (:release! (:provider-calls observation) 0)))))
-
-  (testing "a candidate traversal limit is an error, never a denial"
-    (let [{:keys [client recursive]}
-          (scan-fixture
-           {:cache cache/no-cache
-            :recursive-traversal-limits {:max-advanced-datoms 1}})
-          error
-          (caught
-           #(eacl/read-relationships
-             client
-             (scan-query recursive
-                         {:first 2
-                          :aggregate-limits {:candidate-window 10}})))]
-      (is (= :eacl.recursive-traversal/limit-exceeded
-             (:eacl/error (ex-data error)))))))
+        query {:subject alice :permission :view :resource/type :document
+               :resource/relationship {:relation :viewer :subject alice :surprise true}
+               :first 1}
+        observation (observed-call conn #(caught (fn [] (eacl/lookup-resources client query))))]
+    (is (= :eacl.filters/invalid-authorization-clause
+           (:type (ex-data (:value observation)))))
+    (is (zero? (:acquire-current! (:provider-calls observation) 0)))
+    (is (zero? (:db-calls observation)))
+    (let [error (caught (fn []
+                          (eacl/lookup-resources
+                           client
+                           (assoc query :resource/relationship
+                                  {:relation :missing-relation :subject alice}))))]
+      (is (= :eacl/unknown-relation-or-permission (:type (ex-data error))))
+      (is (= :missing-relation (:relation (ex-data error)))))))
 
 (deftest relationship-filtered-lookup-windows-and-probes-test
   (let [{:keys [client dense sparse none]} (scan-fixture)
@@ -1020,38 +685,6 @@
     (is (true? (get-in page-1 [:page-info :has-next-page?])))
     (is (false? (get-in page-1 [:page-info :bounded?])))))
 
-(deftest scan-and-enumerate-routes-have-the-same-resource-set-test
-  (let [{:keys [client dense sparse recursive none]} (scan-fixture)]
-    (doseq [relationship-subject [dense sparse recursive none]]
-      (let [scan-ids
-            (->> (walk-scan-forward
-                  client
-                  {:subject/type :user
-                   :subject/id (:id relationship-subject)
-                   :resource/type :document
-                   :resource/relation :viewer
-                   :authorization {:subject dense
-                                   :permission :view
-                                   :on :resource}
-                   :first 1
-                   :aggregate-limits {:candidate-window 2}})
-                 (mapcat page-resource-ids)
-                 set)
-            enumerate-ids
-            (->> (walk-lookup-forward
-                  client
-                  {:subject dense
-                   :permission :view
-                   :resource/type :document
-                   :resource/relationship
-                   {:relation :viewer :subject relationship-subject}
-                   :first 1
-                   :aggregate-limits {:candidate-window 2}})
-                 (mapcat page-object-ids)
-                 set)]
-        (is (= scan-ids enumerate-ids)
-            (pr-str relationship-subject))))))
-
 (deftest relationship-filtered-lookup-cursors-bind-route-clause-and-window-test
   (let [{:keys [client dense sparse none]} (scan-fixture)
         query
@@ -1082,7 +715,61 @@
            #(eacl/read-relationships
              client
              (assoc
-              (scan-query dense {:first 1})
+              {:resource/type :document :resource/relation :candidate :first 1}
               :after cursor)))]
       (is (= :eacl.pagination/invalid-cursor
              (:type (ex-data route-error)))))))
+
+(deftest direct-relationship-pages-retain-exclusion-in-explicit-checks-test
+  (let [conn (datascript/create-conn)
+        client (datascript/make-client conn {:clock (constantly 100)})
+        viewer (object :user "viewer")
+        parent (object :folder "folder")
+        documents (mapv #(object :document (str "document-" %)) (range 60))
+        query {:subject/type :folder :subject/id "folder"
+               :resource/type :document :resource/relation :parent
+               :first 25 :cache? false :populate-cache? false}]
+    (eacl/write-schema! client
+                        "definition user {}
+ definition folder {}
+ definition document {
+ relation parent: folder
+ relation reader: user
+ relation banned: user
+ permission view = reader - banned
+ }")
+    (ds/transact! conn (mapv (fn [obj] {:eacl/id (:id obj)}) (into [viewer parent] documents)))
+    (eacl/create-relationships!
+     client
+     (into [(eacl/->Relationship viewer :banned (first documents))]
+           (mapcat (fn [doc]
+                     [(eacl/->Relationship parent :parent doc)
+                      (eacl/->Relationship viewer :reader doc)])
+                   documents)))
+    (eacl/with-snapshot [snapshot (eacl/snapshot client)]
+      (let [pages (with-redefs [engine/can? (fn [& _] (throw (ex-info "Direct read evaluated permission" {})))]
+                    (loop [request query pages []]
+                      (let [page (eacl/read-relationships snapshot request)
+                            pages (conj pages page)]
+                        (if (get-in page [:page-info :has-next-page?])
+                          (recur (assoc query :after (get-in page [:page-info :end-cursor])) pages)
+                          pages))))
+            rows (vec (mapcat :data pages))
+            checks (mapv #(demand viewer :view (:resource %)) rows)
+            scalar (mapv #(eacl/can? snapshot (assoc % :cache? false)) checks)
+            bulk (eacl/check-permissions snapshot {:checks checks :cache? false})]
+        (is (= [25 25 10] (mapv (comp count :data) pages)))
+        (is (= (mapv :id documents) (mapv (comp :id :resource) rows)))
+        (is (= (into [false] (repeat 59 true)) scalar))
+        (is (= scalar (mapv :allowed? bulk)))
+        (let [resources (eacl/lookup-resources
+                         snapshot
+                         {:subject viewer :permission :view :resource/type :document
+                          :first 100 :cache? false})
+              subjects (eacl/lookup-subjects
+                        snapshot
+                        {:resource (first documents) :permission :view :subject/type :user
+                         :first 10 :cache? false})]
+          (is (= (set (map :id (rest documents)))
+                 (set (map :id (:data resources)))))
+          (is (empty? (:data subjects))))))))

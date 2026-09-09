@@ -896,3 +896,24 @@
     (is (= 1 @snapshot-id-calls))
     (is (string? (get-in external [:page-info :start-cursor])))
     (is (string? (get-in external [:page-info :end-cursor])))))
+
+(deftest removed-authorization-scope-cannot-become-a-direct-read-test
+  (let [snapshot (adapter 1 nil true)
+        query {:subject/type :user :subject/id "user-1" :resource/type :document :first 1}
+        old-query (assoc query :authorization
+                    {:subject {:type :user :id "viewer"} :permission :view :on :resource})
+        edge {:kind :relationship-index :v 2 :anchor :progress :scan-index 0
+              :subject-id "user-1" :resource-id "document-1"}
+        page {:data [(eacl/->Relationship (eacl/spice-object :user "user-1")
+                                           :reader (eacl/spice-object :document "document-1"))]
+              :page-info {:start-cursor edge :end-cursor edge :has-next-page? true :has-previous-page? false}}
+        legacy (relay/externalize-relationship-page snapshot {} :read-relationships old-query page)
+        error (try
+                (relay/internalize-page-query snapshot {} :read-relationships
+                  (assoc query :after (get-in legacy [:page-info :end-cursor])))
+                nil
+                (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo) error (ex-data error)))]
+    (is (= :eacl.pagination/invalid-cursor (:type error)))
+    (is (not= (cache/lookup-page-query-identity old-query query)
+              (cache/lookup-page-query-identity query query))
+        "Restored authorized answer identities retain the removed clause.")))

@@ -1394,9 +1394,6 @@
              :subject/id "account-1"
              :resource/type :server
              :resource/relation :account
-             :authorization {:subject user-1
-                             :permission :view
-                             :on :resource}
              :first 10
              :aggregate-limits {:candidate-window 10}}
             enumerate-query
@@ -1511,8 +1508,7 @@
               (is (false? (:cached? (invoke)))
                   (str (name label) " must miss after source advance")))))
 
-        (testing "each aggregate result remains on its selected snapshot"
-          (eacl/delete-relationship! client user-2 :owner account-1)
+        (testing "each page remains on its selected snapshot"
           (let [mutated? (atom false)
                 captured
                 (binding [backend/*invoke-observer*
@@ -1520,24 +1516,14 @@
                             (when (and (= :before phase)
                                        (compare-and-set! mutated? false true))
                               (binding [backend/*invoke-observer* nil]
-                                (eacl/create-relationship!
-                                 client user-2 :owner account-1))))]
-                  (eacl/read-relationships
-                   client
-                   (-> scan-query
-                       (assoc :cache? false)
-                       (assoc-in [:authorization :subject] user-2))))]
+                                (eacl/delete-relationship! client account-link))))]
+                  (eacl/read-relationships client (assoc scan-query :cache? false)))]
             (is @mutated?)
-            (is (empty? (:data captured)))
-            (is (= ["server-1" "server-2"]
+            (is (= ["server-1" "server-2"] (mapv (comp :id :resource) (:data captured))))
+            (is (= ["server-1"]
                    (mapv (comp :id :resource)
-                         (:data
-                          (eacl/read-relationships
-                           client
-                           (-> scan-query
-                               (assoc :cache? false)
-                               (assoc-in [:authorization :subject]
-                                         user-2))))))))
+                         (:data (eacl/read-relationships client (assoc scan-query :cache? false)))))))
+          (eacl/create-relationships! client [account-link])
 
           (let [mutated? (atom false)
                 captured

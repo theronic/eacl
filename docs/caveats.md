@@ -350,7 +350,7 @@ state and `:evaluation-time-ms`. Explicit snapshots retain their captured time.
 
 These modes inspect storage and expiry without evaluating Caveats. A row with
 an unsatisfied or conditional Caveat can therefore appear in either view.
-Use the existing `:authorization` filter or an authorization operation when a
+Use `can?`, `check-permission` or `check-permissions` separately when a
 permission decision is needed. Physical inspection alone does not require a
 Caveat evaluator. Qualifier corruption remains a typed fault.
 

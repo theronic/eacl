@@ -786,13 +786,13 @@ All list APIs use the v8 Relay pagination contract:
 ### Aggregate authorization
 
 Use `eacl/check-permissions` for an ordered vector of point decisions that must
-share one snapshot and one request budget. For permission-filtered relationship
-pages, use `read-relationships` with `:authorization` when the relationship set
-is smaller, or `lookup-resources`/`lookup-subjects` with a direct
-`:relationship` filter when the authorized set is smaller. Both routes use
-bounded candidate windows, so a valid page may be short with
-`:has-next-page? true` and `:bounded? true`; continue with its confidential,
-query-scoped cursor.
+share one snapshot and one request budget. `read-relationships` returns stored
+relationships without authorizing their endpoints; it no longer accepts
+`:authorization`. Applications that need filtering can read a page and map
+`eacl/can?` over its endpoints or call `check-permissions`, using one explicit
+snapshot for consistent composition. The application owns accepted-row paging
+and any additional fetches. Schema exclusion and other permission operators
+continue to work through the permission APIs.
 
 See [Aggregate authorization](docs/aggregate-authorization.md) for the batch
 contract, complete query examples, route-selection cost table, window and

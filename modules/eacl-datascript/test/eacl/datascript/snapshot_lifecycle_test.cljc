@@ -43,43 +43,6 @@
      client (eacl/->Relationship user :owner account))
     {:conn conn :client client :user user :account account}))
 
-(def ^:private authorization-scan-schema
-  "definition user {}
-   definition document {
-     relation candidate: user
-     relation viewer: user
-     permission view = viewer
-   }")
-
-(defn- authorization-scan-fixture
-  []
-  (let [conn (datascript/create-conn)
-        writer-client (datascript/make-client conn {:cache cache/no-cache})
-        marker (eacl/spice-object :user "marker")
-        sparse (eacl/spice-object :user "sparse")
-        documents
-        (mapv #(eacl/spice-object :document (str "document-" %)) (range 4))]
-    (eacl/write-schema! writer-client authorization-scan-schema)
-    (ds/transact!
-     conn
-     (mapv (fn [id] {:eacl/id id})
-           (concat ["marker" "sparse"] (map :id documents))))
-    (eacl/create-relationships!
-     writer-client
-     (vec
-      (concat
-       (map #(eacl/->Relationship marker :candidate %) documents)
-       [(eacl/->Relationship sparse :viewer (nth documents 0))
-        (eacl/->Relationship sparse :viewer (nth documents 3))])))
-    {:conn conn :sparse sparse}))
-
-(defn- authorization-scan-summary
-  [page]
-  {:resource-ids (mapv #(get-in % [:resource :id]) (:data page))
-   :bounded? (get-in page [:page-info :bounded?])
-   :has-next-page? (get-in page [:page-info :has-next-page?])
-   :cached? (:cached? page)})
-
 (defn- structural-children
   [value]
   (cond
@@ -962,54 +925,6 @@
       (is (= :node-count (:dimension failure)))
       (is (= 0 (:maximum failure)))
       (is (pos? (:actual failure))))))
-
-(deftest restored-answers-never-cross-client-candidate-window-policy-test
-  (let [{:keys [conn sparse]} (authorization-scan-fixture)
-        permissive
-        (datascript/make-client
-         conn
-         {:cache {:max-entries 32}
-          :cursor-ttl-seconds 3600
-          :aggregate-limits {:candidate-window 10}})
-        strict
-        (datascript/make-client
-         conn
-         {:cache {:max-entries 32}
-          :cursor-ttl-seconds 3600
-          :aggregate-limits {:candidate-window 2}})
-        query
-        {:resource/type :document
-         :resource/relation :candidate
-         :authorization
-         {:subject sparse :permission :view :on :resource}
-         :first 2}
-        permissive-page (eacl/read-relationships permissive query)
-        strict-cache-free-page
-        (eacl/read-relationships strict (assoc query :cache? false))
-        bounds {:max-entries 32}
-        snapshot
-        (orchestration/export-cache-snapshot permissive bounds)]
-    (is (= {:resource-ids ["document-0" "document-3"]
-            :bounded? false
-            :has-next-page? false
-            :cached? false}
-           (authorization-scan-summary permissive-page)))
-    (is (= {:resource-ids ["document-0"]
-            :bounded? true
-            :has-next-page? true
-            :cached? false}
-           (authorization-scan-summary strict-cache-free-page)))
-    (is (pos? (:entry-count snapshot)))
-    (is (= (:entry-count snapshot)
-           (:entry-count
-            (orchestration/restore-cache-snapshot!
-             strict snapshot bounds))))
-    ;; The normalized client default is part of the answer key. Restored
-    ;; mappings computed with a larger candidate window cannot alias this
-    ;; strict client's shorter, bounded page.
-    (is (= (authorization-scan-summary strict-cache-free-page)
-           (authorization-scan-summary
-            (eacl/read-relationships strict query))))))
 
 (deftest restore-validates-once-across-same-lineage-cas-loss-test
   (let [{:keys [conn]} (fixture)

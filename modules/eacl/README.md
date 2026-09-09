@@ -59,7 +59,7 @@ are test code, not selectable production engines.
 ## Aggregate reads
 
 Shared orchestration implements ordered `eacl/check-permissions` batches,
-`read-relationships` with an `:authorization` clause, and relationship-filtered
+plain `read-relationships` pages, and relationship-filtered
 `lookup-resources`/`lookup-subjects`. One request context owns the snapshot,
 deadline, cancellation token, schema/root memos, cumulative limits, cursor
 state, and release. Backend modules supply only their ordinary certified

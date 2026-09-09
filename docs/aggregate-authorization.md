@@ -31,27 +31,36 @@ and `:aggregate-limits` are request-wide. Any invalid demand, deadline,
 cancellation, backend failure, or aggregate-limit failure rejects the whole
 batch and identifies the failing `:demand-index`; no partial vector is returned.
 
-## Authorized relationship pages
+## Relationship reads and explicit permission checks
 
-There are two explicit routes over the same logical filter. The caller chooses
-which candidate set is smaller.
+`read-relationships` reads stored relationships. It does not authorize either
+endpoint, and `:authorization` is rejected as an unknown filter. Exclusion,
+Caveats and other permission rules are evaluated by the permission APIs.
 
-The scan route reads matching relationships and authorizes one endpoint of each
-candidate:
+Applications can compose the existing APIs on one explicit snapshot:
 
 ```clojure
-(eacl/read-relationships
- acl
- {:subject/type :account
-  :subject/id "account-1"
-  :resource/type :document
-  :resource/relation :account
-  :authorization {:subject alice
-                  :permission :view
-                  :on :resource}
-  :first 50
-  :aggregate-limits {:candidate-window 500}})
+(eacl/with-snapshot [snapshot (eacl/snapshot acl)]
+  (let [page (eacl/read-relationships snapshot
+               {:subject/type :account :subject/id "account-1"
+                :resource/type :document :resource/relation :account :first 50})
+        checks (mapv (fn [relationship]
+                       {:subject alice :permission :view
+                        :resource (:resource relationship)})
+                     (:data page))]
+    (eacl/check-permissions snapshot {:checks checks})))
 ```
+
+For Boolean decisions, replace the last expression with
+`(mapv #(eacl/can? snapshot %) checks)`. `can?` returns false for authoritative
+qualified evaluation failures; cancellation, limits, invalid requests and backend
+failures still propagate. `check-permission` and `check-permissions` retain their
+richer result and error contracts. A physical page can yield fewer authorized
+rows; fetching more candidates, accepted-row pagination and cumulative budgets
+across calls belong to the application. The relationship cursor advances through
+stored relationships, not the application's filtered result stream.
+
+## Relationship-filtered lookups
 
 The enumerate route first discovers authorized objects and performs one
 certified direct-relationship membership probe for each candidate:
@@ -73,15 +82,9 @@ The reverse shape is
 `:subject/relationship {:relation relation :resource anchor}`. Types,
 permissions, and direct relations are schema-validated before traversal.
 
-| Route | Candidate stream | Per-candidate work | Approximate selection cost | Prefer when |
-| --- | --- | --- | --- | --- |
-| Scan | Relationships matching the ordinary filters | One context-bound permission decision on `:subject` or `:resource` | matching relationships × authorization cost | The relationship set is small |
-| Enumerate | Objects authorized by the lookup | One certified direct-match probe | authorized objects × membership-probe cost | The authorized set is small |
-
-Neither route dominates. For example, enumerate is usually best for one user's
-few visible documents; scan is usually best when a super-admin filters a few
-relationships. EACL deliberately does not choose adaptively because the caller
-knows which side is bounded.
+A filtered lookup enumerates authorized objects and tests direct relationship
+membership. It remains a separate operation from the direct read. Choose it
+only when its query semantics match the application.
 
 ## Candidate windows and short pages
 
@@ -110,11 +113,11 @@ aggregate limits; it never renews or resets them.
 
 ## Cursor confidentiality, scope, and cache provenance
 
-Aggregate cursors use EACL's authenticated-encryption envelope. The progress
+Filtered lookup cursors use EACL's authenticated-encryption envelope. The progress
 anchor is confidential. The cursor binds the route, operation, ordinary query,
-authorization or relationship clause, direction, page demand, window budget,
+relationship clause, direction, page demand, window budget,
 source/lifecycle/basis identity, certified schema generation, dependency proof,
-and ordering ABI. A cursor cannot cross from scan to enumerate or be reused
+and ordering ABI. A cursor cannot cross operations or be reused
 with a different subject, permission, endpoint, relation, anchor, filter,
 direction, page size, or answer-affecting limit. If its exact basis or proof is
 no longer available, continuation fails closed instead of restarting.

@@ -1061,7 +1061,6 @@
               (contains? #{:lookup-resources :lookup-subjects :count-resources :count-subjects :read-relationships} operation)
               (assoc value :qualification-certificate
                      (if (and (= :read-relationships operation)
-                              (nil? (get-in query [:public :authorization]))
                               (not= :expiry-active (get-in query [:public :relationship-state])))
                        (temporal/interval (:time engine/*qualification*) nil true)
                        (qualification/certificate engine/*qualification*)))
@@ -1515,105 +1514,17 @@
        (qualified-schema! api db schema (:evaluator engine/*qualification*)))
      schema)))
 
-(defn- authorization-scan-page
-  [api opts request-context adapter selected-db cursor-opts filters
-   internal-query validate!]
-  (let [{:keys [subject permission on]} (:authorization filters)
-        internal-subject ((:spice-object->internal opts) selected-db subject)
-        schema-cache (:request-schema-cache cursor-opts)
-        request-proof-frame (request-proof-frame cursor-opts)
-        contract (:execution-contract opts)
-        limits (:aggregate-limits contract)
-        candidate-window (:candidate-window limits)
-        ledger (request-context/counter-ledger request-context)
-        ledger-before (request-counters/snapshot ledger)
-        work-stats (atom {})
-        work-before @work-stats
-        counters
-        (fn [output-units]
-          (batch/aggregate-counters
-           work-before @work-stats
-           ledger-before (request-counters/snapshot ledger)
-           output-units))
-        ;; The validated context state, when the request carries it, lets each
-        ;; candidate take the memo fast path instead of re-validating the
-        ;; context's ownership and lifecycle.
-        context-state (::request-context-state opts)
-        memoized-decision!
-        (fn [key build]
-          (if context-state
-            (request-context/memoized-active-state!
-             context-state :decisions key build)
-            (request-context/memoized! request-context :decisions key build)))
-        accept?
-        (fn [relationship]
-          ;; The diagnostic aggregate is built only on the throw path.
-          (execution/check! contract :authorization-candidate #(counters 0))
-          (let [endpoint (get relationship on)
-                allowed?
-                (if-not (:id internal-subject)
-                  false
-                  (memoized-decision!
-                   ;; Exactly the demand-key fields, built once per candidate.
-                   [:authorization-scan
-                    {:subject subject
-                     :permission permission
-                     :resource endpoint}]
-                   #(binding [engine/*schema-cache* @schema-cache
-                              expression-persistence/*expression-limits*
-                              (:expression-limits opts)
-                              engine/*proof-frame*
-                              request-proof-frame
-                              engine/*recursive-traversal-limits*
-                              (:recursive-traversal-limits opts)
-                              engine/*service-admission*
-                              (:service-admission opts)
-                              engine/*evaluation-mode* (:evaluation contract)
-                              execution/*contract* contract
-                              subproblem/*decision-kernel*
-                              (:decision-kernel opts)]
-                      (engine/can?
-                       adapter internal-subject permission endpoint))))]
-            (batch/check-aggregate-limits! limits (counters 0) nil)
-            allowed?))]
-    ;; Root/schema validation is selected-snapshot work but precedes the first
-    ;; physical relationship candidate.
-    (binding [engine/*schema-cache* @schema-cache
-              expression-persistence/*expression-limits*
-              (:expression-limits opts)
-              engine/*proof-frame* request-proof-frame]
-      (validate!))
-    (let [internal-page
-          (binding [engine/*aggregate-work-stats* work-stats
-                    relationship-filters/*validated-request?* true]
-            ((get-in api [:impl :read-relationships])
-             selected-db internal-query (:decision-kernel cursor-opts)
-             (inspection/window-options engine/*qualification* filters
-                                        {:candidate-window candidate-window :accept? accept?})))]
-      (batch/check-aggregate-limits!
-       limits (counters (count (:data internal-page))) nil)
-      (inspection/decode-page engine/*qualification* internal-page))))
-
 (defn read-relationships
   [api source {:as opts :keys [object-id->entid]} filters]
   ;; The unified filter contract validates the complete public query before
   ;; any snapshot selection or cursor work (backend-unification 9.1).
   (when-not relationship-filters/*validated-request?*
     (relationship-filters/validate! filters))
-  (when-not authorization-filters/*validated-request?*
-    (authorization-filters/validate-scan-authorization! filters))
   (when (and (not *qualified-authorization-enabled?*) (contains? filters :relationship-state))
     (throw (ex-info "Qualified Relationship inspection is not enabled."
                     {:type :eacl/unsupported-capability :eacl/error :eacl/unsupported-capability
                      :capability :qualified-relationship-inspection})))
-  (let [opts (ensure-execution-contract opts :read-relationships filters)
-        authorization (:authorization filters)
-        authorization-resource-type
-        (when authorization
-          (get filters (case (:on authorization)
-                         :subject :subject/type
-                         :resource :resource/type)))
-        authorization-permission (:permission authorization)]
+  (let [opts (ensure-execution-contract opts :read-relationships filters)]
     (with-selected-context
       api source opts (:consistency filters)
       (fn [request-context]
@@ -1624,11 +1535,7 @@
                                 rendered-hit
                                 (with-page-context
                                   request-context opts :read-relationships filters
-                                  authorization-resource-type authorization-permission
-                                  (when authorization
-                                    {:resource-type (:resource/type filters)
-                                     :relation (:resource/relation filters)
-                                     :subject-type (:subject/type filters)})
+                                  nil nil nil
                                   (fn [{request-context :request-context
                                         adapter :adapter page-db :db cursor-opts :opts
                                         page-query :query
@@ -1651,8 +1558,8 @@
                         ;; bound generation) and on unknown-object short-cuts.
                                               validate!
                                               (fn []
-                                                (schema-errors/validate-authorized-relationship-read!
-                                                 (request-schema api page-db (some? authorization))
+                                                (schema-errors/validate-relationship-read!
+                                                 (request-schema api page-db false)
                                                  filters))
                                               subject-id (:subject/id filters)
                                               resource-id (:resource/id filters)
@@ -1667,7 +1574,7 @@
                                                   (dissoc :consistency :cache? :populate-cache?
                                                           :evaluation :timeout-ms
                                                           :cancellation-token :aggregate-limits
-                                                          :authorization :relationship-state)
+                                                          :relationship-state)
                                                   (cond->
                                                    subject-id (assoc :subject/id subject-eid)
                                                    resource-id (assoc :resource/id resource-eid)))]
@@ -1677,27 +1584,13 @@
                                               (call-with-request-schema-cache cursor-opts validate!)
                                               (if (cursor-request? filters)
                                                 (stale-cursor-anchor! :read-relationships)
-                                                (cond->
-                                                 (assoc relay/empty-page
-                                                        :cached? false :cache-basis nil)
-                                                  (:authorization filters)
-                                                  (assoc-in [:page-info :bounded?] false))))
+                                                (assoc relay/empty-page
+                                                       :cached? false :cache-basis nil)))
                                             (let [answer-opts
                                                   (cond-> cursor-opts
                                                     rendered-cache
                                                     (assoc ::populate-exact-answer? false))
                                                   answer
-                                                  (if authorization
-                                                    (cached-engine-result
-                                                     request-context adapter answer-opts
-                                                     :read-relationships
-                                                     (cache/lookup-page-query-identity
-                                                      filters internal-query)
-                                                     authorization-resource-type
-                                                     authorization-permission
-                                                     #(authorization-scan-page
-                                                       api opts request-context adapter page-db
-                                                       cursor-opts filters internal-query validate!))
                                                     (cached-engine-result
                                                      request-context adapter answer-opts
                                                      :read-relationships
@@ -1719,7 +1612,7 @@
                                                                (when (= :expiry-active (:relationship-state filters))
                                                                  {:candidate-window (get-in opts [:execution-contract :aggregate-limits :candidate-window])}))))
                                                             ((get-in api [:impl :read-relationships])
-                                                             page-db internal-query (:decision-kernel cursor-opts)))))))]
+                                                             page-db internal-query (:decision-kernel cursor-opts))))))]
                                               (render-and-cache-page
                                                adapter cursor-opts :read-relationships filters
                                                rendered-cache answer))))))))))))))
@@ -4069,11 +3962,9 @@
      #(eacl/-read-schema % request)))
   (-read-relationships [this request]
     (relationship-filters/validate! request)
-    (authorization-filters/validate-scan-authorization! request)
     (with-page-lookahead
       this runtime :read-relationships request
-      #(binding [relationship-filters/*validated-request?* true
-                 authorization-filters/*validated-request?* true]
+      #(binding [relationship-filters/*validated-request?* true]
          (call-with-transient-snapshot
           runtime source api :read-relationships request
           (fn [snapshot] (eacl/-read-relationships snapshot request))))))

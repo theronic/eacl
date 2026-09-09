@@ -72,28 +72,15 @@ cumulative aggregate budget. Its decisions retain scalar order, cardinality,
 value, evaluation mode, and cache provenance. Any demand failure rejects the
 whole batch with its index; there is no partial publication.
 
-Permission-filtered relationship pagination has two explicit shared-core
-routes. `read-relationships` accepts an `:authorization` clause and scans the
-matching relationship set. `lookup-resources` and `lookup-subjects` accept a
-direct `:relationship` filter, enumerate the authorized set, and use one
-certified direct-match probe per candidate without re-evaluating permission.
-Callers choose the smaller side; EACL does not make an adaptive cardinality
-guess.
-
-Both routes stop at physical exhaustion, the accepted-row sentinel, or the
-configured `:aggregate-limits {:candidate-window ...}`. A window boundary may
-return a valid short page with `:has-next-page? true` and `:bounded? true`.
-Encrypted cursors bind the route, complete clause, direction, page demand,
-window, source/lifecycle/basis, schema generation, dependency proof, and order
-ABI; scan and enumerate cursors are not interchangeable. Aggregate pages use
-ordinary exact/proof-backed cache provenance. See [Aggregate
-authorization](aggregate-authorization.md) for examples and the route cost
-table.
-
-The performance qualification uses paired core series, deterministic
-amplification counters, retained-resource gates, and a separately reported
-loopback HTTP no-op control. Absolute ceilings are host-class-specific and do
-not establish a portable sub-millisecond SLA.
+**Breaking removal:** `read-relationships` no longer accepts `:authorization`.
+Its presence, including nil or incomplete values, fails with
+`:eacl.filters/unknown-filter`; it is never silently ignored. Direct reads
+retain their indexed pagination, consistency and cache controls. Use separate
+`can?` or `check-permissions` calls to filter endpoints, with an explicit snapshot
+when the composed reads must agree. Consumers own accepted-row paging.
+Standalone authorization, including exclusion and qualified evaluation, is
+unchanged. Old authorized cursors and answers cannot become plain-read results.
+See [Aggregate authorization](aggregate-authorization.md) for composition examples.
 
 ## Consistency
 
