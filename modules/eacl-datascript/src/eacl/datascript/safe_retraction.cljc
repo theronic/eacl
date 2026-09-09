@@ -9,7 +9,7 @@
             [eacl.relationships.storage :as storage]))
 
 (def function-digest
-  "b95f310357fa216e59435c6d15a8adaea910650b0ee5d602f9d98e5cbeed4361")
+  "c8dad3f368de21e3785a35e0f2494a9c2a72135cc3f4e304a70deddc710fe03e")
 
 (def function-doc
   (str safe/function-doc-prefix " v" safe/function-version

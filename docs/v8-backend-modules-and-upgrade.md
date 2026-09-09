@@ -188,6 +188,20 @@ peer-only ghost; a missing lookup ref cannot recover the former eid.
 | Datalevin qualified embedded profile | call `eacl.datalevin.safe-retraction/prepare!`, then submit through `eacl.datalevin.safe-retraction/transact-retract-entity!` |
 | Function-unsafe remote topology | use `delete-object!`, then native entity deletion |
 
+Safe-retraction function compatibility version 5 protects all declared Caveat
+and qualifier facts, including partial records and component descendants. It
+also stamps Relations affected only by self-loops. Attempts to delete qualified
+control entities fail atomically with `:protected-control-entity`. Dedicated
+schema writers and admitted orphan cleanup remain available.
+
+After upgrading the library, explicitly rerun the preparation/installation
+operation above. In particular, Datomic persists its function body: a library
+upgrade alone does not replace it. Installation replaces recognized older EACL
+bodies, is idempotent for the current body, and rejects unrelated occupants.
+The backend digest markers identify this combined function compatibility
+contract. The relationship storage ABI stays at v8; no storage migration is
+required by these fixes.
+
 Do not combine relationship additions involving a target with safe retraction
 of that target in the same application transaction. Use batched
 `delete-object!` for very high-degree targets and backend integrity reports for

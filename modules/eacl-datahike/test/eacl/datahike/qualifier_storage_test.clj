@@ -1,5 +1,7 @@
 (ns eacl.datahike.qualifier-storage-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [eacl.datahike.qualifiers :as qualifiers]
+            [eacl.relationships.qualifier-sweep-contract :as sweep]
+            [clojure.test :refer [deftest is]]
             [datahike.api :as d]
             [eacl.datahike.core :as api]
             [eacl.datahike.impl :as impl]
@@ -41,3 +43,17 @@
         :evidence #(admission/evidence (d/db conn))
         :transact! #(d/transact conn %)})
       (finally (d/release conn) (d/delete-database config)))))
+
+(defn with-sweep-fixture [f]
+  (doseq [options [nil {:attribute-refs? true} {:schema-flexibility :read}]]
+    (let [conn (schema/create-conn nil options) config (:config (d/db conn))]
+      (try
+        (f {:client (api/make-client conn {}) :snapshot #(d/db conn)
+            :transact! #(d/transact conn %) :entid ddb/entid
+            :writer #(qualifiers/writer conn) :rows (:all-rows (qualifiers/read-api))})
+        (finally (d/release conn) (d/delete-database config))))))
+
+(deftest cleanup-sweep-native-work-and-transition-contract
+  (sweep/exercise-work! with-sweep-fixture)
+  (sweep/exercise-hostile! with-sweep-fixture)
+  (sweep/exercise-budgets! with-sweep-fixture))

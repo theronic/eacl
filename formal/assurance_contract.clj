@@ -204,6 +204,17 @@
     :runtime-targets [:clj-java :cljs-javascript]
     :remaining [:phase-3-serving-activation
                 :independent-review]}
+   {:operation :qualifier-cleanup-sweep
+    :entry-points ['eacl.relationships.qualifier-integrity/cleanup-sweep!]
+    :theorems [:own-cleanup-preserves-remaining-absence
+               :foreign-attachment-invalidates-certificate]
+    :dafny ["formal/dafny/QualifierCleanupSweep.dfy"]
+    :adapter-obligations [:authoritative-own-commit-before-and-after
+                          :exact-source-and-native-head-guard
+                          :candidate-fact-assertions
+                          :bounded-streaming-proof-capture]
+    :runtime-targets [:clj-java :cljs-javascript]
+    :remaining [:independent-review]}
    {:operation :execution-contract
     :entry-points
     ['eacl.execution/normalize 'eacl.engine.v8/lookup-resources]

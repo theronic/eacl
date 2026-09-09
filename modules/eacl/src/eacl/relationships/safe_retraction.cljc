@@ -5,16 +5,23 @@
   installation. The public transaction function deliberately takes only the
   native retractEntity target; it carries no EACL mutation envelope or journal
   state."
-  (:require [eacl.relationships.endpoint-pair :as endpoint-pair]
+  (:require [eacl.caveats.schema :as caveat-schema]
+            [eacl.relationships.qualifier :as qualifier]
+            [eacl.relationships.endpoint-pair :as endpoint-pair]
             [eacl.relationships.storage :as storage]))
 
 (def function-ident :eacl.fn/retractEntity)
-(def function-version 4)
+(def function-version 5)
 (def function-doc-prefix "EACL safe entity retraction function")
 (def supported-modes #{:named :direct :unsupported})
 
 (def relation-version-attribute :eacl/relation-version)
 (def current-transaction-value :db/current-tx)
+(def qualified-control-attributes
+  "Owned facts also identify partially populated qualified control records."
+  (into caveat-schema/caveat-attributes qualifier/attributes))
+(def qualified-schema-idents
+  (into #{} (map :db/ident) caveat-schema/datom-schema))
 (def ^:no-doc empty-plan
   {:peer-retractions [] :relation-ids [] :local-half-count 0})
 
@@ -63,11 +70,14 @@
   Safe retraction is an object operation. Definitions and installed EACL
   functions must be changed through their dedicated writers so the schema
   generation remains authoritative."
-  [{:keys [db-ident eacl-id relation-name permission-name schema-string]}]
+  [{:keys [db-ident eacl-id relation-name permission-name schema-string
+           qualified-control?]}]
   (or (= "schema-string" eacl-id)
       (some? relation-name)
       (some? permission-name)
       (some? schema-string)
+      (true? qualified-control?)
+      (contains? qualified-schema-idents db-ident)
       (and (keyword? db-ident)
            (contains? #{"eacl" "eacl.fn"} (namespace db-ident)))))
 
@@ -80,6 +90,9 @@
                        (when
                         (protected-control-entity?
                          {:db-ident (:db/ident native)
+                          :qualified-control?
+                          (boolean (some #(some? (% native))
+                                         qualified-control-attributes))
                           :eacl-id (:eacl/id native)
                           :schema-string (:eacl/schema-string native)
                           :relation-name (:eacl.relation/relation-name native)

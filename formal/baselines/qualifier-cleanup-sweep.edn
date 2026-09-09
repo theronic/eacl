@@ -1,0 +1,7 @@
+{:description "Authored before timing/allocation sampling; caller-thread allocation excludes native writer threads and backend resident snapshots."
+ :orphans [16 64 128]
+ :active 5
+ :batch-size 2
+ :max-elapsed-ms 30000
+ :max-caller-allocated-bytes 268435456
+ :global-streams 6}

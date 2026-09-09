@@ -273,6 +273,38 @@ authorization hot path. Corrupt data blocks collection. An exact native head
 guard rejects any write after the scan, including a concurrent attachment;
 retry by taking a fresh snapshot. Collection never supplies expiration semantics.
 
+`eacl.relationships.qualifier-integrity/cleanup-sweep!` drains multiple batches
+using one global capture. Pass a native staged writer from Datomic, DataScript,
+or a direct Datahike writer, with optional `:batch-size`, `:max-qualifiers`,
+`:max-capture-units`, and a zero-argument `:cancelled?` predicate. Datalevin
+continues to support the single-batch operation; its leased snapshot and commit
+result boundary is not certified for sweeps.
+
+Repeated single-batch calls rescan active data and remaining orphans each time.
+A quiescent sweep scans O(A+Q) data, sorts O(Q log Q), and makes O(Q/B) commits,
+where A is active scanned data, Q is captured qualifier data, and B is batch size.
+Each commit still contains an exact head guard and one fact assertion and
+retraction per candidate. Operation-count contracts verify this work bound;
+these are not latency improvement claims.
+
+Capture retains O(A+Q) proof data; draining retains O(Q) candidate facts and ids.
+The defaults limit capture to 100,000 distinct qualifiers and 2,000,000 data
+cells/string code units. Accounting occurs on native streams before building
+proof entity maps and fact vectors. These are data-volume limits, not a byte
+limit on backend snapshots, native index buffers, or the entire JVM heap.
+Exceeding a limit fails before any cleanup commits.
+
+The sweep certificate advances only from its own transaction's `db-before` and
+`db-after` evidence. A foreign write, source change, failed guard, or absent
+commit result stops the sweep. The result reports `:status` (`:complete`,
+`:cancelled`, or `:restart-required`), confirmed `:qualifiers`,
+`:committed-batches`, and `:remaining-count`. A missing transaction response may
+mean the last batch committed; that batch is unconfirmed and is not counted.
+Restart by calling the sweep again for a fresh capture. Successful earlier
+batches remain committed; no serialized continuation or automatic rebasing is
+supported. Source/lifecycle resets retain the backend's existing quiescence and
+lifecycle-rotation requirements.
+
 Install the additive Caveat and qualifier attributes through each backend's
 explicit schema installation/preparation API before using staged persistence.
 Existing storage migration remains explicit; startup does not scan or migrate

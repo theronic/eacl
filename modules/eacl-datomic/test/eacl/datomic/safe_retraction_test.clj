@@ -2,6 +2,8 @@
   (:require [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
             [eacl.contract-support :as contract]
+            [eacl.authorization.qualification-test :as qualification]
+            [eacl.relationships.safe-retraction-contract :as control-contract]
             [eacl.core :as eacl]
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
@@ -261,3 +263,17 @@
          client
          (mapv (fn [[u a]] (eacl/->Relationship u :owner a)) unrelated)))
       (is (= before (expansion-size))))))
+
+(deftest qualified-control-roles-are-protected-in-the-installed-body-test
+  (with-mem-conn [conn (conj schema/v8-schema
+                            {:db/ident :test/component :db/valueType :db.type/ref
+                             :db/cardinality :db.cardinality/one :db/isComponent true})]
+    (safe-datomic/install! conn)
+    (control-contract/exercise!
+     {:client (core/make-client conn {:clock (constantly 99)
+                                     :caveat-evaluator (qualification/portable-evaluator (atom 0))})
+      :snapshot #(d/db conn) :transact! #(deref (d/transact conn %))
+      :entid d/entid :rows #(d/datoms %1 :aevt %2)
+      :facts (fn [db eid] (mapv (fn [datom] [(d/ident db (:a datom)) (:v datom)]) (d/datoms db :eavt eid)))
+      :revision d/basis-t
+      :retract! #(deref (d/transact conn (safe-datomic/retract-entity-tx-data %)))})))

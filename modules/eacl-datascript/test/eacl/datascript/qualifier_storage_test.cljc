@@ -1,5 +1,7 @@
 (ns eacl.datascript.qualifier-storage-test
-  (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is]]
+  (:require [eacl.datascript.qualifiers :as qualifiers]
+            [eacl.relationships.qualifier-sweep-contract :as sweep]
+            [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is]]
             [datascript.core :as d]
             [eacl.datascript.core :as api]
             [eacl.datascript.impl :as impl]
@@ -58,3 +60,14 @@
         :evidence #(admission/evidence (d/db conn))
         :transact! #(d/transact! conn %)})
       (finally nil))))
+
+(defn with-sweep-fixture [f]
+  (let [conn (schema/create-conn)]
+    (f {:client (api/make-client conn {}) :snapshot #(d/db conn)
+        :transact! #(d/transact! conn %) :entid d/entid
+        :writer #(qualifiers/writer conn) :rows #(d/datoms %1 :aevt %2)})))
+
+(deftest cleanup-sweep-native-work-and-transition-contract
+  (sweep/exercise-work! with-sweep-fixture)
+  (sweep/exercise-hostile! with-sweep-fixture)
+  (sweep/exercise-budgets! with-sweep-fixture))

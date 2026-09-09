@@ -38,6 +38,9 @@
   {:backend :datahike :entity entity :facts facts :rows db/relationship-identity-datoms
    :source backend/database-source-scope :generation schema/current-schema-generation
    :all-rows (fn [database attribute] (when (db/entid database attribute) (d/datoms database {:index :aevt :components [attribute]})))
+   :fact-rows (fn [database eid] (d/datoms database {:index :eavt :components [eid]}))
+   :attribute-ident (fn [database a] (if (keyword? a) a (:db/ident (d/entity database a))))
+   :cleanup-token (juxt :schema :config)
    :relation-version-attribute :eacl/relation-version
    :revision :max-tx
    :head-guard (fn [database]
@@ -74,7 +77,10 @@
    (merge (planner-api)
           (let [scope (backend/connection-source-scope conn)]
             {:source #(or (backend/database-source-scope %) scope)})
-          {:snapshot #(d/db conn) :transact! #(d/transact conn %)})))
+          {:cleanup-commit-snapshots (fn [report]
+                                      (when (and (:db-before report) (:db-after report))
+                                        [(:db-before report) (:db-after report)]))
+           :snapshot #(d/db conn) :transact! #(d/transact conn %)})))
 
 (defn publication-capability [database]
   (when (db/direct-writer? database)

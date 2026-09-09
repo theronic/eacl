@@ -34,6 +34,9 @@
   {:backend :datomic :entity entity :facts facts :rows db/relationship-identity-datoms
    :source (fn [database] (str (.id ^datomic.Database database))) :generation generation
    :all-rows (fn [database attribute] (when (d/entid database attribute) (d/datoms database :aevt attribute)))
+   :fact-rows (fn [database eid] (d/datoms database :eavt eid))
+   :attribute-ident (fn [database a] (d/ident database a))
+   :cleanup-token (constantly nil)
    :relation-version-attribute :eacl/relation-version
    :revision d/basis-t
    :head-guard (fn [database] [:eacl.fn/assert-storage-basis (d/basis-t database)])
@@ -60,7 +63,10 @@
   (when-not (d/entid (d/db conn) :eacl.fn/assert-qualifier-facts) (staged/error! :schema-unprepared))
   (staged/native-writer
    (merge (planner-api)
-          {:snapshot #(d/db conn)
+          {:cleanup-commit-snapshots (fn [report]
+                                      (when (and (:db-before report) (:db-after report))
+                                        [(:db-before report) (:db-after report)]))
+           :snapshot #(d/db conn)
            :generation-after-reference #(generation (:db-after %))
            :transact! #(deref (d/transact conn %))})))
 
