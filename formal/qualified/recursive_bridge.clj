@@ -52,9 +52,12 @@
 
 (defn semantics [graph scenario time]
   (let [conditional (bridge/production-for-worlds #{1 3})
-        base (if (= scenario :grant) conditional
-                 (evidence/combine :exclusion conditional
-                                   (if (< time 100) (evidence/with-certificate true 100 true) false)))]
+        base (case scenario
+               :definite-grant true
+               :grant conditional
+               :expiring-ban
+               (evidence/combine :exclusion conditional
+                                 (if (< time 100) (evidence/with-certificate true 100 true) false)))]
     {:base {0 base 1 false 2 false}
      :via (into {} (for [target (range 3) source (range 3)]
                      [[target source] (via-value graph time target source)]))}))
@@ -70,7 +73,7 @@
 
 (deftest qualified-positive-scc-refinement-and-temporal-stability
   (let [{:keys [qids] :as options} (fixture)]
-    (doseq [graph (range 512) scenario [:grant :expiring-ban]]
+    (doseq [graph (range 512) scenario [:grant :definite-grant :expiring-ban]]
       (let [semantic (semantics graph scenario 99)
             expected (oracle semantic)
             request (q-fixtures/request)

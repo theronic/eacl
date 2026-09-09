@@ -6,6 +6,7 @@
             [eacl.datomic.db :as db]
             [eacl.datomic.schema :as schema]
             [eacl.datomic.safe-retraction :as safe]
+            [eacl.datomic.storage :as admission]
             [eacl.relationships.storage-contract :as contract]))
 
 (defn direct-probe [& args]
@@ -30,4 +31,16 @@
         :transact! #(deref (d/transact conn %)) :entid d/entid
         :stamp #(vector :db/add % :eacl/relation-version "datomic.tx")
         :rows #(d/datoms %1 :aevt %2) :safe-retract! #(deref (d/transact conn (safe/retract-entity-tx-data %)))})
+      (finally (d/release conn) (d/delete-database uri)))))
+
+(deftest bootstrap-is-idempotent-and-validates-completed-storage-test
+  (let [uri (str "datomic:mem://bootstrap-" (random-uuid))
+        _ (d/create-database uri)
+        conn (d/connect uri)
+        _ (schema/install! conn)]
+    (try
+      (contract/exercise-bootstrap!
+       {:bootstrap! #(admission/bootstrap! conn)
+        :evidence #(admission/evidence (d/db conn))
+        :transact! #(deref (d/transact conn %))})
       (finally (d/release conn) (d/delete-database uri)))))

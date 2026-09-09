@@ -5,6 +5,7 @@
             [eacl.datascript.impl :as impl]
             [eacl.datascript.schema :as schema]
             [eacl.datascript.safe-retraction :as safe]
+            [eacl.datascript.storage :as admission]
             [eacl.relationships.storage-contract :as contract]))
 
 (defn direct-probe [& args]
@@ -47,4 +48,13 @@
         :transact! #(d/transact! conn %) :entid d/entid
         :stamp #(vector :db/add % :eacl/relation-version :db/current-tx)
         :rows #(d/datoms %1 :aevt %2) :safe-retract! #(d/transact! conn (safe/direct-retract-entity-tx-data %))})
+      (finally nil))))
+
+(deftest bootstrap-is-idempotent-and-validates-completed-storage-test
+  (let [conn (schema/create-conn)]
+    (try
+      (contract/exercise-bootstrap!
+       {:bootstrap! #(admission/bootstrap! conn)
+        :evidence #(admission/evidence (d/db conn))
+        :transact! #(d/transact! conn %)})
       (finally nil))))

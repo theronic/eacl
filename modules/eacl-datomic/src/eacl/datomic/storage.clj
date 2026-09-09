@@ -49,9 +49,8 @@
   (let [db (d/db conn)
         {:keys [version state legacy? v6? schema-compatible?] :as found} (evidence db)]
     (cond
-      (and (= 9 version) (= :complete (:phase state))) nil
       (and (nil? version) (nil? state) (not legacy?) (not v6?) schema-compatible?
            (not-any? #(present? db %) storage/attributes))
       @(d/transact conn (into [[:eacl.fn/assert-storage-basis (d/basis-t db)]]
                               (upgrade/bootstrap-tx (inc (d/basis-t db)))))
-      :else (upgrade/assert-compatible! found))))
+      :else (do (upgrade/assert-compatible! found) nil))))

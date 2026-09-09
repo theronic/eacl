@@ -5,6 +5,11 @@ Storage 8 adds a fifth, nullable qualifier reference to each endpoint tuple.
 V8 supports [Caveats and expiring Relationships](caveats.md). Complete this
 migration and upgrade every serving Peer before allowing qualified writes.
 
+Fresh schema initialization creates a completed storage marker. Repeating the
+explicit bootstrap on compatible v8 storage is idempotent. Completion alone
+does not establish compatibility: bootstrap still validates the storage version,
+format, tuple schema, and absence of legacy data before accepting an existing store.
+
 Every logical Relationship remains exactly two datoms:
 
 ```clojure

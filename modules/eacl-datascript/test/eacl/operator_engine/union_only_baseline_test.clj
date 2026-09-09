@@ -179,7 +179,7 @@
                   (cond-> captured orchestration/*qualified-authorization-enabled?*
                           (assoc :stale-basis legacy-stale))))))))))
 
-(defn- storage-nine-baseline
+(defn- current-cursor-baseline
   "The frozen fixture predates one bootstrap transaction and the explicit ABI
   bumps. Translate precisely those fields; retain every behavioral assertion."
   [snapshot]
@@ -195,7 +195,6 @@
                                                   #uuid "4cd6f298-45ef-591c-9af0-0fd57b6cf79f")
                                         (update :start-edge #(-> % (update :version inc) (update :order-abi inc)))
                                         (update :end-edge #(-> % (update :version inc) (update :order-abi inc)))
-                                        (update-in [:cursor-common :adapter-fingerprint :adapter-version] inc)
                                         (update-in [:cursor-common :native-revision :revision] inc)
                                         (update-in [:cursor-common :frame :schema-generation] inc)
                                         (update-in [:cursor-common :frame :dependency-stamp] inc)
@@ -203,7 +202,7 @@
                                                    #(mapv (fn [[eid revision]] [eid (inc revision)]) %)))]))])))))
 
 (deftest decoded-union-only-cursor-semantics-test
-  (let [expected (storage-nine-baseline (read-cursor-snapshot))
+  (let [expected (current-cursor-baseline (read-cursor-snapshot))
         actual (capture-cursor-payloads)
         comparison
         (fn [snapshot]

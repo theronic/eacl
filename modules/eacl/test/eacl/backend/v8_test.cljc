@@ -258,6 +258,12 @@
 (deftest validated-v8-adapter-test
   (let [adapter (test-adapter)]
     (is (backend/adapter? adapter))
+    (is (= 8 (::backend/version adapter)
+           (:adapter-version (::backend/fingerprint adapter))
+           (:engine-version engine/derived-schema-cache-abi)
+           (:backend-adapter-version engine/derived-schema-cache-abi)))
+    (is (not (backend/adapter? (assoc adapter ::backend/version (inc backend/adapter-version)))))
+    (is (not (backend/adapter? (dissoc adapter ::backend/traversal-execution))))
     (is (= :test (backend/backend-id adapter)))
     (is (backend/supports? adapter :consistency :fully-consistent))
     (is (not (backend/supports? adapter :consistency :at-exact-snapshot)))

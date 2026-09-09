@@ -82,7 +82,7 @@ after validity would otherwise force another persisted storage break.
   persistence, relationship mutation and reads, permission APIs, object
   cleanup, integrity reports, caches, cursors, formal models, and release
   documentation.
-- Changes the persisted relationship storage ABI to version 9 and invalidates
+- Changes the persisted relationship storage ABI to version 8 and invalidates
   old cache snapshots, cursor tokens, and populated databases containing v7
   relationship values.
 - Ordinary and validity-only relationships remain exactly two authoritative

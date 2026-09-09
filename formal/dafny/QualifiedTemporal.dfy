@@ -50,6 +50,27 @@ module QualifiedTemporal {
              if needed == 1 then a.complete else if needed == 2 then b.complete else a.complete && b.complete)
   }
 
+  // A positive worklist accumulates derivations. Replacing an established
+  // witness with the latest cyclic derivation can oscillate between deadlines
+  // even after every node's Boolean membership has stabilized.
+  lemma AccumulationRetainsGroundedGrant(universe: set<nat>, prior: Evidence, derived: Evidence)
+    requires prior.value == Value(universe) && prior.complete
+    requires derived.value.Value? && derived.value.worlds <= universe
+    ensures Combine(universe, Union, prior, derived) == prior
+  {}
+
+  lemma AccumulationPreservesPositiveFacts(universe: set<nat>, prior: Evidence, derived: Evidence)
+    requires prior.value.Value? && derived.value.Value?
+    ensures prior.value.worlds <= Combine(universe, Union, prior, derived).value.worlds
+    ensures derived.value.worlds <= Combine(universe, Union, prior, derived).value.worlds
+  {}
+
+  lemma AccumulationRetainsFaults(universe: set<nat>, prior: Evidence, derived: Evidence)
+    requires prior.value.Fault? || derived.value.Fault?
+    ensures Combine(universe, Union, prior, derived).value.Fault?
+    ensures Errors(prior.value) + Errors(derived.value) == Combine(universe, Union, prior, derived).value.reasons
+  {}
+
   lemma MeetIsIntersection(t: int, a: Deadline, b: Deadline)
     ensures Before(t, Meet(a, b)) <==> Before(t, a) && Before(t, b)
   {}

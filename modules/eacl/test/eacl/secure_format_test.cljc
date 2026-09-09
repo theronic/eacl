@@ -1092,6 +1092,26 @@
           (str "ordering differs for " left " and " right)))
     (is (= (sort reference corpus) (sort comparator corpus)))))
 
+(deftest compiler-tree-digests-preserve-structure-without-whole-value-wire-limits
+  (let [digest #(secure/canonical-tree-digest "compiler-tree-test" %)
+        values [nil false true 0 1 "0" :map :sequence
+                [] {} #{} [nil] [[]] [[:map 0]] [:map 0]
+                [0 [1 2]] [[0 1] 2] [[0] [1 2]]
+                {:a 1 :b 2} {:a 2 :b 1} #{1 2} [1 2]]]
+    (is (= (count values) (count (set (map digest values)))))
+    (is (= (digest (array-map :a [1 2] :b #{3 4}))
+           (digest (array-map :b (sorted-set 4 3) :a '(1 2)))))
+    (is (not= (digest {:a 1})
+              (secure/canonical-tree-digest "another-domain" {:a 1})))
+    (let [large (vec (range 20000))]
+      (is (string? (digest large)))
+      (is (not= (digest large) (digest (assoc large 19999 -1))))
+      ;; Internal compiler aggregates do not widen the public wire boundary.
+      (is (= :too-many-entries
+             (:reason (try (secure/encode-canonical large) nil
+                           (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+                             (ex-data error)))))))))
+
 (deftest utf8-size-matches-every-bmp-scalar-and-surrogate-boundaries
   (doseq [code (range 65536)
           :when (or (< code 0xD800) (> code 0xDFFF))]

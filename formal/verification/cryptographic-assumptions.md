@@ -53,6 +53,10 @@ representation, and distinct accepted values do not share that representation.
   escapes without using a host collection printer.
 - `eacl.secure-format/canonical-comparator` orders maps and sets by that same
   portable representation.
+- `eacl.secure-format/canonical-tree-digest` authenticates admitted compiler
+  aggregates as length-framed records with container tags and arities. It
+  preserves canonical map/set ordering without imposing a wire-envelope limit
+  on an entire plan; external wire admission bounds remain unchanged.
 - `eacl.secure-format/decode-canonical` normalizes host-reader failures and
   rejects unsupported values, duplicate fields, unknown tags, unknown
   top-level fields, unsafe integers, and hostile bounds.
@@ -63,6 +67,9 @@ representation, and distinct accepted values do not share that representation.
   string escapes, exact numeric boundaries, duplicate fields, tagged forms,
   depth, encoded size, and field allowlists in CLJ and CLJS.
 - `canonical-records-digest-test` covers record order and content stability.
+- `compiler-tree-digests-preserve-structure-without-whole-value-wire-limits`
+  covers container distinctions, grouping, canonical ordering, domain
+  separation, and changes near the end of a large compiler aggregate.
 - `authenticated-cross-runtime-vectors-test` covers byte-identical CLJ/CLJS
   cursor and cache outputs and current-format JVM cursor readability.
 - Counterexamples `EACL-FORMAL-006` and `EACL-FORMAL-007` retain the two
