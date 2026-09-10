@@ -60,28 +60,37 @@ jobs:
         with:
           cli: latest
 
-      - name: Wait for exact-SHA Tests and Formal verification checks
+      - name: Wait for this branch's exact-SHA Tests and Formal verification checks
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p target/release
-          deadline=$((SECONDS + 5400))
-          while [ "$SECONDS" -lt "$deadline" ]; do
+          # GitHub attaches every check run to its commit, so the release
+          # commit can also carry pull-request runs (which verified a merge
+          # commit) and the runs of other branches pushed to the same commit.
+          # Only this branch's own push-event workflow runs are release
+          # evidence; the guard correlates check runs with them by check suite.
+          fetch_listings() {
+            gh api \
+              -H 'Accept: application/vnd.github+json' \
+              "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&event=push&branch=$GITHUB_REF_NAME&per_page=100" \
+              > target/release/workflow-runs.json
             gh api \
               -H 'Accept: application/vnd.github+json' \
               "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?per_page=100" \
               > target/release/check-runs.json
-            status="$(clojure -M:release-guard checks target/release/check-runs.json false)"
+          }
+          deadline=$((SECONDS + 5400))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            fetch_listings
+            status="$(clojure -M:release-guard checks target/release/workflow-runs.json target/release/check-runs.json false)"
             if [ "$status" = ready ]; then
               exit 0
             fi
             sleep 30
           done
-          gh api \
-            -H 'Accept: application/vnd.github+json' \
-            "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?per_page=100" \
-            > target/release/check-runs.json
-          clojure -M:release-guard checks target/release/check-runs.json true
+          fetch_listings
+          clojure -M:release-guard checks target/release/workflow-runs.json target/release/check-runs.json true
 
   deploy:
     if: >-
@@ -138,7 +147,7 @@ jobs:
           bin/formal build-java
           bin/formal browser-bundle
 
-      - name: Build, audit, cold-smoke, and deploy the four artifacts
+      - name: Build, audit, cold-smoke, and deploy the release set
         env:
           EACL_VERSION: ${{ needs.provenance.outputs.version }}
           CLOJARS_USERNAME: ${{ secrets.CLOJARS_USERNAME }}
