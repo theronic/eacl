@@ -52,10 +52,47 @@
     (assert-branch-head! context)
     version))
 
+(defn branch-name
+  "Branch name of a refs/heads/* ref. Tags and pull-request refs are rejected
+  because required checks are correlated with branch push runs only."
+  [ref]
+  (let [[_ branch] (re-matches #"refs/heads/(.+)" (str ref))]
+    (when (string/blank? branch)
+      (reject! "Release checks are scoped to a branch ref."
+               :eacl.release/invalid-ref-type
+               {:ref ref}))
+    branch))
+
+(defn release-check-suites
+  "Check-suite ids of the push-event workflow runs for exactly this branch and
+  commit. GitHub attaches every check run to its commit, so one SHA also
+  carries pull-request runs (which verify a synthetic merge commit rather than
+  the pushed tree) and the runs of any other branch pushed to the same commit.
+  Only the release branch's own push runs verify the release commit as pushed,
+  and only their check suites are admitted as release evidence."
+  [{:keys [sha branch]} workflow-runs]
+  (into #{}
+        (comp (filter (fn [{:keys [event head_branch head_sha]}]
+                        (and (= "push" event)
+                             (= branch head_branch)
+                             (= sha head_sha))))
+              (map :check_suite_id)
+              (remove nil?))
+        workflow-runs))
+
 (defn evaluate-checks
-  "Return :ready or :pending; reject ambiguity, wrong SHA, or bad conclusions."
-  [sha check-runs final?]
-  (let [relevant (filter #(contains? required-checks (:name %)) check-runs)
+  "Return :ready or :pending; reject ambiguity, wrong SHA, or bad conclusions.
+  Only check runs that belong to the release branch's push-event workflow runs
+  for this commit are judged; results the same commit carries from other refs
+  or events are ignored rather than treated as ambiguous duplicates."
+  [{:keys [sha] :as context} workflow-runs check-runs final?]
+  (let [suites (release-check-suites context workflow-runs)
+        relevant
+        (filter
+         (fn [{:keys [name check_suite]}]
+           (and (contains? required-checks name)
+                (contains? suites (:id check_suite))))
+         check-runs)
         by-name (group-by :name relevant)
         duplicates
         (vec
@@ -94,6 +131,18 @@
                  {:checks (vec (sort pending))})
         :else :pending))))
 
+(defn listing
+  "Items of one GitHub listing payload. A page that does not hold every item
+  GitHub counted is rejected: the gate must never judge a partial view."
+  [{:keys [total_count] :as payload} key]
+  (let [items (vec (get payload key))]
+    (when (and (integer? total_count)
+               (not= total_count (count items)))
+      (reject! "GitHub listing was truncated to one page."
+               :eacl.release/truncated-listing
+               {:key key :total-count total_count :returned (count items)}))
+    items))
+
 (defn- environment-context
   []
   {:event-name (System/getenv "GITHUB_EVENT_NAME")
@@ -103,22 +152,25 @@
    :branch-sha (System/getenv "EACL_BRANCH_SHA")
    :supplied-version (System/getenv "EACL_VERSION")})
 
-(defn- read-check-runs
-  [path]
+(defn- read-listing
+  [path key]
   (let [read-json (requiring-resolve 'clojure.data.json/read-str)]
-    (:check_runs (read-json (slurp path) :key-fn keyword))))
+    (listing (read-json (slurp path) :key-fn keyword) key)))
 
 (defn -main
-  [& [operation argument final-argument]]
+  [& [operation & arguments]]
   (case operation
     "ordinary" (println (ordinary-version (environment-context)))
     "checks"
-    (println
-     (name
-      (evaluate-checks
-       (System/getenv "GITHUB_SHA")
-       (read-check-runs argument)
-       (= "true" final-argument))))
+    (let [[workflow-runs-path check-runs-path final-argument] arguments
+          {:keys [sha ref]} (environment-context)]
+      (println
+       (name
+        (evaluate-checks
+         {:sha sha :branch (branch-name ref)}
+         (read-listing workflow-runs-path :workflow_runs)
+         (read-listing check-runs-path :check_runs)
+         (= "true" final-argument)))))
     (reject! "Unknown EACL release-guard operation."
              :eacl.release/unknown-guard-operation
              {:operation operation})))
