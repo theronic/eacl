@@ -3,37 +3,40 @@
             [clojure.test :refer [deftest is testing]]
             [eacl.release-guard :as guard]))
 
-(def ordinary-context
+(def tag-context
   {:event-name "push"
-   :ref "refs/heads/v8.1.0"
-   :ref-type "branch"
-   :sha "abc123"
-   :branch-sha "abc123"
-   :supplied-version nil})
+   :ref "refs/tags/v8.0.0-RC-2026-09-12"
+   :ref-type "tag"})
 
-(deftest versioned-branch-derives-an-immutable-version
-  (is (= "8.1.0" (guard/ordinary-version ordinary-context)))
-  (is (= "8.0.0-SNAPSHOT"
-         (guard/ordinary-version
-          (assoc ordinary-context :ref "refs/heads/v8.0.0-SNAPSHOT"))))
-  (doseq [context
-          [(assoc ordinary-context :ref "refs/heads/main")
-           (assoc ordinary-context :ref "refs/heads/release/v8.0")
-           (assoc ordinary-context :ref "refs/heads/feature/v8.1.0")
-           (assoc ordinary-context :ref "refs/heads/v8.0-SNAPSHOT")
-           (assoc ordinary-context :ref "refs/tags/v8.1.0"
-                  :ref-type "tag")
-           (assoc ordinary-context :event-name "pull_request")
-           (assoc ordinary-context :supplied-version "8.1.0")
-           (assoc ordinary-context :branch-sha "newer")]]
-    (is (thrown? clojure.lang.ExceptionInfo
-                 (guard/ordinary-version context)))))
+(deftest only-explicit-version-tags-can-release
+  (doseq [[tag version] [["v8.0.0" "8.0.0"]
+                         ["v8.0.0-RC-2026-09-12" "8.0.0-RC-2026-09-12"]
+                         ["v8.0.0-SNAPSHOT-2026-09-12" "8.0.0-SNAPSHOT"]
+                         ["v8.0.0-SNAPSHOT-2026-09-12T141530Z" "8.0.0-SNAPSHOT"]]
+          event ["push" "workflow_dispatch"]]
+    (is (= {:version version :branch "v8.0.0-SNAPSHOT"}
+           (guard/tagged-release
+            (assoc tag-context :ref (str "refs/tags/" tag) :event-name event)))))
+  (doseq [context [(assoc tag-context :ref "refs/heads/main" :ref-type "branch")
+                   (assoc tag-context :ref "refs/heads/v8.0.0-SNAPSHOT" :ref-type "branch")
+                   (assoc tag-context :ref "refs/heads/feature/example" :ref-type "branch")
+                   (assoc tag-context :ref "refs/tags/v8.0.0-SNAPSHOT")
+                   (assoc tag-context :ref "refs/tags/v8.0-SNAPSHOT")
+                   (assoc tag-context :ref "refs/tags/v8.0.0-RC-2026-09-12/evil")
+                   (assoc tag-context :event-name "pull_request")
+                   (assoc tag-context :supplied-version "8.0.0")
+                   (assoc tag-context :ref nil)]]
+    (is (thrown? clojure.lang.ExceptionInfo (guard/tagged-release context)))))
 
-(deftest checks-are-scoped-to-a-branch-ref
-  (is (= "v8.1.0" (guard/branch-name "refs/heads/v8.1.0")))
-  (is (= "release/v8.0" (guard/branch-name "refs/heads/release/v8.0")))
-  (doseq [ref ["refs/tags/v8.1.0" "refs/pull/189/merge" "" nil]]
-    (is (thrown? clojure.lang.ExceptionInfo (guard/branch-name ref)))))
+(deftest tag-must-be-merged-and-match-the-current-release-tree
+  (let [context {:sha "green-pr-head" :tag-sha "green-pr-head"
+                 :source-tree "identical-tree" :branch-tree "identical-tree"
+                 :ancestor? true}]
+    (is (true? (guard/assert-tag-provenance! context)))
+    (doseq [[key value] [[:tag-sha "moved-tag"] [:source-tree nil]
+                         [:branch-tree "different-code"] [:ancestor? false] [:sha nil]]]
+      (is (thrown? clojure.lang.ExceptionInfo
+                   (guard/assert-tag-provenance! (assoc context key value)))))))
 
 (def check-context
   {:sha "release-sha" :branch "v8.1.0"})
@@ -162,12 +165,51 @@
                (guard/listing {:total_count 3 :check_runs [{:id 1} {:id 2}]}
                               :check_runs))))
 
-(deftest release-workflow-correlates-branch-push-runs
-  (let [workflow (slurp ".github/workflows/release.yml")]
-    (is (string/includes?
-         workflow
-         "actions/runs?head_sha=$GITHUB_SHA&event=push&branch=$GITHUB_REF_NAME"))
-    (is (string/includes? workflow "commits/$GITHUB_SHA/check-runs"))
-    (is (string/includes?
-         workflow
-         "clojure -M:release-guard checks target/release/workflow-runs.json target/release/check-runs.json"))))
+(def tagged-workflow-runs
+  (mapv (fn [run path id]
+          (assoc run :path path :id id :status "completed" :conclusion "success"))
+        release-workflow-runs
+        [".github/workflows/test.yml" ".github/workflows/formal.yml"]
+        [101 102]))
+
+(deftest tag-publication-reuses-exact-source-ci-and-fails-fast
+  (let [checks (successful-checks "release-sha")]
+    (is (= :ready (guard/evaluate-tag-checks "release-sha" tagged-workflow-runs checks)))
+    (testing "a green PR branch push can be reused after its head is merged"
+      (is (= :ready (guard/evaluate-tag-checks
+                     "release-sha"
+                     (mapv #(assoc % :head_branch "feature/release") tagged-workflow-runs)
+                     checks))))
+    (doseq [runs [(pop tagged-workflow-runs)
+                  (mapv #(assoc % :head_sha "older-sha") tagged-workflow-runs)
+                  (mapv #(assoc % :event "pull_request") tagged-workflow-runs)
+                  (assoc-in tagged-workflow-runs [0 :path] ".github/workflows/pretend.yml")
+                  (assoc-in tagged-workflow-runs [0 :status] "in_progress")
+                  (assoc-in tagged-workflow-runs [0 :conclusion] "failure")
+                  (conj tagged-workflow-runs
+                        (assoc (first tagged-workflow-runs) :id 200 :conclusion "failure"))]]
+      (is (thrown? clojure.lang.ExceptionInfo
+                   (guard/evaluate-tag-checks "release-sha" runs checks))))
+    (testing "an older failed attempt does not poison a newer successful run"
+      (is (= :ready (guard/evaluate-tag-checks
+                     "release-sha"
+                     (conj tagged-workflow-runs
+                           (assoc (first tagged-workflow-runs)
+                                  :id 1 :check_suite_id 99 :conclusion "failure"))
+                     (conj checks (check-run "test" "release-sha" 99 "completed" "failure"))))))
+    (testing "required jobs must still succeed even if a workflow reports success"
+      (is (thrown? clojure.lang.ExceptionInfo
+                   (guard/evaluate-tag-checks
+                    "release-sha" tagged-workflow-runs
+                    (assoc-in checks [0 :conclusion] "skipped")))))))
+
+(deftest release-workflow-is-tagged-and-reuses-tested-runtime-artifacts
+  (let [workflow (slurp ".github/workflows/release.yml")
+        preflight (slurp "bin/release-preflight")]
+    (is (string/includes? workflow "tags: ['v[0-9]*']"))
+    (is (not (string/includes? workflow "branches:")))
+    (is (string/includes? workflow "environment: clojars"))
+    (is (string/includes? workflow "run-id: ${{ steps.guard.outputs.tests-run-id }}"))
+    (is (not (string/includes? workflow "bin/formal")))
+    (is (string/includes? preflight "actions/runs?head_sha=$GITHUB_SHA&event=push"))
+    (is (string/includes? preflight "clojure -M:release-guard tag-checks"))))

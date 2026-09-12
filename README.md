@@ -135,7 +135,7 @@ This README is too long & too technical, so I am working to simplify it and brea
 
 > [!WARNING]
 > EACL is used in production, but under active development.
-> This branch targets `8.0.0-SNAPSHOT`. Build it locally until the coordinated release is published; see [Clojars](https://clojars.org/dev.eacl/) for published versions.
+> This branch targets `8.0.0-SNAPSHOT`; see [Clojars](https://clojars.org/dev.eacl/eacl) for published versions and [Publishing EACL](docs/publishing.md) for the version-tag release process.
 
 ## Real-Time UI Maintenance
 
