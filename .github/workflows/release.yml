@@ -2,8 +2,8 @@ name: Clojars release
 
 on:
   push:
-    branches:
-      - 'v*'
+    tags: ['v[0-9]*']
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -16,136 +16,71 @@ concurrency:
 jobs:
   provenance:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.guard.outputs.version }}
+      tests-run-id: ${{ steps.guard.outputs.tests-run-id }}
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
-      - name: Set up Temurin JDK 25
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '25'
 
-      - name: Set up Clojure CLI
-        uses: DeLaGuardo/setup-clojure@13.6.1
+      - uses: DeLaGuardo/setup-clojure@13.6.1
         with:
           cli: latest
 
-      - name: Derive and guard release version
+      - name: Require a merged version tag and existing green source CI
         id: guard
-        run: |
-          branch_sha="$(git ls-remote origin "$GITHUB_REF" | cut -f1)"
-          test -n "$branch_sha"
-          version="$(EACL_BRANCH_SHA="$branch_sha" clojure -M:release-guard ordinary)"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-  required_checks:
-    needs: provenance
-    runs-on: ubuntu-latest
-    timeout-minutes: 95
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Temurin JDK 25
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '25'
-
-      - name: Set up Clojure CLI
-        uses: DeLaGuardo/setup-clojure@13.6.1
-        with:
-          cli: latest
-
-      - name: Wait for this branch's exact-SHA Tests and Formal verification checks
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p target/release
-          # GitHub attaches every check run to its commit, so the release
-          # commit can also carry pull-request runs (which verified a merge
-          # commit) and the runs of other branches pushed to the same commit.
-          # Only this branch's own push-event workflow runs are release
-          # evidence; the guard correlates check runs with them by check suite.
-          fetch_listings() {
-            gh api \
-              -H 'Accept: application/vnd.github+json' \
-              "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&event=push&branch=$GITHUB_REF_NAME&per_page=100" \
-              > target/release/workflow-runs.json
-            gh api \
-              -H 'Accept: application/vnd.github+json' \
-              "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?per_page=100" \
-              > target/release/check-runs.json
-          }
-          deadline=$((SECONDS + 5400))
-          while [ "$SECONDS" -lt "$deadline" ]; do
-            fetch_listings
-            status="$(clojure -M:release-guard checks target/release/workflow-runs.json target/release/check-runs.json false)"
-            if [ "$status" = ready ]; then
-              exit 0
-            fi
-            sleep 30
-          done
-          fetch_listings
-          clojure -M:release-guard checks target/release/workflow-runs.json target/release/check-runs.json true
+        run: bash bin/release-preflight
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-ci-provenance
+          path: target/release
 
   deploy:
-    if: >-
-      always() &&
-      needs.provenance.result == 'success' &&
-      needs.required_checks.result == 'success'
-    needs:
-      - provenance
-      - required_checks
+    needs: provenance
     runs-on: ubuntu-22.04
-    timeout-minutes: 120
+    timeout-minutes: 60
     environment: clojars
     env:
       EACL_JAVA_RELEASE: '25'
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
-      - name: Set up Temurin JDK 25
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '25'
 
-      - name: Set up Clojure CLI
-        uses: DeLaGuardo/setup-clojure@13.6.1
+      - uses: DeLaGuardo/setup-clojure@13.6.1
         with:
           cli: latest
 
-      - name: Set up Node
-        uses: actions/setup-node@v4
+      - name: Recheck tag, release branch, and CI after approval
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash bin/release-preflight
+
+      - name: Reuse the generated runtimes from the verified Tests run
+        uses: actions/download-artifact@v4
         with:
-          node-version: '22'
-
-      - name: Repeat release provenance guard
-        run: |
-          branch_sha="$(git ls-remote origin "$GITHUB_REF" | cut -f1)"
-          test -n "$branch_sha"
-          actual="$(EACL_BRANCH_SHA="$branch_sha" clojure -M:release-guard ordinary)"
-          test "$actual" = "${{ needs.provenance.outputs.version }}"
-
-      - name: Cache checksum-locked formal tools and JavaScript dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            target/formal-tools
-            ~/.npm
-          key: release-formal-${{ runner.os }}-${{ hashFiles('formal/toolchain.lock.json', 'formal/smoke/js/package-lock.json') }}
-
-      - name: Build generated release runtimes explicitly
-        run: |
-          bin/formal bootstrap
-          bin/formal build-java
-          bin/formal browser-bundle
+          name: released-generated-runtimes
+          path: target/formal
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.guard.outputs.tests-run-id }}
 
       - name: Build, audit, cold-smoke, and deploy the release set
         env:

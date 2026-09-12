@@ -52,6 +52,12 @@
     (is (= "8.1.0" (config/version {:version "8.1.0"})))
     (is (= "8.0.0-SNAPSHOT"
            (config/version {:version "8.0.0-SNAPSHOT"})))
+    (is (= "8.0.0-RC-2026-09-12"
+           (config/version {:version "8.0.0-RC-2026-09-12"})))
+    (doseq [module-id (rest config/release-module-order)]
+      (is (= {:mvn/version "8.0.0-RC-2026-09-12"}
+             (get (config/dependencies module-id "8.0.0-RC-2026-09-12")
+                  'dev.eacl/eacl))))
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"MAJOR.MINOR.PATCH"
