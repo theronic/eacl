@@ -108,7 +108,7 @@
   [candidate]
   (boolean
    (and (string? candidate)
-        (re-matches #"[0-9]+\.[0-9]+\.[0-9]+(?:-SNAPSHOT)?"
+        (re-matches #"[0-9]+\.[0-9]+\.[0-9]+(?:-SNAPSHOT|-RC-[0-9]{4}-[0-9]{2}-[0-9]{2})?"
                     candidate))))
 
 (defn version
@@ -122,7 +122,7 @@
     (when-not (valid-version? candidate)
       (throw
        (ex-info
-        "EACL version must be MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-SNAPSHOT."
+        "EACL version must be MAJOR.MINOR.PATCH, optionally followed by -SNAPSHOT or -RC-YYYY-MM-DD."
         {:type :eacl.build/invalid-version
          :version candidate})))
     candidate))

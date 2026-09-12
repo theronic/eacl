@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Credential-free checks; repeat after environment approval to catch stale tags/CI.
+set -euo pipefail
+mkdir -p target/release
+clojure -M:release-guard tag > target/release/version.env
+branch=$(sed -n 's/^branch=//p' target/release/version.env)
+test -n "$branch"
+git fetch --no-tags origin \
+  "+$GITHUB_REF:refs/eacl-release/tag" \
+  "+refs/heads/$branch:refs/remotes/origin/$branch"
+test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+export EACL_TAG_SHA EACL_SOURCE_TREE EACL_BRANCH_TREE EACL_ANCESTOR
+EACL_TAG_SHA=$(git rev-parse 'refs/eacl-release/tag^{commit}')
+EACL_SOURCE_TREE=$(git rev-parse 'HEAD^{tree}')
+EACL_BRANCH_TREE=$(git rev-parse "refs/remotes/origin/$branch^{tree}")
+EACL_ANCESTOR=false
+if git merge-base --is-ancestor "$GITHUB_SHA" "refs/remotes/origin/$branch"; then
+  EACL_ANCESTOR=true
+fi
+clojure -M:release-guard provenance
+
+# Tagging never launches Tests/Formal. Reuse push CI on this exact commit,
+# including a PR head already merged into the release branch with the same tree.
+gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&event=push&per_page=100" \
+  > target/release/workflow-runs.json
+gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?per_page=100" \
+  > target/release/check-runs.json
+clojure -M:release-guard tag-checks \
+  target/release/workflow-runs.json target/release/check-runs.json
+
+tests_run_id=$(jq '[.workflow_runs[] | select(.path == ".github/workflows/test.yml" and .event == "push")] | max_by(.id) | .id' target/release/workflow-runs.json)
+cat target/release/version.env >> "$GITHUB_OUTPUT"
+echo "tests-run-id=$tests_run_id" >> "$GITHUB_OUTPUT"
+{
+  echo "Tag: $GITHUB_REF"
+  echo "Source commit: $GITHUB_SHA"
+  echo "Release branch with the same Git tree: $branch"
+  cat target/release/version.env
+  jq -r '[.workflow_runs[] | select(.path == ".github/workflows/test.yml" or .path == ".github/workflows/formal.yml")] | group_by(.path)[] | max_by(.id) | "- \(.name): \(.html_url)"' target/release/workflow-runs.json
+} >> "$GITHUB_STEP_SUMMARY"
