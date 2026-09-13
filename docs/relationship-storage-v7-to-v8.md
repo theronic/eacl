@@ -49,22 +49,23 @@ Require only the adapter used by your application:
 
 ```clojure
 ;; Datomic
-(require '[eacl.datomic.migrations.relationships-v7-to-v8 :as upgrade])
+(require '[eacl.datomic.migrations.relationships-v7-to-v8])
 ;; Datahike
-(require '[eacl.datahike.migrations.relationships-v7-to-v8 :as upgrade])
+(require '[eacl.datahike.migrations.relationships-v7-to-v8])
 ;; DataScript, JVM or ClojureScript
-(require '[eacl.datascript.migrations.relationships-v7-to-v8 :as upgrade])
+(require '[eacl.datascript.migrations.relationships-v7-to-v8])
 ;; Datalevin, supported embedded JVM topology
-(require '[eacl.datalevin.migrations.relationships-v7-to-v8 :as upgrade])
+(require '[eacl.datalevin.migrations.relationships-v7-to-v8])
 ```
 
-Evaluate the following after selecting one namespace:
+For Datomic, call the migration as follows. For another backend, call
+`migrate!` in its namespace from the list above with the same options:
 
 ```clojure
-(upgrade/migrate!
+(eacl.datomic.migrations.relationships-v7-to-v8/migrate!
  conn
- {:quiesced? true
-  :batch-size 1000
+ {:quiesced?   true
+  :batch-size  1000
   :on-progress #(prn (select-keys % [:state :converted :source-count :source-digest]))})
 ```
 

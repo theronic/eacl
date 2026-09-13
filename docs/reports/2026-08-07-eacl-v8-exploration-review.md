@@ -154,7 +154,7 @@ Severity × confidence. P0 = act before release.
 | P0-2 | Rebase triggers on every write (`proof-digest` ⊇ `basis-t`); makes P0-1 routine; defeats heads/continuation caches | `relay.cljc:252-268,371-410`; own test `recursive_cache_test.clj:212` | high |
 | P0-3 | Stale-schema check bypassed whenever rebase is in flight; portable path has no schema binding at all | `core.clj:571-581`; `relay.cljc:70-87` | mod-high |
 | P0-4 | Managed cross-revision denotation reuse live + undocumented (docs claim disabled) + zero differential coverage + default-on for DataScript | `v8.cljc:3033-3075`, `subproblem_cache.cljc:920-961`; docs `v8-subproblem-cache.md:66-71`; tests use `:unknown` | high (facts) |
-| P0-5 | Nil-anchor guard only in Datomic → full index scan on Datahike/DataScript | `datomic/impl.clj:564` vs `filters.cljc:27`, `datascript/impl.cljc:362` | high |
+| P0-5 | Nil-anchor guard only in Datomic → full index scan on Datahike/DataScript | `eacl.datomic/impl.clj:564` vs `filters.cljc:27`, `eacl.datascript/impl.cljc:362` | high |
 | P0-6 | Completed-answer tiers unbounded in bytes (`_weight-fn` ignored); ~80 MB/tier at defaults, ~640 MB at recommended 4096 | `core.clj:843`, `cache.cljc:265-296` | high (verified) |
 | P1-7 | Arbitrary (hash-order) eviction in completed-answer tier; `:on-repeat` admission degenerates to never-admit at scale | `cache.cljc:265-290` | high |
 | P1-8 | `can?` never routes acyclic; cache-enabled checks do O(denotation) linear membership; unadmittable >174k eids; throws >100k grants | `v8.cljc:3549-3565, 3490-3495, 3023-3030` + weights | high |

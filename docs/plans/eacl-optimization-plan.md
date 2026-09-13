@@ -201,11 +201,11 @@ This optimization plan provides a structured approach to improving EACL performa
  ;; 1. Direct relationships (using tuple index)
  [(tuple ?resource ?relation ?subject) ?rel-tuple]
  [?relationship :eacl.relationship/resource+relation-name+subject ?rel-tuple]
- 
+
  ;; 2. Permission lookup (cached)
  [(tuple ?resource-type ?relation ?permission) ?perm-tuple]
  [?perm :eacl.permission/resource-type+relation-name+permission-name ?perm-tuple]
- 
+
  ;; 3. Type check last (only for found resources)
  [?resource :resource/type ?resource-type]]
 ```
@@ -224,4 +224,4 @@ Most common patterns:
 2. User → Account → Resources (30%)
 3. User → Complex Paths → Resources (10%)
 
-Optimize for common cases while maintaining correctness for edge cases. 
+Optimize for common cases while maintaining correctness for edge cases.

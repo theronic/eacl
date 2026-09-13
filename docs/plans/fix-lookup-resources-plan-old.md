@@ -23,15 +23,15 @@ The corrected implementation will replace the code in `src/eacl/datomic/impl_fix
 
 3. **Add Necessary Indices**:
    - Update `schema.clj` to include reverse tuple indices for relationships, e.g.:
-     ```
-     {:db/ident :eacl.relationship/resource-type+resource+relation-name+subject-type+subject
-      :db/valueType :db.type/tuple
+     ```clojure
+     {:db/ident      :eacl.relationship/resource-type+resource+relation-name+subject-type+subject
+      :db/valueType  :db.type/tuple
       :db/tupleAttrs [:eacl.relationship/resource-type
                       :eacl.relationship/resource
                       :eacl.relationship/relation-name
                       :eacl.relationship/subject-type
                       :eacl.relationship/subject]
-      :db/unique :db.unique/identity}
+      :db/unique     :db.unique/identity}
      ```
 
 4. **Handle Deduplication and Pagination**:

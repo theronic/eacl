@@ -17,7 +17,7 @@ those fields.
 ;; Provision ONCE in authoritative host configuration, shared by every worker.
 (def source-lifecycle #uuid "854e138f-b8a4-42ee-a8f9-49c01ac19fc1")
 (def client (backend/make-client conn {:source-lifecycle source-lifecycle
-                                     :security-key signing-key}))
+                                       :security-key     signing-key}))
 ```
 
 The displayed UUID is illustrative. Generate a fresh value for a real rollout.

@@ -12,8 +12,8 @@ These examples describe `8.0.0-RC-2026-09-12`. The
 ```clojure
 (defn document-actions [acl user document]
   (eacl/check-permissions acl
-    {:checks [{:subject user :permission :view :resource document}
-              {:subject user :permission :edit :resource document}]
+    {:checks     [{:subject user :permission :view :resource document}
+                  {:subject user :permission :edit :resource document}]
      :timeout-ms 5000}))
 ```
 
@@ -32,13 +32,13 @@ returns relationships; the lookup route returns resource objects.
 ```clojure
 (defn visible-folder-relationships [acl user folder]
   (eacl/read-relationships acl
-    {:subject/type :folder
-     :subject/id (:id folder)
-     :resource/type :document
+    {:subject/type      :folder
+     :subject/id        (:id folder)
+     :resource/type     :document
      :resource/relation :folder
-     :authorization {:subject user :permission :view :on :resource}
-     :first 50
-     :aggregate-limits {:candidate-window 500}}))
+     :authorization     {:subject user :permission :view :on :resource}
+     :first             50
+     :aggregate-limits  {:candidate-window 500}}))
 ```
 
 The scan first finds matching relationships and checks `:view` on each resource.
@@ -47,12 +47,12 @@ Set `:on :subject` when the permission should be checked on the other endpoint.
 ```clojure
 (defn visible-folder-documents [acl user folder]
   (eacl/lookup-resources acl
-    {:subject user
-     :permission :view
-     :resource/type :document
+    {:subject               user
+     :permission            :view
+     :resource/type         :document
      :resource/relationship {:relation :folder :subject folder}
-     :first 50
-     :aggregate-limits {:candidate-window 500}}))
+     :first                 50
+     :aggregate-limits      {:candidate-window 500}}))
 ```
 
 The lookup first finds authorized resources, then checks for the direct folder

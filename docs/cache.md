@@ -26,7 +26,7 @@ See [expiration](caveats.md#expiring-access).
 Pass cache configuration to your backend's `make-client`:
 
 ```clojure
-{:cache {:max-entries 2048
+{:cache {:max-entries            2048
          :denotation-max-entries 4096}}
 ```
 
@@ -44,14 +44,13 @@ retained as completed pages.
 To disable the client authorization cache:
 
 ```clojure
-(require '[eacl.cache :as cache]
-         '[eacl.datomic.core :as datomic])
+(require '[eacl.cache]
+         '[eacl.datomic.core :as eacl.datomic])
 
-(def acl
-  (datomic/make-client conn
-    {:cache cache/no-cache
-     :object-id->lookup-ref (fn [id] [:app/id id])
-     :entid->object-id (fn [db eid] (:app/id (datomic.api/entity db eid)))}))
+(def acl (eacl.datomic/make-client conn
+           {:cache                 eacl.cache/no-cache
+            :object-id->lookup-ref (fn [id] [:app/id id])
+            :entid->object-id      (fn [db eid] (:app/id (datomic.api/entity db eid)))}))
 ```
 
 This uses the quickstart's `:app/id` mapping. Add your security options when needed.
@@ -136,11 +135,11 @@ Persisted cache snapshots can reduce repeated work after a restart, for example
 in a serverless host. They are optional; the database remains authoritative.
 
 ```clojure
-(require '[eacl.datomic.core :as datomic])
+(require '[eacl.datomic.core :as eacl.datomic])
 (def bounds {:max-entries 5000})
-(def saved (datomic/export-authenticated-cache-snapshot acl bounds))
+(def saved (eacl.datomic/export-authenticated-cache-snapshot acl bounds))
 ;; Store `saved`, then load it in a process configured with the same keys.
-(datomic/restore-authenticated-cache-snapshot! acl saved bounds)
+(eacl.datomic/restore-authenticated-cache-snapshot! acl saved bounds)
 ```
 
 The envelope authenticates the data but does not encrypt it. Protect its

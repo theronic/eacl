@@ -57,9 +57,9 @@ The public configuration uses positive safe-integer entry counts:
 
 ```clojure
 {:cache
- {:max-entries 2048
+ {:max-entries            2048
   :denotation-max-entries 4096
-  :telemetry? true}}
+  :telemetry?             true}}
 ```
 
 The semantic answer and denotation tiers have independent capacities. The

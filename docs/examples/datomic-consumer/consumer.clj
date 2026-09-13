@@ -3,14 +3,14 @@
   (:require [clojure.test :refer [deftest is run-tests]]
             [datomic.api :as d]
             [eacl.core :as eacl]
-            [eacl.datomic.core :as datomic]
-            [eacl.datomic.schema :as schema]
-            [eacl.datomic.safe-retraction :as safe]))
+            [eacl.datomic.core :as eacl.datomic]
+            [eacl.datomic.schema]
+            [eacl.datomic.safe-retraction]))
 
 (def app-schema
-  [{:db/ident :app/id :db/valueType :db.type/string
-    :db/cardinality :db.cardinality/one :db/unique :db.unique/identity}
-   {:db/ident :document/title :db/valueType :db.type/string
+  [{:db/ident       :app/id             :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one :db/unique    :db.unique/identity}
+   {:db/ident       :document/title     :db/valueType :db.type/string
     :db/cardinality :db.cardinality/one}])
 
 (def permission-schema
@@ -34,12 +34,11 @@
    (let [uri (str "datomic:mem://eacl-consumer-" (random-uuid))
          _ (d/create-database uri)
          conn (d/connect uri)]
-     (schema/install! conn)
+     (eacl.datomic.schema/install! conn)
      @(d/transact conn app-schema)
-     (let [acl (datomic/make-client
-                conn (merge {:object-id->lookup-ref (fn [id] [:app/id id])
-                             :entid->object-id (fn [db eid] (:app/id (d/entity db eid)))}
-                            options))]
+     (let [acl (eacl.datomic/make-client conn (merge {:object-id->lookup-ref (fn [id] [:app/id id])
+                                                      :entid->object-id      (fn [db eid] (:app/id (d/entity db eid)))}
+                                                     options))]
        (eacl/write-schema! acl permission-schema)
        @(d/transact conn [{:app/id "alice"} {:app/id "bob"}
                           {:app/id "report" :document/title "Report"}
@@ -69,8 +68,8 @@
       (is (true? (eacl/can? acl alice :view report)))
       (is (false? (eacl/can? acl bob :view report)))
       (is (= ["report"] (mapv :id (:data (eacl/lookup-resources acl
-                                                                {:subject alice :permission :view
-                                                                 :resource/type :document :first 10})))))
+                                                                {:subject       alice     :permission :view
+                                                                 :resource/type :document :first      10})))))
 
       ;; Existing endpoints: commit application data and a relationship together.
       (let [snapshot (eacl/snapshot acl)]
@@ -88,7 +87,7 @@
           (is (= :eacl/unknown-object
                  (try
                    (eacl/tx-relationships snapshot
-                                          {:updates [{:operation :create
+                                          {:updates [{:operation    :create
                                                       :relationship (eacl/->Relationship
                                                                      alice :viewer (eacl/spice-object :document "new"))}]
                                            :tx-data [{:db/id "new-tempid" :app/id "new"}]})
@@ -128,16 +127,16 @@
       (is (seq (:data (sharing-page acl alice))))
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"cannot manage" (sharing-page acl bob)))
       (is (= 1 (count (:data (eacl/read-relationships acl
-                                                      {:subject/type :folder :subject/id "shared"
-                                                       :resource/type :document :resource/relation :folder
+                                                      {:subject/type  :folder                                          :subject/id        "shared"
+                                                       :resource/type :document                                        :resource/relation :folder
                                                        :authorization {:subject alice :permission :view :on :resource}
-                                                       :first 50})))))
+                                                       :first         50})))))
       (is (= ["report"] (mapv :id (:data (eacl/lookup-resources acl
-                                                                {:subject alice :permission :view :resource/type :document
-                                                                 :resource/relationship {:relation :folder :subject folder} :first 50})))))
+                                                                {:subject               alice                               :permission :view :resource/type :document
+                                                                 :resource/relationship {:relation :folder :subject folder} :first      50})))))
 
-      (safe/install! conn)
-      @(d/transact conn (safe/retract-entity-tx-data [:app/id "report"]))
+      (eacl.datomic.safe-retraction/install! conn)
+      @(d/transact conn (eacl.datomic.safe-retraction/retract-entity-tx-data [:app/id "report"]))
       (is (nil? (d/entid (d/db conn) [:app/id "report"])))
       (is (false? (eacl/can? acl alice :view report)))
       (is (empty? (:data (eacl/read-relationships acl {:resource/type :document :first 50}))))

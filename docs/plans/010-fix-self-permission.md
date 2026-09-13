@@ -52,8 +52,8 @@ For self-permission like `{:type :self-permission, :target-permission :admin, :r
 ;; Self-permission: recursively find resources where subject has target permission
 (let [target-permission (:target-permission path)]
   ;; Recursively traverse with target permission to find matching resources
-  (traverse-permission-path db subject-type subject-eid 
-                           target-permission resource-type cursor-eid limit))
+  (traverse-permission-path db subject-type subject-eid
+                            target-permission resource-type cursor-eid limit))
 ```
 
 **Notes**: 
@@ -68,7 +68,7 @@ For self-permission like `{:type :self-permission, :target-permission :admin, :r
 **Action**: Replace incorrect self-permission logic:
 
 **Current (broken)**:
-```clojure
+```text
 (let [target-permission     (:target-permission path)
       resource-spice-object (spice-object resource-type subject-eid)]  ; WRONG!
   (if (can? db (spice-object subject-type subject-eid) target-permission resource-spice-object)
@@ -78,9 +78,9 @@ For self-permission like `{:type :self-permission, :target-permission :admin, :r
 ```clojure
 (let [target-permission (:target-permission path)]
   ;; Recursively traverse to find resources where subject has target permission
-  (traverse-permission-path-via-subject db subject-type subject-eid 
-                                       {:type :permission, :name target-permission} 
-                                       resource-type cursor-eid))
+  (traverse-permission-path-via-subject db subject-type subject-eid
+                                        {:type :permission, :name target-permission}
+                                        resource-type cursor-eid))
 ```
 
 **Wait** - This approach has a problem. The `traverse-permission-path-via-subject` function expects a single path, not a permission name. 
@@ -91,7 +91,7 @@ For self-permission like `{:type :self-permission, :target-permission :admin, :r
       target-paths (get-permission-paths db resource-type target-permission)
       path-results (->> target-paths
                         (map (fn [target-path]
-                               (traverse-permission-path-via-subject db subject-type subject-eid 
+                               (traverse-permission-path-via-subject db subject-type subject-eid
                                                                      target-path resource-type cursor-eid)))
                         (filter seq))]
   ;; Merge and dedupe results from all target permission paths

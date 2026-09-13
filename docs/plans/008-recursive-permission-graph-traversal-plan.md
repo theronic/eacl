@@ -119,7 +119,7 @@ Reverse (lookup-resources):
 
 - [x] Create `traverse-permission-path` that handles both directions:
   ```clojure
-  (defn traverse-permission-path 
+  (defn traverse-permission-path
     [db subject-type subject-eid permission-name resource-type cursor-eid limit]
     ;; Returns lazy seq of [resource-eid path-taken] tuples
     )
@@ -293,4 +293,4 @@ The implementation is ready for integration into the main EACL system, providing
 - [ ] Run full test suite.
 - [ ] If all passes, commit changes (ask user for git ops if needed).
 
-Follow each step sequentially, running tests after each. If issues arise, use think tool to reason and adjust. 
+Follow each step sequentially, running tests after each. If issues arise, use think tool to reason and adjust.

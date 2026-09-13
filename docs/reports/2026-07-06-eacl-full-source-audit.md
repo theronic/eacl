@@ -75,7 +75,7 @@ If relationships exist, the orphan check throws a *misleading* “Cannot delete 
 
 ```clojure
 (let [start-tuple [resource-type relation-name :a]
-      end-tuple   [resource-type relation-name :z]]
+      end-tuple [resource-type relation-name :z]]
   (d/index-range db :eacl.relation/resource-type+relation-name+subject-type start-tuple end-tuple))
 ```
 

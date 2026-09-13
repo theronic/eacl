@@ -86,16 +86,15 @@ indefinitely if they must remain resumable.
 
 ```clojure
 (require '[eacl.core :as eacl]
-         '[eacl.datascript.core :as datascript])
+         '[eacl.datascript.core :as eacl.datascript])
 
 (defn configured-client [conn initial-id initial-root]
   (let [ring (eacl/security-keyring
-              {:keys {initial-id initial-root}
+              {:keys       {initial-id initial-root}
                :active-kid initial-id})]
-    {:ring ring
-     :client (datascript/make-client
-              conn {:security-keyring-controller ring
-                    :cursor-ttl-seconds 86400})}))
+    {:ring   ring
+     :client (eacl.datascript/make-client conn {:security-keyring-controller ring
+                                                :cursor-ttl-seconds          86400})}))
 ```
 
 Use the corresponding backend's `make-client` for Datomic, Datahike, or

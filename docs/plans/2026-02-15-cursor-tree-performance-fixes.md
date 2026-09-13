@@ -28,7 +28,7 @@ Every element flowing through an arrow path triggers a `vswap!` call:
   (map (fn [x]
          (vswap! !min (fn [cur] (if cur (min cur v) v)))
          x)
-    coll))
+       coll))
 ```
 
 This adds an extra `map` layer + volatile mutation per result element per intermediate sequence. For limit=1000 with a 500-way merge, ~1000+ elements pass through this wrapper, each triggering a closure call + volatile swap.
@@ -49,7 +49,7 @@ v2 cursor coercion requires N+1 `entid->object-id` calls (1 for `:e` + N for eac
 
 ### 4. `can?` map arity bug (`core.clj:250-252`)
 
-```clojure
+```text
 (can? [this {:as demand :keys [subject permission resource consistency]}]
   (assert (= consistency/fully-consistent consistency))  ; fails when consistency is nil
 ```
@@ -64,25 +64,25 @@ Instead of wrapping each sub-sequence with per-element volatile tracking, tag re
 
 **Before** (`arrow-via-intermediates`):
 ```clojure
-(let [!min-int    (volatile! nil)
+(let [!min-int (volatile! nil)
       result-seqs (map (fn [intermediate-eid]
                          (->> (result-fn intermediate-eid)
-                           (tracking-min !min-int intermediate-eid)))
-                    intermediate-eids)]
+                              (tracking-min !min-int intermediate-eid)))
+                       intermediate-eids)]
   {:results (lazy-sort/lazy-fold2-merge-dedupe-sorted-by identity result-seqs)
-   :!state !min-int})
+   :!state  !min-int})
 ```
 
 **After:**
 ```clojure
 (let [result-seqs (map (fn [intermediate-eid]
                          (map (fn [eid] [eid intermediate-eid])
-                           (result-fn intermediate-eid)))
-                    intermediate-eids)]
+                              (result-fn intermediate-eid)))
+                       intermediate-eids)]
   {:results (if (seq result-seqs)
               (lazy-sort/lazy-fold2-merge-dedupe-sorted-by first result-seqs)
               [])
-   :!state nil})  ; state extracted post-hoc from consumed tuples
+   :!state  nil})  ; state extracted post-hoc from consumed tuples
 ```
 
 **Impact:** Eliminates all volatile overhead. Zero per-element cost. Cursor state computed O(1) at cursor build time from consumed tuples.
@@ -102,17 +102,17 @@ Extract per-path minimum intermediate from consumed tagged tuples rather than re
   {:v 2
    :e (or last-eid (:e cursor) (get-in cursor [v1-key :id]))
    :p (into (or (:p cursor) {})
-        (keep (fn [[idx min-int]]
-                (when min-int [idx min-int])))
-        path-min-intermediates)})
+            (keep (fn [[idx min-int]]
+                    (when min-int [idx min-int])))
+            path-min-intermediates)})
 ```
 
 ### Fix 4: Fix `can?` map arity
 
 ```clojure
 (can? [this {:as demand :keys [subject permission resource consistency]}]
-  (spiceomic-can? (d/db conn) opts subject permission resource
-    (or consistency consistency/fully-consistent)))
+      (spiceomic-can? (d/db conn) opts subject permission resource
+                      (or consistency consistency/fully-consistent)))
 ```
 
 ## Expected Impact

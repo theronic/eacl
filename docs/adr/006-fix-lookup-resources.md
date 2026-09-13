@@ -69,9 +69,9 @@ To match SpiceDB We need to generalize EACL arrow permissions to support either 
 
 You can run the relevant tests via the clojure-mcp MCP server by eval'ing:
 
-```
+```clojure
 (do (require '[eacl.datomic.impl-test])
-  (clojure.test/run-tests 'eacl.datomic.impl-test))
+    (clojure.test/run-tests 'eacl.datomic.impl-test))
 ```
 
 Since `eacl.datomic.impl` requires `eacl.datomic.impl-indexed`, if you change anything in `impl-indexed`, remember that you also need to re-evaluate `eacl.datomic.impl` to load the latest values into that namespace, or you need to run `load-file` *if* you touched the file system, e.g.
@@ -98,7 +98,7 @@ Write a comprehensive plan to rewrite the EACL implementation for `lookup-resour
  - Pay careful attention to ensure the stable order of cursor-based pagination.
  - the `eacl.datomic.datomic-helpers/with-mem-conn` is a macro that creates a fresh in-memory Datomic database with some initial tx-data transacted. You can use this macro to avoid dealing with stateful Datomic problems, e.g.
 
- ```
+ ```clojure
  (with-mem-conn [conn schema/v5-schema]
    @(d/transact conn fixtures/base-fixtures)
    ...)
