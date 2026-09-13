@@ -35,7 +35,7 @@ This plan details the implementation of ADR 004-index-range-optimization to impr
 #### 1.1 Create Index Utilities Module
 **File**: `src/eacl/datomic/index_utils.clj`
 
-```clojure
+```text
 (ns eacl.datomic.index-utils
   (:require [datomic.api :as d]))
 
@@ -193,4 +193,4 @@ Current staged approach uses Datalog queries. Replace with:
 - Priority is lookup-resources due to performance impact
 - Order stability is required only for pagination, not specific ordering
 - Consider adding index hints to schema for future optimizations
-- May need to add additional tuple indices based on access patterns 
+- May need to add additional tuple indices based on access patterns

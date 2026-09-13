@@ -503,23 +503,23 @@ Keep the public surface small:
 
 ```clojure
 {:consistency-default :minimize-latency
- :answer-cache :none} ; safest initial v8 default
+ :answer-cache        :none} ; safest initial v8 default
 ```
 
 Optional:
 
 ```clojure
 {:answer-cache {:strategy :exact-revision
-                :store local-store}}
+                :store    local-store}}
 
-{:answer-cache {:strategy :managed-epochs
-                :store local-store
+{:answer-cache {:strategy        :managed-epochs
+                :store           local-store
                 :writer-contract :eacl-only}}
 
 {:answer-cache {:strategy :remote-authenticated
-                :l1 local-store
-                :l2 remote-store
-                :keyring ...}}
+                :l1       local-store
+                :l2       remote-store
+                :keyring  ...}}
 ```
 
 Schema compilation and bounded continuation caching remain internal and enabled

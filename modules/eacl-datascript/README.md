@@ -104,12 +104,11 @@ function; it is never part of `datascript-schema`:
 
 ```clojure
 (require '[datascript.core :as ds]
-         '[eacl.datascript.safe-retraction :as safe-retraction])
+         '[eacl.datascript.safe-retraction])
 
-(safe-retraction/install! conn)
-(ds/transact!
- conn
- (safe-retraction/retract-entity-tx-data [:app/id "account-1"]))
+(eacl.datascript.safe-retraction/install! conn)
+(ds/transact! conn
+  (eacl.datascript.safe-retraction/retract-entity-tx-data [:app/id "account-1"]))
 ```
 
 The installed `:eacl.fn/retractEntity` computes the target's native component

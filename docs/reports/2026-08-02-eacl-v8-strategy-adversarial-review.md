@@ -736,8 +736,8 @@ write.
 
 ```clojure
 {:consistency-default :minimize-latency
- :answer-cache :none
- :cursor-snapshot :exact}
+ :answer-cache        :none
+ :cursor-snapshot     :exact}
 ```
 
 Schema compilation, request-local memoization, and bounded private
@@ -749,9 +749,8 @@ continuations remain independent accelerators.
 deleting entries:
 
 ```clojure
-(eacl/expire-source!
-  client
-  {:source-incarnation externally-provisioned-new-value})
+(eacl/expire-source! client
+                     {:source-incarnation externally-provisioned-new-value})
 ```
 
 The exact public name is an implementation choice, but its semantics are not:

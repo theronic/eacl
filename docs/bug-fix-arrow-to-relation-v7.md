@@ -13,7 +13,7 @@ Fixed critical bugs in arrow-to-relation permission traversal that prevented pro
 In EACL v7, relationships are stored as tuples that reference relation entity IDs instead of relation names (keywords). The schema change from v6 to v7 included:
 
 ```clojure
-{:db/ident :eacl.v7.relationship/subject-type+relation+resource-type+resource
+{:db/ident      :eacl.v7.relationship/subject-type+relation+resource-type+resource
  :db/tupleTypes [:db.type/keyword  ; subject-type
                  :db.type/ref        ; Ref to Relation (was keyword in v6)
                  :db.type/keyword   ; resource-type  
@@ -47,15 +47,15 @@ The `get-permission-paths` function correctly builds arrow-to-relation paths wit
 
 Example path structure:
 ```clojure
-{:type :arrow
- :relation/id 17592186045448        ; via-relation: platform
- :via :platform
- :target-type :platform
+{:type            :arrow
+ :relation/id     17592186045448        ; via-relation: platform
+ :via             :platform
+ :target-type     :platform
  :target-relation :super_admin
- :sub-paths [{:type :relation
-              :name :super_admin
-              :relation/id 17592186045418  ; target-relation eid
-              :subject-type :user}]}
+ :sub-paths       [{:type         :relation
+                    :name         :super_admin
+                    :relation/id  17592186045418  ; target-relation eid
+                    :subject-type :user}]}
 ```
 
 ## The Fix
@@ -139,6 +139,4 @@ This fix restores the core functionality of EACL's ReBAC system, enabling proper
 2. Add integration tests specifically for multi-hop arrow-to-relation scenarios
 3. Document the distinction between via-relation and target-relation in code comments
 4. Consider adding cycle detection for arrow-to-relation paths during schema validation
-
-
 

@@ -40,7 +40,7 @@ Tests in `test/eacl/datomic/impl_test.clj` make assumptions about result orderin
    ```clojure
    ;; Before (assumed order)
    [server-1, server-3, server-2]
-   
+
    ;; After (index order - example)
    [server-1, server-2, server-3]  ; If ordered by entity ID
    ```
@@ -118,4 +118,4 @@ Tests in `test/eacl/datomic/impl_test.clj` make assumptions about result orderin
 3. Update tests to match new ordering (Day 4)
 4. Complete remaining optimizations (Days 5-7)
 
-The implementation should maintain backward compatibility while providing significant performance improvements, especially for paginated queries with large offsets. 
+The implementation should maintain backward compatibility while providing significant performance improvements, especially for paginated queries with large offsets.

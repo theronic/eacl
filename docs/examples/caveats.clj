@@ -1,9 +1,9 @@
 (ns eacl.examples.caveats
   "Executable v8 guide. Load through the project nREPL with :caveats-jvm."
   (:require [datascript.core :as ds]
-            [eacl.caveats.jvm :as caveats]
+            [eacl.caveats.jvm]
             [eacl.core :as eacl]
-            [eacl.datascript.core :as api]))
+            [eacl.datascript.core :as eacl.datascript]))
 
 (def schema
   "caveat in_region(region string, accepted list<string>) {
@@ -21,18 +21,18 @@
        (catch clojure.lang.ExceptionInfo error (:type (ex-data error)))))
 
 (defn run-example! []
-  (let [conn (api/create-conn {:app/id {:db/unique :db.unique/identity}})
+  (let [conn (eacl.datascript/create-conn {:app/id {:db/unique :db.unique/identity}})
         now (atom 1000)
-        client (api/make-client conn
-                                {:clock #(deref now)
-                                 :caveat-evaluator (caveats/evaluator)
-                                 :object-id->lookup-ref (fn [id] [:app/id id])
-                                 :entid->object-id (fn [db eid] (:app/id (ds/entity db eid)))})
+        client (eacl.datascript/make-client conn
+                                            {:clock                 #(deref now)
+                                             :caveat-evaluator      (eacl.caveats.jvm/evaluator)
+                                             :object-id->lookup-ref (fn [id] [:app/id id])
+                                             :entid->object-id      (fn [db eid] (:app/id (ds/entity db eid)))})
         alice (eacl/spice-object :user "alice")
         report (eacl/spice-object :doc "report")
         other (eacl/spice-object :doc "other")
-        relationship {:subject alice :relation :viewer :resource report
-                      :caveat "in_region" :caveat-context {"accepted" ["za"]}
+        relationship {:subject        alice       :relation       :viewer             :resource report
+                      :caveat         "in_region" :caveat-context {"accepted" ["za"]}
                       :valid-until-ms 2000}
         request {:subject alice :resource report :permission :view}
         with-region (assoc request :caveat-context {"region" "za"})]
@@ -55,7 +55,7 @@
     (reset! now 1500)
     (assert (eacl/can? client with-region) "An expired ban disappears without a write")
     (let [pinned (eacl/snapshot client)
-          query {:subject alice :resource/type :doc :permission :view :first 1
+          query {:subject        alice           :resource/type :doc :permission :view :first 1
                  :caveat-context {"region" "za"}}
           page (eacl/lookup-resources client query)
           cursor (get-in page [:page-info :end-cursor])]
@@ -82,10 +82,10 @@
           snapshot (eacl/snapshot client)]
       (try
         (ds/transact! conn (eacl/tx-relationships snapshot
-                                                  [{:operation :touch :relationship prepared-value
+                                                  [{:operation          :touch   :relationship prepared-value
                                                     :prepared-qualifier prepared}]))
         (finally (eacl/release! snapshot))))
     (eacl/delete-relationship! client relationship)
     (assert (false? (eacl/can? client with-region)))
-    {:conditional :conditional-permission :ban-expiry :granted :grant-expiry :denied
-     :pinned :historical-grant :live-cursor :restart-required :renewal :granted :delete :denied}))
+    {:conditional :conditional-permission :ban-expiry  :granted          :grant-expiry :denied
+     :pinned      :historical-grant       :live-cursor :restart-required :renewal      :granted :delete :denied}))

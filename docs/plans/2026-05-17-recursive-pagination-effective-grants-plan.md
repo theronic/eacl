@@ -228,9 +228,9 @@ Do not materialize only recursive SCC members. That is too narrow for permission
 Definitions:
 
 ```clojure
-recursive-sccs      := SCCs with size > 1 or a self-edge
+recursive-sccs := SCCs with size > 1 or a self-edge
 grant-indexed-nodes := every permission node that can reach any recursive-scc node
-raw-indexed-nodes   := every permission node not in grant-indexed-nodes
+raw-indexed-nodes := every permission node not in grant-indexed-nodes
 ```
 
 Planner rule:
@@ -293,11 +293,11 @@ The grant builder implements positive ReBAC semantics over permission nodes `[re
 Grant shape:
 
 ```clojure
-{:subject-type subject-type
- :subject-eid subject-eid
- :permission permission-name
+{:subject-type  subject-type
+ :subject-eid   subject-eid
+ :permission    permission-name
  :resource-type resource-type
- :resource-eid resource-eid}
+ :resource-eid  resource-eid}
 ```
 
 Relation arm:
@@ -343,8 +343,8 @@ Grant-backed recursive reads require a db basis after grant maintenance has run.
 Persist a small marker datom, for example:
 
 ```clojure
-{:eacl/id "effective-grants"
- :eacl.grant/indexed-nodes [...]
+{:eacl/id                     "effective-grants"
+ :eacl.grant/indexed-nodes    [...]
  :eacl.grant/rebuilt-at-basis basis-t}
 ```
 
@@ -373,27 +373,27 @@ Add an internal planning function, likely in `src/eacl/datomic/impl/indexed.clj`
 Plan examples:
 
 ```clojure
-{:op :lookup-resources
- :kind :acyclic-permission-stream
- :order [:eid :asc]
- :direction :asc
+{:op         :lookup-resources
+ :kind       :acyclic-permission-stream
+ :order      [:eid :asc]
+ :direction  :asc
  :recursive? false}
 ```
 
 ```clojure
-{:op :lookup-resources
- :kind :recursive-effective-grant-stream
- :order [:eid :asc]
- :direction :desc
+{:op         :lookup-resources
+ :kind       :recursive-effective-grant-stream
+ :order      [:eid :asc]
+ :direction  :desc
  :recursive? true}
 ```
 
 ```clojure
-{:op :read-relationships
- :kind :relationship-datom-stream
- :order [:relationship-datom :asc]
+{:op        :read-relationships
+ :kind      :relationship-datom-stream
+ :order     [:relationship-datom :asc]
  :direction :asc
- :scan-key :subject-forward}
+ :scan-key  :subject-forward}
 ```
 
 The plan function exists to make tests exact. It should not be part of the public EACL API.
@@ -513,10 +513,10 @@ Exception:
 
 ```clojure
 (ex-info "Recursive paginated lookup requires the effective grant index."
-         {:eacl/error :eacl.pagination/recursive-query-not-indexed
-          :operation :lookup-resources
+         {:eacl/error    :eacl.pagination/recursive-query-not-indexed
+          :operation     :lookup-resources
           :resource/type resource-type
-          :permission permission})
+          :permission    permission})
 ```
 
 TDD:
@@ -546,11 +546,11 @@ Core functions:
 Grant value:
 
 ```clojure
-{:subject-type :user
- :subject-eid 17592186045418
- :permission :read
+{:subject-type  :user
+ :subject-eid   17592186045418
+ :permission    :read
  :resource-type :account
- :resource-eid 17592186045425}
+ :resource-eid  17592186045425}
 ```
 
 Build algorithm:

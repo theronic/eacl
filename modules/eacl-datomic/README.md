@@ -60,13 +60,13 @@ the optional function that removes both together:
 
 ```clojure
 (require '[datomic.api :as d]
-         '[eacl.datomic.safe-retraction :as safe-retraction])
+         '[eacl.datomic.safe-retraction])
 
 ;; Run during database setup, and again after upgrading EACL.
-(safe-retraction/install! conn)
+(eacl.datomic.safe-retraction/install! conn)
 
 @(d/transact conn
-  (safe-retraction/retract-entity-tx-data [:app/id "report"]))
+   (eacl.datomic.safe-retraction/retract-entity-tx-data [:app/id "report"]))
 ```
 
 This continues the quickstart. The target may be a numeric entity ID or a

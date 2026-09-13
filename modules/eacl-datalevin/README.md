@@ -45,23 +45,21 @@ or supplying a nil, legacy, or reserved initial lifecycle fails construction; th
 never used by this module:
 
 ```clojure
-(require '[eacl.datalevin.core :as datalevin])
+(require '[eacl.datalevin.core :as eacl.datalevin])
 
-(def conn (datalevin/create-conn "/var/lib/my-app/eacl"))
+(def conn (eacl.datalevin/create-conn "/var/lib/my-app/eacl"))
 (def watermark (atom (load-watermark-from-durable-storage)))
 
-(def client
-  (datalevin/make-client
-   conn
-   {:security-key signing-key
+(def client (eacl.datalevin/make-client conn
+              {:security-key                           signing-key
     ;; Must return the same persisted noninitial native UUID on every worker.
-    :source-lifecycle (load-source-lifecycle)
-    :revision-watermark watermark
-    :advance-revision-watermark!
-    (fn [revision]
-      (persist-watermark-durably! revision)
-      (swap! watermark max revision))
-    :maximum-snapshot-retention-ms 30000}))
+               :source-lifecycle                       (load-source-lifecycle)
+               :revision-watermark                     watermark
+               :advance-revision-watermark!
+               (fn [revision]
+                 (persist-watermark-durably! revision)
+                 (swap! watermark max revision))
+               :maximum-snapshot-retention-ms          30000}))
 ```
 
 `:datalevin-topology` was removed. Advisory declarations cannot establish

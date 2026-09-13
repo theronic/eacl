@@ -33,11 +33,10 @@ Back up and rehearse against a restored database, pause
 authorization-relevant writes, then run:
 
 ```clojure
-(require '[eacl.migrations.v6-to-v7 :as migration])
+(require '[eacl.migrations.v6-to-v7])
 
-(migration/migrate!
- conn
- {:schema "definition user {} ..."})
+(eacl.migrations.v6-to-v7/migrate! conn
+                                   {:schema "definition user {} ..."})
 ```
 
 `migrate!`:
@@ -59,13 +58,13 @@ pre-migration backup if rollback is required.
 ## Detect and verify
 
 ```clojure
-(migration/detect-storage-version (datomic.api/db conn))
+(eacl.migrations.v6-to-v7/detect-storage-version (datomic.api/db conn))
 ;; :v6    v6 relationship entities only
 ;; :mixed v6 entities and tuple data, usually an interrupted migration
 ;; :v7    tuple data only
 ;; :none  no relationship data
 
-(migration/verify-backfill (datomic.api/db conn))
+(eacl.migrations.v6-to-v7/verify-backfill (datomic.api/db conn))
 ;; {:complete? true, ...}
 ```
 
@@ -88,8 +87,8 @@ cleanup. Correct the schema or remove the dead v6 row, then rerun.
 `:batch-size` controls the number of relationships converted per transaction:
 
 ```clojure
-(migration/migrate! conn {:schema schema-string
-                          :batch-size 250})
+(eacl.migrations.v6-to-v7/migrate! conn {:schema     schema-string
+                                         :batch-size 250})
 ```
 
 Pause all relationship writes for the migration. A concurrent old-format
@@ -105,12 +104,11 @@ After both the v6-to-v7 and v7-to-v8 migrations:
 (def acl (eacl.datomic.core/make-client conn options))
 
 (eacl.core/can? acl known-subject :view known-resource)
-(eacl.core/lookup-resources
- acl
- {:subject known-subject
-  :permission :view
-  :resource/type :document
-  :first 20})
+(eacl.core/lookup-resources acl
+  {:subject       known-subject
+   :permission    :view
+   :resource/type :document
+   :first         20})
 ```
 
 Discard cursors and cache data created by older library versions. Recreate

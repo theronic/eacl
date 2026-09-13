@@ -52,17 +52,17 @@ Create internal representation where all permissions are arrows:
   (if (contains? permission-def :eacl.permission/relation-name)
     ;; Direct permission: (Permission :server :owner :view)
     ;; Becomes: server.view = self->owner (check :owner on current resource)
-    {:type :arrow
-     :resource-type (:eacl.permission/resource-type permission-def)
-     :permission-name (:eacl.permission/permission-name permission-def)
-     :source-relation :self
+    {:type              :arrow
+     :resource-type     (:eacl.permission/resource-type permission-def)
+     :permission-name   (:eacl.permission/permission-name permission-def)
+     :source-relation   :self
      :target-permission (:eacl.permission/relation-name permission-def)}
     ;; Arrow permission: (Permission :server :account :admin :view)  
     ;; Becomes: server.view = account->admin
-    {:type :arrow
-     :resource-type (:eacl.arrow-permission/resource-type permission-def)
-     :permission-name (:eacl.arrow-permission/permission-name permission-def)
-     :source-relation (:eacl.arrow-permission/source-relation-name permission-def)
+    {:type              :arrow
+     :resource-type     (:eacl.arrow-permission/resource-type permission-def)
+     :permission-name   (:eacl.arrow-permission/permission-name permission-def)
+     :source-relation   (:eacl.arrow-permission/source-relation-name permission-def)
      :target-permission (:eacl.arrow-permission/target-permission-name permission-def)}))
 ```
 
@@ -106,9 +106,9 @@ Create efficient traversal that can go both forward and backward:
   "Traverses relationships forward: subject → resource via relation"
   [db subject-type subject-eid relation target-resource-type]
   (let [start-tuple [subject-type subject-eid relation target-resource-type nil]
-        datoms (d/index-range db 
-                 :eacl.relationship/subject-type+subject+relation-name+resource-type+resource 
-                 start-tuple nil)]
+        datoms (d/index-range db
+                              :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
+                              start-tuple nil)]
     (->> datoms
          (take-while #(matches-tuple-prefix % [subject-type subject-eid relation target-resource-type]))
          (map extract-resource-from-datom))))
@@ -117,9 +117,9 @@ Create efficient traversal that can go both forward and backward:
   "Traverses relationships backward: resource → subject via relation"
   [db resource-type resource-eid relation target-subject-type]
   (let [start-tuple [resource-type resource-eid relation target-subject-type nil]
-        datoms (d/index-range db 
-                 :eacl.relationship/resource-type+resource+relation-name+subject-type+subject 
-                 start-tuple nil)]
+        datoms (d/index-range db
+                              :eacl.relationship/resource-type+resource+relation-name+subject-type+subject
+                              start-tuple nil)]
     (->> datoms
          (take-while #(matches-tuple-prefix % [resource-type resource-eid relation target-subject-type]))
          (map extract-subject-from-datom))))
@@ -194,9 +194,9 @@ Handle `:self` permissions (former direct permissions):
   [db subject-type subject-eid path resource-type cursor limit]
   (let [relation (:target-permission path)
         start-tuple [subject-type subject-eid relation resource-type (cursor-start cursor)]
-        datoms (d/index-range db 
-                 :eacl.relationship/subject-type+subject+relation-name+resource-type+resource 
-                 start-tuple nil)]
+        datoms (d/index-range db
+                              :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
+                              start-tuple nil)]
     (->> datoms
          (take-while #(matches-subject-relation-resource % subject-type subject-eid relation resource-type))
          (map extract-resource-info)
@@ -269,10 +269,10 @@ Handle the production schema patterns:
   "Parse union permission syntax from production schema"
   [permission-def]
   (let [parts (parse-permission-expression (:expression permission-def))]
-    {:type :union
-     :resource-type (:resource-type permission-def)
+    {:type            :union
+     :resource-type   (:resource-type permission-def)
      :permission-name (:permission-name permission-def)
-     :parts (map parse-permission-part parts)}))
+     :parts           (map parse-permission-part parts)}))
 
 ;; Support for: permission view = admin + shared_member  
 (defn resolve-indirect-permission
@@ -315,40 +315,40 @@ Create the main function that handles all cases:
 ```clojure
 (defn lookup-resources
   "Main lookup-resources implementation with full feature support"
-  [db {:as query
-       subject :subject
-       permission :permission
+  [db {:as           query
+       subject       :subject
+       permission    :permission
        resource-type :resource/type
-       cursor :cursor
-       limit :limit
-       :or {cursor nil limit 1000}}]
-  {:pre [(:type subject) (:id subject) 
+       cursor        :cursor
+       limit         :limit
+       :or           {cursor nil limit 1000}}]
+  {:pre [(:type subject) (:id subject)
          (keyword? permission) (keyword? resource-type)]}
-  
+
   (let [{subject-type :type subject-eid :id} subject
-        
+
         ;; Resolve all permission paths (handles unions, recursion, etc.)
         permission-paths (resolve-permission-recursively db resource-type permission #{})
-        
+
         ;; Handle different cursor types
         normalized-cursor (normalize-cursor cursor)
-        
+
         ;; Execute query based on path complexity
         results (cond
                   (single-path? permission-paths)
                   (lookup-resources-single-path db subject-type subject-eid (first permission-paths) resource-type normalized-cursor limit)
-                  
+
                   (union-paths? permission-paths)
                   (lookup-resources-union-permissions db subject-type subject-eid permission-paths resource-type normalized-cursor limit)
-                  
+
                   :else
                   (lookup-resources-complex-paths db subject-type subject-eid permission-paths resource-type normalized-cursor limit))
-        
+
         ;; Convert to SpiceObjects and create cursor
         spice-objects (map #(eid->spice-object db (:type %) (:id %)) (:resources results))
         next-cursor (create-appropriate-cursor results)]
-    
-    {:data spice-objects
+
+    {:data   spice-objects
      :cursor next-cursor}))
 ```
 
@@ -385,8 +385,8 @@ Add tests for all new functionality:
     (with-mem-conn [conn schema/v5-schema]
       @(d/transact conn fixtures/base-fixtures)
       (let [db (d/db conn)
-            results (lookup-resources db {:subject (->user "super-user")
-                                          :permission :admin
+            results (lookup-resources db {:subject       (->user "super-user")
+                                          :permission    :admin
                                           :resource/type :server})]
         ;; Should find servers via account->admin AND vpc->admin AND shared_admin
         (is (>= (count (:data results)) 3))))))
@@ -396,8 +396,8 @@ Add tests for all new functionality:
     (with-mem-conn [conn schema/v5-schema]
       @(d/transact conn fixtures/base-fixtures)
       (let [db (d/db conn)
-            results (lookup-resources db {:subject (->vpc "vpc-1")
-                                          :permission :view
+            results (lookup-resources db {:subject       (->vpc "vpc-1")
+                                          :permission    :view
                                           :resource/type :server})]
         ;; Should find servers via vpc->network->lease->nic->server chain
         (is (pos? (count (:data results))))))))
@@ -413,10 +413,10 @@ Add performance benchmarks for complex scenarios:
       @(d/transact conn (generate-large-test-data 10000))
       (let [db (d/db conn)
             start-time (System/nanoTime)
-            results (lookup-resources db {:subject (->user "super-user")
-                                          :permission :admin
+            results (lookup-resources db {:subject       (->user "super-user")
+                                          :permission    :admin
                                           :resource/type :server
-                                          :limit 1000})
+                                          :limit         1000})
             duration (- (System/nanoTime) start-time)]
         (is (< duration 1000000000)) ; Less than 1 second
         (is (pos? (count (:data results))))))))

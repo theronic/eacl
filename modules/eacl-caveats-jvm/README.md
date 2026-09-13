@@ -6,16 +6,15 @@ registers the bounded process default. It does not activate qualified serving.
 Core and DataScript CLJS do not depend on this module, CEL, or ANTLR.
 
 ```clojure
-(require '[eacl.caveats.definition :as definition]
-         '[eacl.caveats.evaluator :as evaluator]
-         '[eacl.caveats.jvm :as jvm])
+(require '[eacl.caveats.definition]
+         '[eacl.caveats.evaluator]
+         '[eacl.caveats.jvm])
 
-(def check-region
-  (definition/entity "region_match"
-                     {"request_region" :string "required_region" :string}
-                     "request_region == required_region"))
-(evaluator/evaluate (evaluator/default-evaluator) check-region
-                    {"request_region" "za"} {"required_region" "za"})
+(def check-region (eacl.caveats.definition/entity "region_match"
+                                                  {"request_region" :string "required_region" :string}
+                                                  "request_region == required_region"))
+(eacl.caveats.evaluator/evaluate (eacl.caveats.evaluator/default-evaluator) check-region
+                                 {"request_region" "za"} {"required_region" "za"})
 ;; => {:outcome :true}
 ```
 
@@ -47,7 +46,7 @@ retain only the portable plan and never construct a native program. Same-key mis
 waiters and are not retained, and distinct misses wait for capacity. Cache
 entries include canonical name, typed parameters, source, and implementation
 fingerprint; database entity IDs and request values are excluded. Schema edits
-cannot reuse an old program. `jvm/evaluator` creates a separate cache; optional
+cannot reuse an old program. `eacl.caveats.jvm/evaluator` creates a separate cache; optional
 `:max-entries` and `:max-builds` may lower the profile limits.
 
 The independent 24-case corpus lives in `test/eacl/caveats/corpus.edn` and is

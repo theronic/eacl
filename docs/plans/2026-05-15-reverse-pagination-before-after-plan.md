@@ -85,35 +85,35 @@ EACL should adopt a Clojure-shaped Relay-compatible subset:
 ```clojure
 ;; First page.
 (eacl/lookup-resources acl
-  {:subject subject
-   :permission :view
+  {:subject       subject
+   :permission    :view
    :resource/type :server
-   :first 50})
+   :first         50})
 
 ;; Next page.
 (eacl/lookup-resources acl
-  {:subject subject
-   :permission :view
+  {:subject       subject
+   :permission    :view
    :resource/type :server
-   :first 50
-   :after (get-in page1 [:page-info :end-cursor])})
+   :first         50
+   :after         (get-in page1 [:page-info :end-cursor])})
 
 ;; Previous page.
 (eacl/lookup-resources acl
-  {:subject subject
-   :permission :view
+  {:subject       subject
+   :permission    :view
    :resource/type :server
-   :last 50
-   :before (get-in page2 [:page-info :start-cursor])})
+   :last          50
+   :before        (get-in page2 [:page-info :start-cursor])})
 ```
 
 Response shape:
 
 ```clojure
-{:data [...]
- :page-info {:start-cursor opaque-token-or-nil
-             :end-cursor opaque-token-or-nil
-             :has-next-page? true-or-false
+{:data      [...]
+ :page-info {:start-cursor       opaque-token-or-nil
+             :end-cursor         opaque-token-or-nil
+             :has-next-page?     true-or-false
              :has-previous-page? true-or-false}}
 ```
 
@@ -169,10 +169,10 @@ Default list page size:
 All paginated list APIs return:
 
 ```clojure
-{:data [...]
- :page-info {:start-cursor token-or-nil
-             :end-cursor token-or-nil
-             :has-next-page? boolean
+{:data      [...]
+ :page-info {:start-cursor       token-or-nil
+             :end-cursor         token-or-nil
+             :has-next-page?     boolean
              :has-previous-page? boolean}}
 ```
 
@@ -239,9 +239,9 @@ Replace the current base64 EDN cursor tokens with authenticated encrypted page t
 Token envelope shape before base64url encoding:
 
 ```clojure
-{:v 3
- :kid key-id
- :nonce random-nonce
+{:v          3
+ :kid        key-id
+ :nonce      random-nonce
  :ciphertext encrypted-authenticated-bytes}
 ```
 
@@ -250,15 +250,15 @@ The envelope fields are not secret, but they must be authenticated as AES-GCM ad
 Encrypted plaintext payload shape:
 
 ```clojure
-{:v 3
- :op :lookup-resources
- :query-shape query-shape-hash
- :order [:eid :asc]
- :basis-t basis-t-or-nil
- :basis :stable-or-live
+{:v                3
+ :op               :lookup-resources
+ :query-shape      query-shape-hash
+ :order            [:eid :asc]
+ :basis-t          basis-t-or-nil
+ :basis            :stable-or-live
  :path-fingerprint permission-path-fingerprint-or-nil
- :edge edge-cursor
- :exp epoch-seconds}
+ :edge             edge-cursor
+ :exp              epoch-seconds}
 ```
 
 Cryptographic requirements:
@@ -307,8 +307,8 @@ All paginated internals should move from "streams of eids" to "streams of edges.
 Generic edge:
 
 ```clojure
-{:node result-eid-or-relationship
- :cursor edge-cursor
+{:node     result-eid-or-relationship
+ :cursor   edge-cursor
  :frontier path-frontier}
 ```
 
@@ -321,19 +321,19 @@ For public list responses:
 Lookup edge cursor:
 
 ```clojure
-{:kind :lookup
- :result-eid eid
- :path-frontiers {:asc {stable-path-id path-frontier}
+{:kind           :lookup
+ :result-eid     eid
+ :path-frontiers {:asc  {stable-path-id path-frontier}
                   :desc {stable-path-id path-frontier}}}
 ```
 
 Path frontier:
 
 ```clojure
-{:path-id stable-path-id
- :result-eid eid
+{:path-id          stable-path-id
+ :result-eid       eid
  :intermediate-eid eid-or-nil
- :subpath-id stable-subpath-id-or-nil}
+ :subpath-id       stable-subpath-id-or-nil}
 ```
 
 The exact frontier can evolve, but it must be enough to resume a path without rescanning exhausted intermediate work.
@@ -413,7 +413,7 @@ Generic scan primitive:
 (defn seek-page-datoms
   [db {:keys [index components direction exclusive-key in-range? datom-key]}]
   (let [datoms (case direction
-                 :asc  (apply d/seek-datoms db index components)
+                 :asc (apply d/seek-datoms db index components)
                  :desc (apply d/rseek-datoms db index components))]
     (->> datoms
          (take-while in-range?)
@@ -454,34 +454,34 @@ Add explicit tests where a duplicate appears:
 Subject-anchored cursor:
 
 ```clojure
-{:kind :relationship
- :scan :subject
+{:kind  :relationship
+ :scan  :subject
  :index :eavt
- :e subject-eid
- :a forward-relationship-attr-eid
- :v [subject-type relation-eid resource-type resource-eid]}
+ :e     subject-eid
+ :a     forward-relationship-attr-eid
+ :v     [subject-type relation-eid resource-type resource-eid]}
 ```
 
 Resource-anchored cursor:
 
 ```clojure
-{:kind :relationship
- :scan :resource
+{:kind  :relationship
+ :scan  :resource
  :index :eavt
- :e resource-eid
- :a reverse-relationship-attr-eid
- :v [resource-type relation-eid subject-type subject-eid]}
+ :e     resource-eid
+ :a     reverse-relationship-attr-eid
+ :v     [resource-type relation-eid subject-type subject-eid]}
 ```
 
 Global cursor:
 
 ```clojure
-{:kind :relationship
- :scan :global
+{:kind  :relationship
+ :scan  :global
  :index :avet
- :a forward-relationship-attr-eid
- :v [subject-type relation-eid resource-type resource-eid]
- :e subject-eid}
+ :a     forward-relationship-attr-eid
+ :v     [subject-type relation-eid resource-type resource-eid]
+ :e     subject-eid}
 ```
 
 `read-relationships` should choose the narrowest available scan:

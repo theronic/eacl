@@ -130,7 +130,7 @@ The `-` (exclusion/intersection) operator is parsed but silently treated as unio
 - Add post-parse validation that throws on `-` operators
 
 **Test Gap**: `test/eacl/datomic/parser_test.clj:95` has an empty placeholder test for this:
-```clojure
+```text
 (testing "ensure we warn against unsupported Spice schema like exclusion permissions"))
 ```
 
@@ -156,9 +156,9 @@ If a permission name doesn't match a relation, it assumes it's a permission **wi
 **Problem**: The protocol method returns the raw schema string:
 ```clojure
 (read-schema [this]
-  (let [db (d/db conn)
-        ent (d/entity db [:eacl/id "schema-string"])]
-    (:eacl/schema-string ent)))
+             (let [db (d/db conn)
+                   ent (d/entity db [:eacl/id "schema-string"])]
+               (:eacl/schema-string ent)))
 ```
 
 But the ADR states: "`eacl/read-schema` should return a rich map of schema definitions."
@@ -347,8 +347,8 @@ This is critical because:
         (when (and (not= source-rel :self)
                    (not (contains? (get relation-names-by-type res-type) source-rel)))
           (swap! errors conj
-            (str "Permission " res-type "/" perm-name
-                 " references non-existent relation: " source-rel)))
+                 (str "Permission " res-type "/" perm-name
+                      " references non-existent relation: " source-rel)))
 
         ;; For arrow permissions, validate target exists on target resource type
         (when (not= source-rel :self)
@@ -360,26 +360,26 @@ This is critical because:
               (if (= target-type :relation)
                 (when-not (contains? (get relation-names-by-type target-res-type) target-name)
                   (swap! errors conj
-                    (str "Permission " res-type "/" perm-name
-                         " arrow target relation " target-name
-                         " does not exist on " target-res-type)))
+                         (str "Permission " res-type "/" perm-name
+                              " arrow target relation " target-name
+                              " does not exist on " target-res-type)))
                 (when-not (contains? (get permission-names-by-type target-res-type) target-name)
                   (swap! errors conj
-                    (str "Permission " res-type "/" perm-name
-                         " arrow target permission " target-name
-                         " does not exist on " target-res-type)))))))
+                         (str "Permission " res-type "/" perm-name
+                              " arrow target permission " target-name
+                              " does not exist on " target-res-type)))))))
 
         ;; For self permissions, validate target exists on same resource
         (when (= source-rel :self)
           (if (= target-type :relation)
             (when-not (contains? (get relation-names-by-type res-type) target-name)
               (swap! errors conj
-                (str "Permission " res-type "/" perm-name
-                     " references non-existent relation: " target-name)))
+                     (str "Permission " res-type "/" perm-name
+                          " references non-existent relation: " target-name)))
             (when-not (contains? (get permission-names-by-type res-type) target-name)
               (swap! errors conj
-                (str "Permission " res-type "/" perm-name
-                     " references non-existent permission: " target-name)))))))
+                     (str "Permission " res-type "/" perm-name
+                          " references non-existent permission: " target-name)))))))
 
     (when (seq @errors)
       (throw (ex-info "Invalid schema" {:errors @errors})))
@@ -398,17 +398,17 @@ This is critical because:
   (let [operators (atom [])]
     ;; Walk tree and collect operators
     (clojure.walk/postwalk
-      (fn [node]
-        (when (and (vector? node)
-                   (= :permission-operator (first node)))
-          (swap! operators conj (second node)))
-        node)
-      parse-tree)
+     (fn [node]
+       (when (and (vector? node)
+                  (= :permission-operator (first node)))
+         (swap! operators conj (second node)))
+       node)
+     parse-tree)
     (let [unsupported (filter #(not= "+" %) @operators)]
       (when (seq unsupported)
         (throw (ex-info "Unsupported operators in schema"
-                       {:operators (set unsupported)
-                        :message "EACL only supports union (+) operators. Exclusion (-) and intersection (&) are not supported."}))))))
+                        {:operators (set unsupported)
+                         :message   "EACL only supports union (+) operators. Exclusion (-) and intersection (&) are not supported."}))))))
 ```
 
 ---

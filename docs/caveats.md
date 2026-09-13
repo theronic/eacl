@@ -44,7 +44,7 @@ still conflicts with it. Use `:touch` to create or update that share:
 ;; Renew for another hour, including when the saved share has expired.
 (eacl/write-relationship! acl
   (assoc share :operation :touch
-              :valid-until-ms (+ (System/currentTimeMillis) 3600000)))
+         :valid-until-ms (+ (System/currentTimeMillis) 3600000)))
 
 ;; Clear the expiration. This also removes any Caveat on this relationship.
 (eacl/write-relationship! acl (assoc share :operation :touch))
@@ -60,7 +60,7 @@ to `:owner`, as defined in the quickstart:
 ```clojure
 (eacl/write-relationships! acl
   [{:operation :delete :relationship share}
-   {:operation :touch
+   {:operation    :touch
     :relationship (eacl/->Relationship alice :owner report)}])
 ```
 
@@ -85,8 +85,8 @@ on the same snapshot:
                       {:type :app/forbidden})))
     (eacl/read-relationships s
       {:resource/type (:type document)
-       :resource/id (:id document)
-       :first 50})))
+       :resource/id   (:id document)
+       :first         50})))
 ```
 
 The quickstart's viewer cannot manage sharing; its owner can. Follow
@@ -119,7 +119,7 @@ ClojureScript applications must supply a compatible evaluator. See
 Add the evaluator alongside your backend dependency, at the same version:
 
 ```clojure
-{:deps {dev.eacl/eacl-datomic {:mvn/version "8.0.0-RC-2026-09-12"}
+{:deps {dev.eacl/eacl-datomic     {:mvn/version "8.0.0-RC-2026-09-12"}
         dev.eacl/eacl-caveats-jvm {:mvn/version "8.0.0-RC-2026-09-12"}}}
 ```
 
@@ -163,15 +163,14 @@ updates the viewer relationship if it already exists:
 (def alice (eacl/spice-object :user "alice"))
 (def report (eacl/spice-object :document "report"))
 (def deadline-ms (+ (System/currentTimeMillis) 3600000))
-(def grant
-  (assoc (eacl/->Relationship alice :viewer report)
-         :caveat "in_region"
-         :caveat-context {"accepted" ["za"]}
-         :valid-until-ms deadline-ms)) ; exclusive UTC epoch milliseconds
+(def grant (assoc (eacl/->Relationship alice :viewer report)
+                  :caveat "in_region"
+                  :caveat-context {"accepted" ["za"]}
+                  :valid-until-ms deadline-ms)) ; exclusive UTC epoch milliseconds
 (eacl/write-relationship! acl (assoc grant :operation :touch))
 
 (eacl/check-permission acl
-  {:subject alice :resource report :permission :view
+  {:subject        alice           :resource report :permission :view
    :caveat-context {"region" "za"}})
 ;; includes {:allowed? true :permissionship :has-permission}
 ```

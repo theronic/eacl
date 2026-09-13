@@ -47,29 +47,27 @@ Start a REPL in that directory with `clojure -M`, then evaluate:
 ```clojure
 (require '[datomic.api :as d]
          '[eacl.core :as eacl]
-         '[eacl.datomic.core :as datomic]
-         '[eacl.datomic.schema :as schema])
+         '[eacl.datomic.core :as eacl.datomic]
+         '[eacl.datomic.schema])
 
 (def uri (str "datomic:mem://eacl-" (random-uuid)))
 (d/create-database uri)
 (def conn (d/connect uri))
 
 ;; Install EACL's schema, then your application's schema.
-(schema/install! conn)
+(eacl.datomic.schema/install! conn)
 @(d/transact conn
-  [{:db/ident :app/id
-    :db/valueType :db.type/string
-    :db/cardinality :db.cardinality/one
-    :db/unique :db.unique/identity}
-   {:db/ident :document/title
-    :db/valueType :db.type/string
-    :db/cardinality :db.cardinality/one}])
+   [{:db/ident       :app/id
+     :db/valueType   :db.type/string
+     :db/cardinality :db.cardinality/one
+     :db/unique      :db.unique/identity}
+    {:db/ident       :document/title
+     :db/valueType   :db.type/string
+     :db/cardinality :db.cardinality/one}])
 
-(def acl
-  (datomic/make-client
-   conn
-   {:object-id->lookup-ref (fn [id] [:app/id id])
-    :entid->object-id (fn [db eid] (:app/id (d/entity db eid)))}))
+(def acl (eacl.datomic/make-client conn
+           {:object-id->lookup-ref (fn [id] [:app/id id])
+            :entid->object-id      (fn [db eid] (:app/id (d/entity db eid)))}))
 
 (eacl/write-schema! acl
   "definition user {}
@@ -81,9 +79,9 @@ Start a REPL in that directory with `clojure -M`, then evaluate:
    }")
 
 @(d/transact conn
-  [{:app/id "alice"}
-   {:app/id "bob"}
-   {:app/id "report" :document/title "Report"}])
+   [{:app/id "alice"}
+    {:app/id "bob"}
+    {:app/id "report" :document/title "Report"}])
 
 (def alice (eacl/spice-object :user "alice"))
 (def bob (eacl/spice-object :user "bob"))
@@ -94,26 +92,26 @@ Start a REPL in that directory with `clojure -M`, then evaluate:
 (eacl/can? acl bob :view report)   ; false
 
 (mapv :id (:data (eacl/lookup-resources acl
-  {:subject alice :permission :view :resource/type :document :first 10})))
+                   {:subject alice :permission :view :resource/type :document :first 10})))
 ;; => ["report"]
 ```
 
 Give each user and document a unique, stable ID owned by your application.
 This example uses `:app/id`; you do not need to put application IDs in EACL's
-internal schema. Existing applications using the default `:eacl/id` remain
-supported. Changing IDs in an existing database is a separate migration.
+internal schema.
 
 The default token keys are process-local. For keys that survive restarts or
 work across load-balanced Peers, see [security keys](docs/security-keyrings.md).
 Leave cache options out to use the defaults.
 
-To delete a secured entity, remove its relationships first, or use Datomic's
-optional atomic deletion function:
+To delete a secured entity in Datomic, use `:eacl.fn/retractEntity`. Install
+the function during database setup; it removes the entity and its relationships
+in one transaction:
 
 ```clojure
-(require '[eacl.datomic.safe-retraction :as safe])
-(safe/install! conn)
-@(d/transact conn (safe/retract-entity-tx-data [:app/id "report"]))
+(require '[eacl.datomic.safe-retraction])
+(eacl.datomic.safe-retraction/install! conn)
+@(d/transact conn [[:eacl.fn/retractEntity [:app/id "report"]]])
 (eacl/can? acl alice :view report) ; false
 ```
 
@@ -263,7 +261,7 @@ EACL can efficiently answer questions like, "Can `<subject>` do `<permission>` o
 => true | false
 
 ; e.g.
-(eacl/can? acl (->user "alice") :view (->server "server1") consistency/fully-consistent)
+(eacl/can? acl (->user "alice") :view (->server "server1") eacl.spicedb.consistency/fully-consistent)
 => true | false
 ```
 If you need cache provenance, use `check-permission` instead of `can?`, otherwise they are equivalent:
@@ -273,7 +271,7 @@ If you need cache provenance, use `check-permission` instead of `can?`, otherwis
   {:subject     subject
    :permission  permission
    :resource    resource
-   :consistency consistency/fully-consistent})
+   :consistency eacl.spicedb.consistency/fully-consistent})
 => {:allowed? true, :cached? boolean, :cache-basis ...}
 ```
 
@@ -287,13 +285,13 @@ If you need cache provenance, use `check-permission` instead of `can?`, otherwis
    :permission    permission
    :resource/type resource-type
    :first         page-size ; or :last page-size
-   :consistency   (consistency/at-least-as-fresh token-10s-ago)})
-=> {:data [{:type :product :id "product-1"}
-           {:type :product :id "product-7"}
-           ...
-           {:type :product :id "product-63"}]
+   :consistency   (eacl.spicedb.consistency/at-least-as-fresh token-10s-ago)})
+=> {:data      [{:type :product :id "product-1"}
+                {:type :product :id "product-7"}
+                ...
+                {:type :product :id "product-63"}]
     :page-info ...
-    :cached? true|false>
+    :cached?   true|false>
     ...}
 ```
 
@@ -303,20 +301,20 @@ appropriate backend basis directly and requires no cache-checkpoint option.
 
 
 ```clojure
-(def token-10s-ago (datomic/zed-token-at-least-seconds-ago acl 10))
+(def token-10s-ago (eacl.datomic/zed-token-at-least-seconds-ago acl 10))
 
 (eacl/lookup-resources acl
   {:subject       (->user "alice")
    :permission    :view
    :resource/type :product
    :first         50
-   :consistency   (consistency/at-least-as-fresh token-10s-ago)})
-=> {:data [{:type :product :id "product-1"}
-           {:type :product :id "product-7"}
-           ...
-           {:type :product :id "product-63"}]
+   :consistency   (eacl.spicedb.consistency/at-least-as-fresh token-10s-ago)})
+=> {:data      [{:type :product :id "product-1"}
+                {:type :product :id "product-7"}
+                ...
+                {:type :product :id "product-63"}]
     :page-info ...
-    :cached? true|false>
+    :cached?   true|false>
     ...}
 ``` 
 
@@ -491,10 +489,10 @@ For read-only actions, we might be fine with reusing cached answers that are a f
 For example, when a YouTube video with millions of views is unpublished, it is probably fine to keep serving it for a few seconds instead of recomputing access on every view. Here's how to do it in EACL:
 
 ```clojure
-(def token-10s-ago (datomic/zed-token-at-least-seconds-ago acl 10))
+(def token-10s-ago (eacl.datomic/zed-token-at-least-seconds-ago acl 10))
 
 (eacl/can? acl (->user "alice") :view (->video "my-video")
-  (consistency/at-least-as-fresh token-10s-ago))
+           (eacl.spicedb.consistency/at-least-as-fresh token-10s-ago))
 ```
 
 This also works for lookups, like listing video resources:
@@ -503,21 +501,21 @@ This also works for lookups, like listing video resources:
   {:subject       (->user "alice")
    :permission    :view
    :resource/type :video
-   :consistency   (consistency/at-least-as-fresh token-10s-ago)})
+   :consistency   (eacl.spicedb.consistency/at-least-as-fresh token-10s-ago)})
 ```
 
 However, for destructive actions, e.g. permanently deleting a video, we will want to make 100% sure the user is allowed to do that. For that we can use `fully-consistent`:
 
 ```clojure
 (eacl/can? acl (->user "alice") :delete (->video "my-video")
-  consistency/fully-consistent) ; this will block on (d/sync conn)
+           eacl.spicedb.consistency/fully-consistent) ; this will block on (d/sync conn)
 ```
 
-Most of the time, we will use `consistency/minimize-latency`, which uses what is locally-consistent to the Peer:
+Most of the time, we will use `eacl.spicedb.consistency/minimize-latency`, which uses what is locally-consistent to the Peer:
 
 ```clojure
 (eacl/can? acl (->user "alice") :view (->video "my-video")
-  consistency/minimize-latency)
+           eacl.spicedb.consistency/minimize-latency)
 ```
 
 ### Consistency Modes
@@ -777,9 +775,9 @@ binds more tightly than `-`; repeated exclusion associates from the left.
 
 ```clojure
 (eacl/read-relationships acl filters)
-=> {:data [relationships...]
-    :page-info {...}
-    :cached? boolean
+=> {:data        [relationships...]
+    :page-info   {...}
+    :cached?     boolean
     :cache-basis ...}
 ```
 
@@ -838,13 +836,12 @@ API:
 (let [token (eacl/cancellation-token)]
   ;; Pass `token` to the HTTP/request owner before starting the read.
   (future
-    (eacl/lookup-resources
-     acl
-     {:subject (eacl/spice-object :user "alice")
-      :permission :view
-      :resource/type :document
-      :first 100
-      :cancellation-token token}))
+    (eacl/lookup-resources acl
+      {:subject            (eacl/spice-object :user "alice")
+       :permission         :view
+       :resource/type      :document
+       :first              100
+       :cancellation-token token}))
   (eacl/cancel! token))
 ```
 
@@ -880,23 +877,22 @@ expiring Relationships.
 Expansion accepts exactly `:resource`, `:permission`, and the optional `:consistency`, `:timeout-ms`, and `:cancellation-token` keys:
 
 ```clojure
-(eacl/expand-permission-tree
- acl
- {:resource (eacl/spice-object :document "readme")
-  :permission :view
-  :consistency consistency/fully-consistent
-  :timeout-ms 5000})
+(eacl/expand-permission-tree acl
+                             {:resource    (eacl/spice-object :document "readme")
+                              :permission  :view
+                              :consistency eacl.spicedb.consistency/fully-consistent
+                              :timeout-ms  5000})
 =>
- {:expanded-at "eacl_z4_..."
-  :tree-root
-  {:expanded-object {:type :document :id "readme"}
-   :expanded-relation :view
-   :intermediate
-   {:operation :union
-    :children
-    [{:expanded-object {:type :document :id "readme"}
-      :expanded-relation :viewer
-      :leaf {:subjects [{:type :user :id "alice"}]}}]}}}
+{:expanded-at                                          "eacl_z4_..."
+ :tree-root
+ {:expanded-object                                    {:type :document :id "readme"}
+  :expanded-relation                                  :view
+  :intermediate
+  {:operation                                        :union
+   :children
+   [{:expanded-object   {:type :document :id "readme"}
+     :expanded-relation :viewer
+     :leaf              {:subjects [{:type :user :id "alice"}]}}]}}}
 ```
 
 A node contains exactly one of `:leaf` or `:intermediate`. Permission and
@@ -913,7 +909,7 @@ selected client's object-ID codec.
 
 The response tree and `:expanded-at` token are derived from the same selected
 immutable snapshot. Replay the token with
-`(consistency/at-exact-snapshot (:expanded-at response))` only on a backend
+`(eacl.spicedb.consistency/at-exact-snapshot (:expanded-at response))` only on a backend
 that advertises exact historical selection; otherwise use it as an
 at-least-as-fresh causal floor. Unsupported consistency, unavailable history,
 deadlines, unknown root relations or permissions, cycles, codec failures,
@@ -925,14 +921,13 @@ Clients accept positive exact-integer `:permission-tree-limits` overrides.
 They are configuration-only, not request keys:
 
 ```clojure
-(eacl.datascript.core/make-client
- conn
- {:permission-tree-limits
-  {:max-depth 50
-   :max-schema-components 100000
-   :max-relationship-values 100000
-   :max-tree-nodes 100000
-   :max-leaf-subjects 100000}})
+(eacl.datascript.core/make-client conn
+  {:permission-tree-limits
+   {:max-depth               50
+    :max-schema-components   100000
+    :max-relationship-values 100000
+    :max-tree-nodes          100000
+    :max-leaf-subjects       100000}})
 ```
 
 Every bundled backend uses the same portable expansion kernel. Expected
@@ -951,41 +946,39 @@ The primary API call is `can?`, e.g.
 The other primary API call is `lookup-resources`, e.g.
 
 ```clojure
-(def page1
-  (eacl/lookup-resources acl
-    {:subject       (->user "alice")
-     :permission    :view
-     :resource/type :server
-     :first         2})) ; defaults to 1000.
+(def page1 (eacl/lookup-resources acl
+             {:subject       (->user "alice")
+              :permission    :view
+              :resource/type :server
+              :first         2})) ; defaults to 1000.
 page1
-=> {:data [{:type :server :id "server-1"}
-           {:type :server :id "server-2"}]
-    :page-info {:start-cursor "..."
-                :end-cursor "..."
-                :has-next-page? true
-                :has-previous-page? false}
-    :cached? boolean
+=> {:data        [{:type :server :id "server-1"}
+                  {:type :server :id "server-2"}]
+    :page-info   {:start-cursor       "..."
+                  :end-cursor         "..."
+                  :has-next-page?     true
+                  :has-previous-page? false}
+    :cached?     boolean
     :cache-basis ...}
 ```
 
 To query the next page, pass the `:end-cursor` from page1 as `:after`:
 
 ```clojure
-(def page2
-  (eacl/lookup-resources acl
-    {:subject       (->user "alice")
-     :permission    :view
-     :resource/type :server
-     :first         2
-     :after         (get-in page1 [:page-info :end-cursor])}))
+(def page2 (eacl/lookup-resources acl
+             {:subject       (->user "alice")
+              :permission    :view
+              :resource/type :server
+              :first         2
+              :after         (get-in page1 [:page-info :end-cursor])}))
 page2
-=> {:data [{:type :server :id "server-3"}
-           {:type :server :id "server-4"}]
-    :page-info {:start-cursor "..."
-                :end-cursor "..."
-                :has-next-page? true
-                :has-previous-page? true}
-    :cached? boolean
+=> {:data        [{:type :server :id "server-3"}
+                  {:type :server :id "server-4"}]
+    :page-info   {:start-cursor       "..."
+                  :end-cursor         "..."
+                  :has-next-page?     true
+                  :has-previous-page? true}
+    :cached?     boolean
     :cache-basis ...}
 ```
 
@@ -1024,16 +1017,14 @@ For Clojure/JVM applications backed by Datahike, add the Datahike adapter depend
             [eacl.datahike.core :as eacl.datahike]))
 
 ; Create an in-memory Datahike database and install EACL's Datahike schema:
-(def conn
-  (eacl.datahike/create-conn
-   [{:db/ident :app/id :db/valueType :db.type/string
-     :db/cardinality :db.cardinality/one :db/unique :db.unique/identity}]))
+(def conn (eacl.datahike/create-conn
+           [{:db/ident       :app/id             :db/valueType :db.type/string
+             :db/cardinality :db.cardinality/one :db/unique    :db.unique/identity}]))
 
 ; Make an EACL client that satisfies the `IAuthorization` protocol:
-(def acl
-  (eacl.datahike/make-client conn
-    {:object-id->lookup-ref (fn [id] [:app/id id])
-     :entid->object-id (fn [db eid] (:app/id (d/entity db eid)))}))
+(def acl (eacl.datahike/make-client conn
+           {:object-id->lookup-ref (fn [id] [:app/id id])
+            :entid->object-id      (fn [db eid] (:app/id (d/entity db eid)))}))
 
 ; Write your permission schema using SpiceDB schema DSL:
 (eacl/write-schema! acl
@@ -1051,15 +1042,15 @@ For Clojure/JVM applications backed by Datahike, add the Datahike adapter depend
 
 ; Create a Relationship between existing entities:
 (eacl/create-relationship! acl
-  (eacl/spice-object :user "user-1")
-  :owner
-  (eacl/spice-object :account "account-1"))
+                           (eacl/spice-object :user "user-1")
+                           :owner
+                           (eacl/spice-object :account "account-1"))
 
 ; Run a Permission Check with `can?`:
 (eacl/can? acl
-  (eacl/spice-object :user "user-1")
-  :admin
-  (eacl/spice-object :account "account-1"))
+           (eacl/spice-object :user "user-1")
+           :admin
+           (eacl/spice-object :account "account-1"))
 ; => true
 ```
 
@@ -1092,12 +1083,10 @@ com.github.theronic/cljs-cache
             [eacl.core :as eacl]
             [eacl.datascript.core :as eacl.datascript]))
 
-(def conn
-  (eacl.datascript/create-conn {:app/id {:db/unique :db.unique/identity}}))
-(def acl
-  (eacl.datascript/make-client conn
-    {:object-id->lookup-ref (fn [id] [:app/id id])
-     :entid->object-id (fn [db eid] (:app/id (ds/entity db eid)))}))
+(def conn (eacl.datascript/create-conn {:app/id {:db/unique :db.unique/identity}}))
+(def acl (eacl.datascript/make-client conn
+           {:object-id->lookup-ref (fn [id] [:app/id id])
+            :entid->object-id      (fn [db eid] (:app/id (ds/entity db eid)))}))
 
 (ds/transact! conn
   [{:db/id -1 :app/id "user-1"}
@@ -1112,14 +1101,14 @@ com.github.theronic/cljs-cache
    }")
 
 (eacl/create-relationship! acl
-  (eacl/spice-object :user "user-1")
-  :owner
-  (eacl/spice-object :account "account-1"))
+                           (eacl/spice-object :user "user-1")
+                           :owner
+                           (eacl/spice-object :account "account-1"))
 
 (eacl/can? acl
-  (eacl/spice-object :user "user-1")
-  :admin
-  (eacl/spice-object :account "account-1"))
+           (eacl/spice-object :user "user-1")
+           :admin
+           (eacl/spice-object :account "account-1"))
 ; => true
 ```
 
@@ -1290,14 +1279,14 @@ Here is how to configure that translation when construction an ACL client via `m
 
 ```clojure
 (def acl (eacl.datomic.core/make-client conn
-           {:entid->object-id (fn [db eid] (:your/uuid (d/entity db eid)))
+           {:entid->object-id      (fn [db eid] (:your/uuid (d/entity db eid)))
             :object-id->lookup-ref (fn [obj-id] [:your/uuid obj-id])}))
 ```
 
 The default options are to use the built-in EACL string attr `:eacl/id`, but you can use the internal Datomic eids with the following "identity" functions:
 ```clojure
 (def acl (eacl.datomic.core/make-client conn
-           {:entid->object-id (fn [_db eid] eid)
+           {:entid->object-id      (fn [_db eid] eid)
             :object-id->lookup-ref (fn [obj-id] obj-id)}))
 ```
 
@@ -1308,13 +1297,11 @@ merged with EACL's calibrated defaults and checked against portable hard
 ceilings:
 
 ```clojure
-(def acl
-  (eacl.datomic.core/make-client
-   conn
-   {:expression-limits
-    {:maximum-source-nodes 32768
-     :maximum-source-depth 64
-     :maximum-expression-bytes 262144}}))
+(def acl (eacl.datomic.core/make-client conn
+           {:expression-limits
+            {:maximum-source-nodes     32768
+             :maximum-source-depth     64
+             :maximum-expression-bytes 262144}}))
 ```
 
 The profile applies to schema reads and writes performed by that client. It is
@@ -1375,7 +1362,7 @@ recognize changes. Ordinary application data can use normal database writes.
 Start with the default cache. To bound retained entries:
 
 ```clojure
-{:cache {:max-entries 2048
+{:cache {:max-entries            2048
          :denotation-max-entries 4096}}
 ```
 
@@ -1396,11 +1383,11 @@ A Zed token identifies a database revision. EACL returns one from a mutation
 so another request can ask to see that write.
 
 ```clojure
-(require '[eacl.spicedb.consistency :as consistency])
+(require '[eacl.spicedb.consistency])
 
 (def write-result (eacl/create-relationship! acl alice :owner report))
 (eacl/can? acl alice :view report
-  (consistency/at-least-as-fresh (:zed/token write-result)))
+           (eacl.spicedb.consistency/at-least-as-fresh (:zed/token write-result)))
 ```
 
 | Mode | Use it to |
@@ -1483,14 +1470,12 @@ Datomic example:
 
 ```clojure
 (require '[datomic.api :as d]
-         '[eacl.datomic.safe-retraction :as safe-retraction])
+         '[eacl.datomic.safe-retraction])
 
 ;; Privileged, idempotent deployment step.
-(safe-retraction/install! conn)
+(eacl.datomic.safe-retraction/install! conn)
 
-@(d/transact
-  conn
-  (safe-retraction/retract-entity-tx-data [:app/id "acme"]))
+@(d/transact conn [[:eacl.fn/retractEntity [:app/id "acme"]]])
 ```
 
 The target can be a numeric entity ID or a valid lookup ref. Multiple and
@@ -1510,7 +1495,7 @@ Do not add relationships involving a target in the same application
 transaction that safely retracts it. Prefer `delete-object!` for very
 high-degree targets so cleanup can be batched.
 
-Use the backend's `safe-retraction/support-descriptor` before choosing a
+Use the backend's `support-descriptor` before choosing a
 Datahike or DataScript deployment mode. Installation, direct-mode examples,
 restore behavior, integrity reports, and repair tools are documented in the
 adapter guides:

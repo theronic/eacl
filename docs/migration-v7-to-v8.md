@@ -14,14 +14,13 @@ Stop authorization schema writers, take the normal Datomic backup required by
 your deployment, and run the explicit permission migration:
 
 ```clojure
-(require '[eacl.migrations.v7-to-v8 :as v7-to-v8])
+(require '[eacl.migrations.v7-to-v8])
 
-(v7-to-v8/migrate!
- conn
- {:schema released-v8-schema-string
-  :expression-limits
-  {:maximum-source-nodes 32768
-   :maximum-source-depth 64}})
+(eacl.migrations.v7-to-v8/migrate! conn
+                                   {:schema                      released-v8-schema-string
+                                    :expression-limits
+                                    {:maximum-source-nodes 32768
+                                     :maximum-source-depth 64}})
 ```
 
 For Datahike, back up the store using the backend's supported mechanism, then
@@ -29,14 +28,13 @@ use the Datahike migration namespace. It uses the stored schema source when
 `:schema` is omitted:
 
 ```clojure
-(require '[eacl.datahike.migrations.v7-to-v8 :as v7-to-v8])
+(require '[eacl.datahike.migrations.v7-to-v8])
 
-(v7-to-v8/migrate!
- conn
- {:schema released-v8-schema-string
-  :expression-limits
-  {:maximum-source-nodes 32768
-   :maximum-source-depth 64}})
+(eacl.datahike.migrations.v7-to-v8/migrate! conn
+                                            {:schema                      released-v8-schema-string
+                                             :expression-limits
+                                             {:maximum-source-nodes 32768
+                                              :maximum-source-depth 64}})
 ```
 
 For Datomic, the schema string is optional only when the released v7 permission

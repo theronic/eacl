@@ -10,13 +10,11 @@ Both `alice` and `report` must already exist in the database.
 
 ```clojure
 (eacl/with-snapshot [snapshot (eacl/snapshot acl)]
-  @(d/transact
-    conn
-    (eacl/tx-relationships
-     snapshot
-     {:updates [{:operation :touch
-                 :relationship (eacl/->Relationship alice :viewer report)}]
-      :tx-data [[:db/add [:app/id "report"] :document/title "Shared report"]]})))
+  @(d/transact conn
+     (eacl/tx-relationships snapshot
+       {:updates [{:operation    :touch
+                   :relationship (eacl/->Relationship alice :viewer report)}]
+        :tx-data [[:db/add [:app/id "report"] :document/title "Shared report"]]})))
 ```
 
 Submit the returned transaction data intact. It includes checks that the
@@ -28,12 +26,11 @@ For an expiring relationship, use `write-relationships!` to handle preparation
 and the final transaction for you:
 
 ```clojure
-(eacl/write-relationships!
- acl
- {:updates [{:operation :touch
-             :relationship (assoc (eacl/->Relationship alice :viewer report)
-                                  :valid-until-ms deadline-ms)}]
-  :tx-data [[:db/add [:app/id "report"] :document/title "Shared report"]]})
+(eacl/write-relationships! acl
+  {:updates [{:operation    :touch
+              :relationship (assoc (eacl/->Relationship alice :viewer report)
+                                   :valid-until-ms deadline-ms)}]
+   :tx-data [[:db/add [:app/id "report"] :document/title "Shared report"]]})
 ```
 
 `deadline-ms` is a UTC timestamp in milliseconds. See

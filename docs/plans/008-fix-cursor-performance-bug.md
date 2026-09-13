@@ -16,13 +16,13 @@ The `impl_fixed.clj` implementation has a **critical performance bug** that make
 ### Current Broken Flow
 ```clojure
 lookup-resources
-├── Extract cursor-eid but DON'T pass it down  
+├── Extract cursor-eid but DON'T pass it down
 ├── Call traverse-traversal-path with NO cursor ❌
-│   └── Call traverse-relationship-forward with cursor=nil ❌
-│       └── Start index-range from beginning ❌
+│ └── Call traverse-relationship-forward with cursor=nil ❌
+│ └── Start index-range from beginning ❌
 ├── Fetch ALL results from index start ❌
-├── combine-union-results 
-│   └── apply-cursor-filter with expensive drop-while ❌
+├── combine-union-results
+│ └── apply-cursor-filter with expensive drop-while ❌
 └── Return limited results after massive waste ❌
 ```
 
@@ -40,7 +40,7 @@ path-results (map (fn [path]
 ```
 
 #### 2. **Cursor Hardcoded to nil** (Line ~180-210)
-```clojure
+```text
 (defn traverse-traversal-path [db subject-type subject-eid traversal-path resource-type limit]
   ;; BUG: cursor hardcoded to nil in ALL cases
   (traverse-relationship-forward db subject-type subject-eid terminal-relation resource-type nil limit)
@@ -59,7 +59,7 @@ path-results (map (fn [path]
 ```
 
 #### 4. **Index Range Misuse** (Line ~145)
-```clojure
+```text
 (defn traverse-relationship-forward [db subject-type subject-eid relation target-resource-type cursor limit]
   (let [start-tuple [subject-type subject-eid relation target-resource-type
                      (or cursor 0)] ; ❌ WRONG: cursor should be entity ID in LAST position
@@ -119,7 +119,7 @@ path-results (map (fn [path]
                   permission-paths)
 
 ;; In traverse-traversal-path
-(traverse-relationship-forward db subject-type subject-eid terminal-relation 
+(traverse-relationship-forward db subject-type subject-eid terminal-relation
                                resource-type cursor limit) ; Pass cursor!
 
 ;; In find-resources-with-permission  
@@ -138,7 +138,7 @@ Fix the tuple construction to properly use cursor:
                       [subject-type subject-eid relation target-resource-type cursor]
                       [subject-type subject-eid relation target-resource-type])
         ;; FIX: Use proper start tuple for index-range
-        datoms (d/index-range db 
+        datoms (d/index-range db
                               :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
                               start-tuple nil)]
     (->> datoms
@@ -157,14 +157,14 @@ Fix the tuple construction to properly use cursor:
                       [subject-type subject-eid relation target-resource-type cursor]
                       ;; Start from beginning
                       [subject-type subject-eid relation target-resource-type])
-        datoms (d/index-range db 
+        datoms (d/index-range db
                               :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
                               start-tuple nil)]
     (->> datoms
          ;; Verify we're still in the right "section" of index
          (take-while #(matches-forward-tuple % subject-type subject-eid relation target-resource-type))
          ;; Skip the cursor record itself if we started exactly at cursor
-         (drop-while (fn [datom] 
+         (drop-while (fn [datom]
                        (and cursor (= (last (:v datom)) cursor))))
          (map extract-resource-from-forward-datom)
          (take limit))))
@@ -210,36 +210,36 @@ Union permissions are complex because each path has independent cursor positions
   (let [permission-paths (get-unified-permission-paths db (:resource/type query) (:permission query))
         cursor (:cursor query)
         limit (:limit query)
-        
+
         ;; Extract path-specific cursor info
         current-path-index (or (:path-index cursor) 0)
         current-cursor-eid (when cursor (:resource-id cursor))
-        
+
         ;; Process paths starting from current path
         remaining-paths (drop current-path-index permission-paths)
-        
+
         results (loop [paths remaining-paths
-                       path-idx current-path-index  
+                       path-idx current-path-index
                        cursor-eid current-cursor-eid
                        accumulated []]
-          (if (or (empty? paths) (>= (count accumulated) limit))
-            accumulated
-            (let [path (first paths)
-                  path-results (traverse-traversal-path db subject-type subject-eid path 
-                                                        resource-type cursor-eid limit)
-                  needed (- limit (count accumulated))
-                  taken (take needed path-results)]
-              (if (< (count path-results) needed)
+                  (if (or (empty? paths) (>= (count accumulated) limit))
+                    accumulated
+                    (let [path (first paths)
+                          path-results (traverse-traversal-path db subject-type subject-eid path
+                                                                resource-type cursor-eid limit)
+                          needed (- limit (count accumulated))
+                          taken (take needed path-results)]
+                      (if (< (count path-results) needed)
                 ;; This path exhausted, move to next path with no cursor
-                (recur (rest paths) (inc path-idx) nil (concat accumulated taken))
+                        (recur (rest paths) (inc path-idx) nil (concat accumulated taken))
                 ;; This path has more results, stop here with cursor
-                (let [next-cursor (when (= (count taken) needed)
-                                    (create-path-cursor path-idx (second (last taken))))]
-                  {:data (concat accumulated taken)
-                   :cursor next-cursor})))))]
-    
+                        (let [next-cursor (when (= (count taken) needed)
+                                            (create-path-cursor path-idx (second (last taken))))]
+                          {:data   (concat accumulated taken)
+                           :cursor next-cursor})))))]
+
     ;; Convert to spice objects
-    {:data (map #(eid->spice-object db (first %) (second %)) (:data results))
+    {:data   (map #(eid->spice-object db (first %) (second %)) (:data results))
      :cursor (:cursor results)}))
 ```
 
@@ -251,23 +251,23 @@ Process one path at a time to avoid union complexity:
   (let [permission-paths (get-unified-permission-paths db (:resource/type query) (:permission query))
         cursor (:cursor query)
         limit (:limit query)
-        
+
         ;; Process single path at a time
         current-path-index (or (:path-index cursor) 0)
         current-path (nth permission-paths current-path-index nil)]
-    
+
     (if current-path
       (let [cursor-eid (when cursor (:resource-id cursor))
-            path-results (traverse-traversal-path db subject-type subject-eid current-path 
+            path-results (traverse-traversal-path db subject-type subject-eid current-path
                                                   resource-type cursor-eid limit)]
         (if (< (count path-results) limit)
           ;; Path exhausted, try next path
           (if (< (inc current-path-index) (count permission-paths))
             (recur db (assoc query :cursor (->PathCursor (inc current-path-index) nil)))
-            {:data (map #(eid->spice-object db (first %) (second %)) path-results)
+            {:data   (map #(eid->spice-object db (first %) (second %)) path-results)
              :cursor nil})
           ;; Path has more results
-          {:data (map #(eid->spice-object db (first %) (second %)) path-results)
+          {:data   (map #(eid->spice-object db (first %) (second %)) path-results)
            :cursor (->PathCursor current-path-index (second (last path-results)))}))
       {:data [] :cursor nil})))
 ```
@@ -283,18 +283,18 @@ Arrow permissions traverse multiple relationships, requiring cursor handling at 
         terminal-relation (:terminal-relation traversal-path)]
     (if (empty? steps)
       ;; Direct permission - simple case
-      (traverse-relationship-forward db subject-type subject-eid terminal-relation 
+      (traverse-relationship-forward db subject-type subject-eid terminal-relation
                                      resource-type cursor limit)
       ;; Arrow permission - complex case needs cursor handling at each step
       (let [first-step (first steps)
             remaining-steps (rest steps)]
-        
+
         (if (empty? remaining-steps)
           ;; Single-step arrow
-          (traverse-single-step-arrow db subject-type subject-eid first-step 
+          (traverse-single-step-arrow db subject-type subject-eid first-step
                                       terminal-relation resource-type cursor limit)
           ;; Multi-step arrow - needs recursive cursor handling
-          (traverse-multi-step-arrow db subject-type subject-eid steps 
+          (traverse-multi-step-arrow db subject-type subject-eid steps
                                      terminal-relation resource-type cursor limit))))))
 ```
 
@@ -306,23 +306,23 @@ Arrow permissions traverse multiple relationships, requiring cursor handling at 
   ;; 2. Find servers connected to those accounts (final step) 
   ;;
   ;; Cursor handling: Need to track position in FINAL results, not intermediate
-  
+
   (let [target-resource-type (:target-resource-type step)
         source-relation (:relation step)
-        
+
         ;; Get intermediate entities (accounts with admin permission)  
         ;; TODO: Need cursor handling here for large intermediate sets
-        intermediate-entities (find-resources-with-permission db subject-type subject-eid 
-                                                             terminal-relation target-resource-type 
-                                                             nil (* limit 10)) ; Fetch more intermediates
-        
+        intermediate-entities (find-resources-with-permission db subject-type subject-eid
+                                                              terminal-relation target-resource-type
+                                                              nil (* limit 10)) ; Fetch more intermediates
+
         ;; Get final results with proper cursor handling
         final-results (mapcat (fn [[inter-type inter-eid]]
-                               (traverse-relationship-forward db inter-type inter-eid 
-                                                              source-relation resource-type 
-                                                              cursor limit))
-                             intermediate-entities)]
-    
+                                (traverse-relationship-forward db inter-type inter-eid
+                                                               source-relation resource-type
+                                                               cursor limit))
+                              intermediate-entities)]
+
     ;; Apply limit to final combined results
     (take limit final-results)))
 ```
@@ -336,17 +336,17 @@ Arrow permissions traverse multiple relationships, requiring cursor handling at 
     (with-mem-conn [conn schema/v5-schema]
       ;; Create large test dataset (10K resources)
       @(d/transact conn (generate-large-dataset 10000))
-      
+
       (let [db (d/db conn)
             start-time (System/nanoTime)]
-        
+
         ;; Test deep cursor position (position 5000)
-        (lookup-resources db {:subject (->user "test-user")
-                              :permission :view  
+        (lookup-resources db {:subject       (->user "test-user")
+                              :permission    :view
                               :resource/type :server
-                              :cursor {:resource-id server-5000-eid}
-                              :limit 10})
-        
+                              :cursor        {:resource-id server-5000-eid}
+                              :limit         10})
+
         (let [duration (- (System/nanoTime) start-time)]
           ;; Should complete in <100ms even with deep cursor
           (is (< duration 100000000)))))))
@@ -355,11 +355,11 @@ Arrow permissions traverse multiple relationships, requiring cursor handling at 
   (testing "Cursor pagination correctness with large dataset"
     (with-mem-conn [conn schema/v5-schema]
       @(d/transact conn (generate-large-dataset 1000))
-      
-      (let [all-pages (collect-all-pages db {:subject (->user "test-user")
-                                             :permission :view
-                                             :resource/type :server  
-                                             :limit 50})]
+
+      (let [all-pages (collect-all-pages db {:subject       (->user "test-user")
+                                             :permission    :view
+                                             :resource/type :server
+                                             :limit         50})]
         ;; Should get all 1000 resources across 20 pages
         (is (= 1000 (:total-count all-pages)))
         (is (= 20 (:page-count all-pages)))))))
@@ -372,15 +372,15 @@ Arrow permissions traverse multiple relationships, requiring cursor handling at 
     (with-mem-conn [conn schema/v5-schema]
       ;; Create scenario with multiple permission paths
       @(d/transact conn (generate-union-permission-data 5000))
-      
+
       (let [db (d/db conn)]
         ;; Test cursor in middle of union results
         (time
-          (lookup-resources db {:subject (->user "union-user")
-                                :permission :admin ; Has multiple paths
-                                :resource/type :server
-                                :cursor {:path-index 1 :resource-id middle-server-eid}
-                                :limit 10}))))))
+         (lookup-resources db {:subject       (->user "union-user")
+                               :permission    :admin ; Has multiple paths
+                               :resource/type :server
+                               :cursor        {:path-index 1 :resource-id middle-server-eid}
+                               :limit         10}))))))
 ```
 
 ## Implementation Priority 

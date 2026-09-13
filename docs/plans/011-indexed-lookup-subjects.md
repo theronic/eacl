@@ -50,7 +50,7 @@ Implement a direct index-based `lookup-subjects` function in `eacl.datomic.impl.
 (when (= resource-type (:resource-type path)) ; Validate resource type matches
   (let [reverse-tuple-attr :eacl.relationship/resource-type+resource+relation-name+subject-type+subject
         start-tuple [resource-type resource-eid (:name path) subject-type (or cursor-eid 0)]
-        end-tuple   [resource-type resource-eid (:name path) subject-type Long/MAX_VALUE]]
+        end-tuple [resource-type resource-eid (:name path) subject-type Long/MAX_VALUE]]
     (->> (d/index-range db reverse-tuple-attr start-tuple end-tuple)
          (map extract-subject-id-from-reverse-rel-tuple-datom)
          (filter #(> % (or cursor-eid 0))))))
@@ -61,8 +61,8 @@ Implement a direct index-based `lookup-subjects` function in `eacl.datomic.impl.
 :self-permission
 ;; Self-permission: recursively find subjects that have target permission on this resource
 (let [target-permission (:target-permission path)]
-  (traverse-permission-path-reverse db resource-type resource-eid 
-                                   target-permission subject-type cursor-eid))
+  (traverse-permission-path-reverse db resource-type resource-eid
+                                    target-permission subject-type cursor-eid))
 ```
 
 #### [x] 2.4 Handle `:arrow` paths
@@ -81,7 +81,7 @@ Two sub-cases based on target type:
 #### [x] 3.1 Function signature and validation
 ```clojure
 (defn lookup-subjects-indexed
-  [db {:as filters
+  [db {:as   filters
        :keys [resource permission subject/type limit cursor]}]
   {:pre [(:type resource) (:id resource)]}
   ...)
@@ -92,7 +92,7 @@ Two sub-cases based on target type:
 (let [{resource-type :type
        resource-id   :id} resource
       resource-eid (d/entid db resource-id)
-      
+
       {cursor-subject :subject} cursor
       cursor-eid (:id cursor-subject)]
   ...)
@@ -103,8 +103,8 @@ Two sub-cases based on target type:
 (let [paths (get-permission-paths db resource-type permission)
       path-seqs (->> paths
                      (keep (fn [path]
-                             (let [results (traverse-permission-path-reverse 
-                                           db resource-type resource-eid path subject-type cursor-eid)]
+                             (let [results (traverse-permission-path-reverse
+                                            db resource-type resource-eid path subject-type cursor-eid)]
                                (when (seq results) results)))))
       merged-results (if (seq path-seqs)
                        (lazy-merge-dedupe-sort path-seqs)
@@ -118,7 +118,7 @@ Two sub-cases based on target type:
       subjects (map #(spice-object subject-type %) limited-results)
       last-subject (last subjects)
       next-cursor {:subject (or last-subject (:subject cursor))}]
-  {:data subjects
+  {:data   subjects
    :cursor next-cursor})
 ```
 

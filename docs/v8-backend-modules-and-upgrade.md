@@ -145,15 +145,15 @@ Every bundled backend creates a bounded client-private cache unless explicitly
 disabled:
 
 ```clojure
-(require '[eacl.cache :as cache])
+(require '[eacl.cache])
 
-(datascript/make-client conn {:cache cache/no-cache})
-(datahike/make-client conn {:cache cache/no-cache})
-(datomic/make-client conn {:cache cache/no-cache})
-(datalevin/make-client conn {:cache cache/no-cache
+(eacl.datascript/make-client conn {:cache eacl.cache/no-cache})
+(eacl.datahike/make-client conn {:cache eacl.cache/no-cache})
+(eacl.datomic/make-client conn {:cache eacl.cache/no-cache})
+(eacl.datalevin/make-client conn {:cache eacl.cache/no-cache
                              ;; plus mandatory lifecycle, watermark,
                              ;; and signing options
-                             })
+                                  })
 ```
 
 Every bundled adapter also certifies EACL's schema generation independently
@@ -282,12 +282,11 @@ admits each (node, entity) exactly once. Each client accepts positive
 `:recursive-traversal-limits` overrides:
 
 ```clojure
-(datascript/make-client
- conn
- {:recursive-traversal-limits
-  {:max-derived-grants 200000
-   :max-advanced-datoms 200000
-   :max-queued-work 200000}})
+(eacl.datascript/make-client conn
+  {:recursive-traversal-limits
+   {:max-derived-grants  200000
+    :max-advanced-datoms 200000
+    :max-queued-work     200000}})
 ```
 
 Exceeding a ceiling throws `:eacl.recursive-traversal/limit-exceeded`. Use
@@ -308,12 +307,11 @@ enumerations (point checks, lookups, counts) and a replay ledger for cursor
 replays; slots are held for the full synchronous call chain of the work:
 
 ```clojure
-(datascript/make-client
- conn
- {:service-admission
-  {:max-concurrent 64        ; enumerations holding a slot at once
-   :max-replays 16           ; concurrent cursor replays in total
-   :max-replays-per-key 2}}) ; concurrent replays of one continuation
+(eacl.datascript/make-client conn
+  {:service-admission
+   {:max-concurrent      64        ; enumerations holding a slot at once
+    :max-replays         16           ; concurrent cursor replays in total
+    :max-replays-per-key 2}}) ; concurrent replays of one continuation
 ```
 
 Rejections are `:eacl.service/admission-rejected` and
@@ -348,11 +346,11 @@ multisets when order is irrelevant.
 Clients accept `:permission-tree-limits` with positive portable exact integers:
 
 ```clojure
-{:max-depth 50
- :max-schema-components 100000
+{:max-depth               50
+ :max-schema-components   100000
  :max-relationship-values 100000
- :max-tree-nodes 100000
- :max-leaf-subjects 100000}
+ :max-tree-nodes          100000
+ :max-leaf-subjects       100000}
 ```
 
 These are construction-time ceilings; requests cannot override them. Limit,

@@ -77,12 +77,12 @@ expiry decision remain authoritative.
 Disable caching:
 
 ```clojure
-(require '[eacl.cache :as cache])
+(require '[eacl.cache])
 
-(datomic/make-client conn {:cache cache/no-cache})
-(datahike/make-client conn {:cache cache/no-cache})
-(datascript/make-client conn {:cache cache/no-cache})
-(datalevin/make-client conn {:cache cache/no-cache})
+(eacl.datomic/make-client conn {:cache eacl.cache/no-cache})
+(eacl.datahike/make-client conn {:cache eacl.cache/no-cache})
+(eacl.datascript/make-client conn {:cache eacl.cache/no-cache})
+(eacl.datalevin/make-client conn {:cache eacl.cache/no-cache})
 ```
 
 Or pass `:cache? false` on one request. Pass `:populate-cache? false` to retain

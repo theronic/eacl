@@ -51,9 +51,9 @@ the explicit, bounded maintenance migration before starting ordinary v8
 clients:
 
 ```clojure
-(require '[eacl.datahike.migrations.v7-to-v8 :as v7-to-v8])
+(require '[eacl.datahike.migrations.v7-to-v8])
 
-(v7-to-v8/migrate! conn)
+(eacl.datahike.migrations.v7-to-v8/migrate! conn)
 ```
 
 The stored `:eacl/schema-string` is authoritative by default. A maintenance
@@ -95,22 +95,21 @@ representation, and writer topology:
 
 ```clojure
 (require '[datahike.api :as d]
-         '[eacl.datahike.safe-retraction :as safe-retraction])
+         '[eacl.datahike.safe-retraction])
 
-(safe-retraction/support-descriptor (d/db conn))
+(eacl.datahike.safe-retraction/support-descriptor (d/db conn))
 ;; :schema-flexibility :read  + in-process writer => :named
 ;; default :write            + in-process writer => :direct
 ;; function-unsafe remote writer                => :unsupported
 
 ;; Named :read mode:
-(safe-retraction/install! conn)
+(eacl.datahike.safe-retraction/install! conn)
 
 ;; Direct :write mode (no named function is installed):
-(safe-retraction/prepare! conn)
-(d/transact
- conn
- (safe-retraction/retract-entity-tx-data
-  (d/db conn) [:app/id "account-1"]))
+(eacl.datahike.safe-retraction/prepare! conn)
+(d/transact conn
+  (eacl.datahike.safe-retraction/retract-entity-tx-data
+   (d/db conn) [:app/id "account-1"]))
 ```
 
 Named-mode `install!` installs `:eacl.fn/retractEntity` and verifies that the

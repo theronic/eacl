@@ -92,9 +92,9 @@ For an ordinary point query:
 
 ```clojure
 (eacl/can? acl
-           {:subject super-user
+           {:subject    super-user
             :permission :view
-            :resource server-42})
+            :resource   server-42})
 ```
 
 the minimum semantic output is one bit:
