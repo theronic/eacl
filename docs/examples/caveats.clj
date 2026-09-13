@@ -21,9 +21,13 @@
        (catch clojure.lang.ExceptionInfo error (:type (ex-data error)))))
 
 (defn run-example! []
-  (let [conn (api/create-conn)
+  (let [conn (api/create-conn {:app/id {:db/unique :db.unique/identity}})
         now (atom 1000)
-        client (api/make-client conn {:clock #(deref now) :caveat-evaluator (caveats/evaluator)})
+        client (api/make-client conn
+                                {:clock #(deref now)
+                                 :caveat-evaluator (caveats/evaluator)
+                                 :object-id->lookup-ref (fn [id] [:app/id id])
+                                 :entid->object-id (fn [db eid] (:app/id (ds/entity db eid)))})
         alice (eacl/spice-object :user "alice")
         report (eacl/spice-object :doc "report")
         other (eacl/spice-object :doc "other")
@@ -33,7 +37,7 @@
         request {:subject alice :resource report :permission :view}
         with-region (assoc request :caveat-context {"region" "za"})]
     (eacl/write-schema! client schema)
-    (ds/transact! conn [{:eacl/id "alice"} {:eacl/id "report"} {:eacl/id "other"}])
+    (ds/transact! conn [{:app/id "alice"} {:app/id "report"} {:app/id "other"}])
     (eacl/create-relationship! client relationship)
     (eacl/create-relationship! client alice :viewer other)
     (let [conditional (eacl/check-permission client request)]

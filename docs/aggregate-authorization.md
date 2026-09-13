@@ -1,139 +1,104 @@
 # Aggregate authorization
 
-EACL provides two aggregate read families that keep one immutable snapshot,
-one absolute deadline, one cancellation token, and one request-local memo for
-the complete operation. They do not loop through the public scalar API.
+Use `check-permissions` to check several permissions against one snapshot.
+Use a filtered relationship read or lookup when a page needs both a permission
+check and a direct relationship filter.
+
+These examples describe `8.0.0-RC-2026-09-12`. The
+[consumer checks](examples/datomic-consumer/) exercise both page routes.
 
 ## Ordered point-check batches
 
-Use `check-permissions` when one request needs several point decisions:
-
 ```clojure
-(eacl/check-permissions
- acl
- {:checks [{:subject alice :permission :view :resource document-1}
-           {:subject alice :permission :edit :resource document-1}
-           {:subject bob   :permission :view :resource document-2}]
-  :cache? true
-  :timeout-ms 5000
-  :aggregate-limits {:max-batch-size 1000}})
-;; => [{:allowed? true  :cached? false :cache-basis ...}
-;;     {:allowed? false :cached? false :cache-basis ...}
-;;     {:allowed? true  :cached? true  :cache-basis ...}]
+(defn document-actions [acl user document]
+  (eacl/check-permissions acl
+    {:checks [{:subject user :permission :view :resource document}
+              {:subject user :permission :edit :resource document}]
+     :timeout-ms 5000}))
 ```
 
-The result has the same order and cardinality as `:checks`, including duplicate
-positions. Each decision has the ordinary `check-permission` result shape and
-reports the cache artifact actually used. Request-local sharing is not called a
-durable cache hit. The request envelope is closed; controls such as
-`:consistency`, `:evaluation`, `:timeout-ms`, `:cancellation-token`, `:cache?`,
-and `:aggregate-limits` are request-wide. Any invalid demand, deadline,
-cancellation, backend failure, or aggregate-limit failure rejects the whole
-batch and identifies the failing `:demand-index`; no partial vector is returned.
+The result is a vector in the same order as `:checks`, including duplicates.
+Each item has the usual `check-permission` result, including `:allowed?`.
+All checks share one snapshot and deadline. An invalid request, timeout,
+cancellation, backend failure, or limit failure rejects the batch; EACL does
+not return a partial vector.
 
 ## Authorized relationship pages
 
-There are two explicit routes over the same logical filter. The caller chooses
-which candidate set is smaller.
-
-The scan route reads matching relationships and authorizes one endpoint of each
-candidate:
+Suppose documents have a `:folder` relation and a `:view` permission. These
+functions list documents in a folder that a user may view. The scan route
+returns relationships; the lookup route returns resource objects.
 
 ```clojure
-(eacl/read-relationships
- acl
- {:subject/type :account
-  :subject/id "account-1"
-  :resource/type :document
-  :resource/relation :account
-  :authorization {:subject alice
-                  :permission :view
-                  :on :resource}
-  :first 50
-  :aggregate-limits {:candidate-window 500}})
+(defn visible-folder-relationships [acl user folder]
+  (eacl/read-relationships acl
+    {:subject/type :folder
+     :subject/id (:id folder)
+     :resource/type :document
+     :resource/relation :folder
+     :authorization {:subject user :permission :view :on :resource}
+     :first 50
+     :aggregate-limits {:candidate-window 500}}))
 ```
 
-The enumerate route first discovers authorized objects and performs one
-certified direct-relationship membership probe for each candidate:
+The scan first finds matching relationships and checks `:view` on each resource.
+Set `:on :subject` when the permission should be checked on the other endpoint.
 
 ```clojure
-(eacl/lookup-resources
- acl
- {:subject alice
-  :permission :view
-  :resource/type :document
-  :resource/relationship {:relation :account
-                          :subject account-1}
-  :first 50
-  :aggregate-limits {:candidate-window 500}})
+(defn visible-folder-documents [acl user folder]
+  (eacl/lookup-resources acl
+    {:subject user
+     :permission :view
+     :resource/type :document
+     :resource/relationship {:relation :folder :subject folder}
+     :first 50
+     :aggregate-limits {:candidate-window 500}}))
 ```
 
-The reverse shape is
-`lookup-subjects` with
-`:subject/relationship {:relation relation :resource anchor}`. Types,
-permissions, and direct relations are schema-validated before traversal.
+The lookup first finds authorized resources, then checks for the direct folder
+relationship. For `lookup-subjects`, the corresponding option is
+`:subject/relationship {:relation relation :resource anchor}`.
+The unprefixed lookup option `:relationship` is not supported.
 
-| Route | Candidate stream | Per-candidate work | Approximate selection cost | Prefer when |
-| --- | --- | --- | --- | --- |
-| Scan | Relationships matching the ordinary filters | One context-bound permission decision on `:subject` or `:resource` | matching relationships × authorization cost | The relationship set is small |
-| Enumerate | Objects authorized by the lookup | One certified direct-match probe | authorized objects × membership-probe cost | The authorized set is small |
+| Route | Starts with | Use when |
+| --- | --- | --- |
+| Relationship scan | Relationships matching the filters | The folder has relatively few documents. |
+| Resource lookup | Resources the user may access | The user can access relatively few documents. |
 
-Neither route dominates. For example, enumerate is usually best for one user's
-few visible documents; scan is usually best when a super-admin filters a few
-relationships. EACL deliberately does not choose adaptively because the caller
-knows which side is bounded.
+Choose based on your application's data. Both routes enforce the requested
+permission, but they return different kinds of values.
+
+## Protecting sharing metadata
+
+Being allowed to view a document need not mean being allowed to see its sharing
+list. Check the application's sharing-management permission before returning
+saved relationships. Use the same snapshot for the check and read; see
+[the complete sharing-read recipe](caveats.md#showing-saved-shares-and-current-access).
+Use the authenticated caller as the subject, not an arbitrary user ID supplied
+by the browser.
 
 ## Candidate windows and short pages
 
-`:aggregate-limits {:candidate-window W}` bounds candidates examined for one
-page. A page stops at physical exhaustion, the `N+1` accepted sentinel for an
-`N`-row request, or the window boundary. Reaching the window is normal progress,
-not a denial or resource error. The response can therefore contain fewer than
-`N` rows with both `:has-next-page? true` and `:bounded? true`; continue with its
-`:end-cursor`. When `:bounded?` is false, `:has-next-page?` is exact.
+`:candidate-window` limits how many candidates EACL examines for one page.
+A page can therefore contain fewer than `:first` results, or none, while still
+having more work to do.
 
-```clojure
-{:data [accepted-rows ...]
- :page-info {:start-cursor nil
-             :end-cursor "eacl_c5_..."
-             :has-next-page? true
-             :has-previous-page? false
-             :bounded? true}
- :cached? false
- :cache-basis ...}
-```
+| Page field | Meaning |
+| --- | --- |
+| `:bounded? true` | EACL stopped at the candidate window before proving exhaustion. |
+| `:has-next-page? true` | Continue using `:end-cursor`; a bounded page may have no accepted rows. |
+| `:bounded? false` | `:has-next-page?` reports whether another result exists. |
 
-Deadlines and candidate windows are different controls. A deadline,
-cancellation, backend, rendering, or publication failure returns no rows and no
-cursor. Nested work consumes the original absolute deadline and cumulative
-aggregate limits; it never renews or resets them.
+Continue with the same query and the returned cursor. A timeout or failure
+returns an error, not a partial page or resumable cursor.
 
 ## Cursor confidentiality, scope, and cache provenance
 
-Aggregate cursors use EACL's authenticated-encryption envelope. The progress
-anchor is confidential. The cursor binds the route, operation, ordinary query,
-authorization or relationship clause, direction, page demand, window budget,
-source/lifecycle/basis identity, certified schema generation, dependency proof,
-and ordering ABI. A cursor cannot cross from scan to enumerate or be reused
-with a different subject, permission, endpoint, relation, anchor, filter,
-direction, page size, or answer-affecting limit. If its exact basis or proof is
-no longer available, continuation fails closed instead of restarting.
+Cursors are encrypted and authenticated. They belong to one query, route,
+page size, and set of limits. Changing those inputs requires a new lookup.
+If the selected database version cannot be recovered, EACL returns an error
+instead of silently restarting at a different version.
 
-Successful aggregate results retain the ordinary `:cached?` and `:cache-basis`
-fields. An exact identical-basis page hit is reported as a hit. A proof-backed
-hit is possible only when the adapter certifies the complete ordered-generation
-frontier. Datalevin intentionally has no such proof capability, so it reuses
-completed answers only at the identical selected revision. Every bundled
-backend independently certifies `:schema-generation`, allowing parsed schema,
-validation catalogs, dependency closures, and sealed plans to survive
-relationship-only revisions even when completed answers cannot.
-
-## Performance qualification
-
-The checked-in gates compare aggregate routes with a scalar-loop oracle and
-enforce deterministic acquisition, release, sealing, candidate, and probe
-counters. Absolute ceilings apply only to their recorded host class. HTTP
-reports isolate the local framework share with a no-op control and are not
-ratio-gated. These measurements demonstrate removal of request amplification;
-they do not establish a universal or portable sub-millisecond service-level
-agreement.
+Results include `:cached?` and `:cache-basis`. Cached results follow the same
+permission and pagination rules; see [cache behavior](cache.md) and
+[security keys](security-keyrings.md).

@@ -1,9 +1,38 @@
 # Security keys and live rotation
 
-EACL v8 accepts externally supplied keys through an opaque, in-memory
-`SecurityKeyring`. Clients sharing a controller observe its updates without
-being recreated. Cursors, Zed tokens, and authenticated cache snapshots each
-name one authenticated key ID. Their cryptographic domains remain separate.
+EACL cursors are encrypted and authenticated so you can pass them through an
+untrusted browser. They contain traversal positions and query details.
+Encryption hides those details; authentication prevents a client from changing
+a cursor's position or reusing it for a different query. The permission query
+still determines which resources the caller may see.
+
+In a load-balanced application, a cursor created by one Peer may be sent to
+another Peer on the next request. Configure the same keys on those Peers so
+each can read the other's cursors. Shared keys are also needed to verify Zed
+tokens and authenticated cache snapshots across processes or restarts.
+
+The default keys are random and process-local. They are useful for a local
+example, but do not survive a restart or work across independent Peers.
+
+A keyring holds the keys EACL accepts and identifies the active key used for
+new artifacts. A `SecurityKeyring` controller lets you update that set without
+recreating clients. Your application must distribute and persist the keys;
+EACL does not fetch them from a secret manager.
+
+## Cursor encryption
+
+The `eacl_c6_` cursor format uses AES-256-CTR encryption and HMAC-SHA-256
+authentication with separately derived keys and a random 96-bit nonce. EACL
+verifies authentication before decrypting or parsing the payload. This
+provides confidentiality and tamper detection; encryption alone would not
+prevent cursor modification.
+
+Rotate a cursor encryption root before 2^32 encryptions under that root,
+counting all Peers that share it. EACL does not count encryptions for you.
+See the [cryptographic assumptions](../formal/verification/cryptographic-assumptions.md)
+for the implementation and verification details.
+
+## Cursor lifetime
 
 **Cursors have no age expiry by default. Lossless resume therefore requires
 indefinite retention of their old keys.** Retirement deliberately invalidates
@@ -13,34 +42,29 @@ add an expiry to previously issued non-expiring cursors.
 
 ## Key material and ownership
 
-Generate at least 32 bytes of cryptographically random key material outside
-EACL. The library validates representation and length; it cannot measure the
-entropy of a supplied secret. Byte arrays, byte sequences, and UTF-8 strings
-are supported. A string is used as UTF-8 bytes, not implicitly decoded from
-Base64. Decode your secret manager's representation in application code.
+Generate at least 32 cryptographically random bytes outside EACL. The library
+checks length and representation, but cannot tell whether a secret was
+randomly generated. It accepts byte arrays, byte sequences, and UTF-8 strings.
+Decode Base64 from your secret manager yourself; EACL treats a string as UTF-8.
 
-Use a fresh, globally unique public ID for each new key. An accepted ID cannot
-change material, and a retired ID cannot return during a controller's lifetime.
-Maintain that uniqueness across application restarts as well. Secret IDs should
-be labels, never the secret itself.
+Give each key a unique public ID, such as `:cursor-2026-09`. The ID is a label,
+not the secret. Never assign different material to an existing ID or recycle
+a retired ID, including after a restart.
 
-The controller copies supported mutable byte inputs before publication. Key
-updates are not durable: the application owns secret distribution, durable
-configuration, and restart recovery. EACL neither polls a secret manager nor
-performs a network fetch during authorization. Without explicit primary keys,
-a private controller uses the process-local random default key.
+Your application owns distribution, durable storage, and restart recovery.
+Controller updates live in memory. EACL copies mutable byte inputs, but the
+JVM and JavaScript runtimes cannot guarantee that retired secret bytes are
+erased from every memory copy.
 
-Retired root bytes and prior derived-key caches leave the current controller
-state. In-flight operations may still hold an older snapshot. Garbage-collected
-JVM and JavaScript runtimes cannot guarantee zeroization; immutable strings,
-application references, heap dumps, and runtime copies remain application
-security concerns.
+| Limit | Maximum |
+| --- | ---: |
+| Accepted keys | 64 |
+| Retired IDs per controller | 65,536 |
+| Encoded key ID | 1,024 bytes |
+| Root key material | 4,096 bytes |
 
-Accepted-key count is capped at 64, retired IDs at 65,536, encoded IDs at 1,024
-bytes, and root material at 4,096 bytes. `:max-keys` and `:max-retired-kids` can
-lower the count ceilings. Derived-key caches are bounded to 256 entries per
-generation. Plan a fresh externally coordinated configuration before exhausting
-the retired-ID ceiling; do not recycle an old ID.
+`:max-keys` and `:max-retired-kids` can lower the count limits. Plan a new
+coordinated configuration before exhausting retired IDs; do not recycle them.
 
 ## Configuration scopes
 
@@ -93,23 +117,17 @@ All operations below are in `eacl.core`.
 | `retire-security-key!` | Retire an inactive key; an already retired ID is idempotent. |
 | `replace-security-keyring!` | Atomically replace the complete desired state at `:expected-generation`. |
 
-Successful state changes advance the generation once. Full replacement also
-advances it when the desired state equals the current state. Convenience
-operations retry competing updates at most 32 times; stale complete-state
-replacement returns `:eacl.keyring/conflict` with safe current status. Validation
-returns `:eacl.keyring/invalid` with a closed reason, including
-`:active-key-retirement`, `:active-key-unavailable`, `:retired-key-id`, and
-`:key-id-reuse`. Configuration errors remain `:eacl/invalid-config`.
+`security-keyring-status` reports the generation, active ID, accepted IDs,
+and retired IDs without exposing key material. Use that status to confirm
+updates on each Peer. Full replacement requires `:expected-generation` and
+returns `:eacl.keyring/conflict` if another update won the race.
 
-A full replacement can remove the old active key while selecting another
-accepted key in the same atomic update. Removing the active key without a valid
-replacement is rejected. Consumers never observe a partially installed ring.
+Invalid operations raise `:eacl.keyring/invalid`, for example when retiring
+the active key, reusing an ID, or selecting a missing key. Static configuration
+errors use `:eacl/invalid-config`. A full replacement may remove the old active
+key only if it selects a valid replacement atomically.
 
-Status and controller printing omit roots and private fingerprints. Use returned
-status for application-controlled audit events and authenticated operational
-endpoints. EACL does not emit secret-bearing rotation events or metric labels.
-Do not include application input maps or raw exceptions from secret providers
-in those logs.
+Keep raw secrets and secret-provider input maps out of application logs.
 
 ## Two-Peer rollout
 
@@ -162,11 +180,9 @@ already issued under it. A retired ID cannot be restored to that controller;
 after retirement, recover by retaining the new configuration and restarting
 invalidated pagination explicitly at the application boundary.
 
-Each protected operation captures one immutable controller generation. An
-operation that captured a key before retirement may finish under that snapshot.
-Every operation started after retirement returns observes its removal. Adding
-or activating keys changes no database basis, source lifecycle, Relationship
-generation, qualifier generation, or authorization proof.
+An operation already in flight may finish with the keys it captured. Calls
+started after retirement observe the new key set. Key rotation does not change
+the database or permission rules.
 
 ## Errors and optional cache data
 
@@ -176,37 +192,19 @@ generation, qualifier generation, or authorization proof.
 | Caller-supplied Zed token | `:eacl/invalid-zed-token`, reason `:security-key-unavailable` |
 | Authenticated cache snapshot | `{:restored? false :cache-miss? true :reason :security-key-unavailable}` |
 
-Cursor age expiry remains `:eacl.pagination/expired-cursor` with reason
-`:expired`. Signature failures remain distinct from unavailable keys. Cursor
-and consistency errors preserve the caller's requested contract: application
-code decides whether to start a new traversal. Optional cache data can miss and
-recompute against the selected immutable snapshot.
+An expired cursor returns `:eacl.pagination/expired-cursor`. Invalid
+authentication and unavailable keys also produce errors for caller-supplied
+cursors and Zed tokens. Your application decides whether to begin a new query;
+EACL does not silently replace the requested view.
 
-Every backend provides `export-authenticated-cache-snapshot` and
-`restore-authenticated-cache-snapshot!`. Supply `{:max-entries n}` and optionally
-`:maximum-size` to lower the 16 MiB encoded-byte ceiling. The envelope
-**authenticates** cache contents; the application controls storage confidentiality.
-Only locally computed entries are exported. Imported entries keep their verifying
-controller and key ID privately, and are omitted from re-export so a new signature
-cannot extend their original trust. Values computed using imported subproblems
-are not published into local answer, range, continuation, or rendered-page caches.
+Authenticated cache snapshots are optional. Unknown keys, retired keys,
+malformed data, or invalid authentication cause a cache miss and leave the
+current cache intact. A successful restore replaces the cache after validation.
 
-Unknown, retired, malformed, or invalid authenticated cache artifacts are misses.
-A failed restore leaves the existing client caches intact. Successful restore
-atomically installs the reconstructed snapshot. Subsequent retirement invalidates
-only imported trust; answers computed locally after restore remain reusable.
+The cache envelope authenticates its contents but does not encrypt them. Protect
+storage if the contents are confidential. Imported entries remain dependent on
+their verifying key and cannot be re-exported as locally trusted answers.
+Retiring that key makes them unusable; locally computed answers remain reusable.
 
-Retirement itself does not scan client caches. On the next protected-page or
-codec use, bounded private stores remove retired cursor state and unreachable
-key contexts. Imported entries detach on lookup. Cleanup is best effort: late
-publishers may leave unreachable bounded entries until eviction. Mandatory
-key acceptance and cursor-cache policy identity enforce retirement even if
-physical cleanup is skipped or races an in-flight request.
-
-The older decoded `export-cache-snapshot` / `restore-cache-snapshot!` boundary
-remains host-owned trust and supports existing applications.
-
-Cryptographic limits still apply across activations and controller instances:
-rotate a cursor encryption root before 2^32 encryptions under that root. EACL does
-not count those invocations. See [cryptographic assumptions](../formal/verification/cryptographic-assumptions.md)
-and [cache operations](cache.md) for the associated contracts.
+See [cache persistence](cache.md#authenticated-cache-snapshots-v8) for export,
+restore, and size limits.
