@@ -100,20 +100,20 @@ Start a REPL in that directory with `clojure -M`, then evaluate:
 
 Give each user and document a unique, stable ID owned by your application.
 This example uses `:app/id`; you do not need to put application IDs in EACL's
-internal schema. Existing applications using the default `:eacl/id` remain
-supported. Changing IDs in an existing database is a separate migration.
+internal schema.
 
 The default token keys are process-local. For keys that survive restarts or
 work across load-balanced Peers, see [security keys](docs/security-keyrings.md).
 Leave cache options out to use the defaults.
 
-To delete a secured entity, remove its relationships first, or use Datomic's
-optional atomic deletion function:
+To delete a secured entity in Datomic, use `:eacl.fn/retractEntity`. Install
+the function during database setup; it removes the entity and its relationships
+in one transaction:
 
 ```clojure
 (require '[eacl.datomic.safe-retraction :as safe])
 (safe/install! conn)
-@(d/transact conn (safe/retract-entity-tx-data [:app/id "report"]))
+@(d/transact conn [[:eacl.fn/retractEntity [:app/id "report"]]])
 (eacl/can? acl alice :view report) ; false
 ```
 
@@ -1488,9 +1488,7 @@ Datomic example:
 ;; Privileged, idempotent deployment step.
 (safe-retraction/install! conn)
 
-@(d/transact
-  conn
-  (safe-retraction/retract-entity-tx-data [:app/id "acme"]))
+@(d/transact conn [[:eacl.fn/retractEntity [:app/id "acme"]]])
 ```
 
 The target can be a numeric entity ID or a valid lookup ref. Multiple and
