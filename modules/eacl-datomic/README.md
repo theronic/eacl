@@ -1,180 +1,100 @@
-# `eacl-datomic`
+# EACL for Datomic
 
-Datomic adapter for EACL.
+Use EACL to check permissions against data in your Datomic database. Add the
+adapter to `deps.edn`; it includes core and Datomic Peer:
 
-Responsibilities:
+```clojure
+{:deps {dev.eacl/eacl-datomic {:mvn/version "8.0.0-RC-2026-09-12"}}}
+```
 
-- Datomic physical schema and schema installation
-- Datomic tuple/index storage implementation
-- Datomic relationship write planning and transaction execution
-- consistency descriptors, Zed tokens, encrypted Relay-style pagination, and historical reads
-- automatic exact-first/proof-backed caching with native ordered generations
-- object-deletion and integrity helpers
-- Datomic compatibility namespaces preserving the existing public surface
-- Datomic-only regression and storage-mechanics tests
+The published build requires Java 25 or newer. This is a release candidate.
+Start with the [Datomic quickstart](../../README.md#quickstart), which creates
+a memory database with application-owned `:app/id` values. No separate
+Datomic server, account, source checkout, or formal tools are needed for it.
+The [consumer checks](../../docs/examples/datomic-consumer/) run against these
+Maven dependencies.
 
-Depending on this module keeps existing `eacl.core` and `eacl.datomic.*`
-require forms unchanged.
+## Database setup
+
+For a fresh database, call `eacl.datomic.schema/install!`, install your
+application schema, then create the client. Configure both ID converters if
+your application uses an attribute other than the default `:eacl/id`.
+
+For retained data, follow the [upgrade guide](../../docs/v8-backend-modules-and-upgrade.md#upgrading-an-application).
+Startup refuses an incompatible store; it does not migrate data for you.
+
+## Writes and snapshots
+
+Use `eacl/create-relationships!` for existing endpoints. To commit application
+data and relationship changes together, use the public snapshot planner;
+see [atomic writes](../../docs/atomic-writes.md). The guide also explains the
+published API's limitation for new entities and tempids.
+
+Use `eacl/snapshot` when several reads must see the same database version.
+Release it with `eacl/with-snapshot` or `eacl/release!`. Use `eacl/with` and
+`eacl/with-schema` to preview changes. The public adapter does not wrap raw
+`d/with` or `d/filter` database values.
 
 ## Cache coherence
 
-The client checks exact immutable-snapshot answers first, then automatically
-uses complete ordered-generation proofs to reuse completed answers across
-unrelated forward transactions. Missing, malformed, oversized, or exceptional
-proof data falls back to exact evaluation.
+Use EACL APIs or submit EACL-produced transaction data intact for authorization
+changes. These writes preserve the checks and relation stamps needed for
+correct caching. Ordinary application data can use normal Datomic writes.
 
-Serverless hosts may persist completed authorization entries with
-`export-cache-snapshot`, `restore-cache-snapshot!`, and
-`cache-content-revision`. The host owns authentication and the encoded-byte
-bound before decoding; EACL validates the trusted decoded snapshot and its
-count bound. Snapshots exclude Datomic database values and process-local
-identity. Restore validates before atomically replacing the visible cache.
+Custom ID mappings stay local to a client unless every participating Peer uses
+the same deterministic mapping and stable adapter fingerprint. Keep public IDs
+unique and stable. See [ID configuration](../../README.md#eacl-id-configuration)
+and the [cache guide](../../docs/cache.md).
 
-## Prospective snapshots
-
-The public adapter does not wrap caller-owned Datomic database values. Use
-`eacl/tx-relationship` with `eacl/with` for composable relationship/application
-transactions and `eacl/with-schema` for prospective permission-schema changes.
-These EACL-created snapshots are immutable readers: they may reuse only a
-complete committed proof for disjoint dependencies and publish no speculative
-cache data. `:orphan-policy :retain-inert` is available only to
-`with-schema`; diagnostics report bounded presence without counting tuples.
-Calling implementation namespaces to inject raw `d/with` or `d/filter` values
-forfeits coherence guarantees.
-
-Every authorization-relevant mutation must use EACL APIs or EACL-produced
-transaction data/functions transacted intact. After unsupported raw mutation,
-quiesce callers, repair the data, and call
-`eacl.datomic.core/expire-cache!` on every affected client in every process.
-When processes exchange tokens, pass the same new lifecycle as the optional
-second argument. Expiry never repairs ghost tuples.
-
-Custom object-ID codecs are exact-only and client-local unless configured with
-a portable `:adapter-fingerprint`, `:adapter-deterministic? true`, and an
-application-certified injective round trip. Proof-equivalent cursors further
-require `:identity-immutable? true`; without it they remain exact-basis-bound.
-The built-in `:eacl/id` codec assumes IDs never change for an entity. Set
-`:identity-immutable? false` if the application permits reassignment.
-
-`expand-permission-tree` routes Datomic's selected immutable DB through the
-same portable shallow-expansion kernel used by DataScript and Datahike. The
-returned `:expanded-at` is issued from that selected adapter without re-reading
-the connection; `at-exact-snapshot` can replay it while the required Datomic
-history remains available. Native child/subject order is not semantic.
-Configure structural ceilings with client-level `:permission-tree-limits`.
+After unsupported raw authorization changes, stop affected traffic, repair the
+data, and expire every affected client. A database restore or history
+replacement also requires coordinating the source lifecycle across Peers.
 
 ## Optional atomic entity retraction
 
-Ordinary Datomic `:db.fn/retractEntity` cannot follow the peer eid embedded in
-an EACL heterogeneous relationship tuple. Calling it directly can therefore
-leave a peer-side ghost that continues granting access. The optional named
-database function removes both endpoint halves and the entity atomically:
+Ordinary Datomic entity retraction does not remove the relationship stored on
+the other endpoint. That leftover relationship can still grant access.
+
+Use `eacl/delete-object!` before retracting the application entity, or install
+the optional function that removes both together:
 
 ```clojure
 (require '[datomic.api :as d]
          '[eacl.datomic.safe-retraction :as safe-retraction])
 
-(safe-retraction/support-descriptor) ; => {:mode :named, ...}
-(safe-retraction/install! conn)      ; explicit, privileged, idempotent
+;; Run during database setup, and again after upgrading EACL.
+(safe-retraction/install! conn)
 
-@(d/transact
-  conn
-  (safe-retraction/retract-entity-tx-data [:eacl/id "account-1"]))
+@(d/transact conn
+  (safe-retraction/retract-entity-tx-data [:app/id "report"]))
 ```
 
-`install!` installs `:eacl.fn/retractEntity` only when called, upgrades
-recognized EACL version/digest markers, and refuses to overwrite an unrelated
-occupant. The stored `[db target]` function uses only Clojure core and
-`datomic.api`; no `DATOMIC_EXT_CLASSPATH` or EACL transactor dependency is
-required. Treat installation/removal as a schema deployment and roll back
-callers before removing the installed entity.
+This continues the quickstart. The target may be a numeric entity ID or a
+lookup ref for an installed unique attribute.
 
-For a live target, the function computes the native component closure, reads
-the two EACL endpoint attributes on every closure entity, retracts each exact
-peer half, stamps every distinct affected relation with the current
-transaction, and finally delegates deletion to `:db.fn/retractEntity`. The
-relation stamps are the cache-coherence evidence; the function
-does not modify an in-memory cache and contains no global CAS.
+- Installation is idempotent and updates recognized older EACL function bodies.
+  It refuses to overwrite an unrelated function.
+- Datomic stores the function body. Updating the library dependency alone does
+  not update that body.
+- The saved function needs only Clojure core and `datomic.api` on the
+  transactor; it needs no EACL transactor dependency.
+- Repeated deletions in one transaction are allowed. A missing lookup ref is
+  a no-op. A known numeric ID can repair leftovers after an earlier native deletion.
+- Do not add relationships to an entity in the same transaction that deletes it.
+- For very high-degree entities, prefer batched `delete-object!` followed by
+  native deletion.
 
-Multiple and repeated invocations compose in one transaction:
+For existing damage, use `eacl.datomic.integrity/dangling-relationship-report`
+and `repair-tx-batches`. Cache expiry alone does not repair relationships.
 
-```clojure
-@(d/transact conn [[:eacl.fn/retractEntity 1]
-                   [:eacl.fn/retractEntity 2]
-                   [:eacl.fn/retractEntity 1]])
-```
+## Security keys
 
-A valid lookup ref that does not resolve is a no-op. A numeric eid remains a
-repair key after its entity datoms have been retracted: the function enumerates
-the relatively small relation schema and performs exact AVET probes in both
-tuple directions to remove peer-only ghosts and stamp their relations. This
-fallback cannot recover the eid from a missing lookup ref.
+Load-balanced Peers need shared keys to accept each other's cursors and Zed
+tokens. Default keys are process-local and do not survive restarts. See
+[security keys and rotation](../../docs/security-keyrings.md).
 
-Do not combine relationship additions involving a target with its safe
-retraction in the same application transaction; transaction-function
-visibility/order cannot provide portable semantics for that case. Separate
-EACL writers calculated before a winning deletion fail their commit-time
-endpoint identity CAS. For high-degree targets, prefer batched
-`eacl/delete-object!` followed by ordinary entity retraction; use
-`eacl.datomic.integrity/dangling-relationship-report` and
-`repair-tx-batches` for existing damage.
+## Further reading
 
-```clojure
-{:deps {dev.eacl/eacl-datomic {:mvn/version "8.0.0-SNAPSHOT"}}}
-```
-
-Its POM depends on `dev.eacl/eacl` at the exact same version, so consumers do
-not declare core separately. EACL targets Java 25 by default; explicit
-source/custom builds can target older Java, subject to Datomic's own runtime
-requirements. Build this module in isolation with `clojure -T:build jar`; Git and `:local/root`
-development must first follow the explicitly opt-in
-[core source preparation instructions](../../README.md#source-dependencies-and-formal-tooling).
-Maven consumers install no formal tools.
-
-For the cross-backend capability matrix, recursive controls, and cache
-mutation rules, see the
-[backend guide](../../docs/v8-backend-modules-and-upgrade.md).
-
-## Removed (2026-09-01)
-
-- `eacl.datomic.codec` — page-token payload codec superseded by the portable
-  `eacl.secure-format` (used by `eacl.cursor` and `eacl.causal-token`).
-- `eacl.datomic.consistency` — the last remnant (`derive-signing-key`);
-  live Zed tokens are issued and authenticated by the shared
-  `eacl.causal-token` codec.
-
-## Removed (2026-09-02)
-
-- `eacl.datomic.impl.indexed/{subject->resources,resource->subjects,normalize-page-request,permission-relationship-eids,permission-schema-nodes}`
-  — unreferenced facade wrappers; call `eacl.datomic.db` and `eacl.engine.v8`
-  directly.
-- Basis-adapter configuration keys `:object-eid-fn`, `:subject->resources-fn`
-  and `:resource->subjects-fn` — an override seam whose only client was an
-  identity facade; the adapter reads `eacl.datomic.db` directly.
-- `eacl.datomic.schema/{calc-set-deltas,compare-schema}` are now aliases of
-  `eacl.schema.model` (same values).
-
-## Relationship storage 8
-
-This adapter uses five-slot endpoint pairs with a trailing nullable
-`qualifier-eid`. V8 supports
-[Caveats and expiring Relationships](../../docs/caveats.md) ; older readers must be drained first. Upgrades are explicit
-and restartable, and client construction requires a completed target store.
-Follow the [7-to-8 operator guide](../../docs/relationship-storage-v7-to-v8.md) before
-starting clients, then the v8 serving rollout guide before qualified writes.
-
-Use `(eacl.datomic.schema/install! conn)` to bootstrap a fresh native database.
-
-## Live security keys (v8)
-
-`make-client` accepts `:security-keyring-controller` and an optional independent
-`:zed-token-keyring-controller`. Static key options remain supported. All
-controllers use the backend-neutral `eacl.core` add/activate/retire/status APIs;
-updates change token acceptance without changing database or authorization
-identity. Authenticated cache export/restore is available through this module's
-`export-authenticated-cache-snapshot` / `restore-authenticated-cache-snapshot!`.
-
-**Non-expiring cursors require indefinite old-key retention for lossless resume.**
-A finite `:cursor-ttl-seconds` applies only to subsequently issued cursors. See the
-[security-key guide and multi-Peer runbook](../../docs/security-keyrings.md) for
-external secret ownership, distribution before activation, and retirement.
+- [Expiration and conditional access](../../docs/caveats.md).
+- [Backend consistency and limits](../../docs/v8-backend-modules-and-upgrade.md).
+- [Developing from source](../../README.md#development-from-source).
