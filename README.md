@@ -1569,8 +1569,11 @@ release's limitation for new entities and tempids.
 - Caveats use a bounded CEL subset. JVM clients need the optional
   `eacl-caveats-jvm` evaluator; ClojureScript clients must supply a compatible
   evaluator. See [supported expressions and limits](docs/caveats.md).
-- Client-targeted cursors over expiring Relationships require a restart when
-  their temporal certificate ends; explicit snapshots retain their captured time.
+- When relationships expire, stale cursors are invalidated and you'll get an
+  `:eacl.pagination/restart-required` error. Start the lookup again without the
+  expired cursor. When using an explicit EACL snapshot, including one selected
+  with `at-exact-snapshot`, cursors keep working against relationships that are
+  valid at the snapshot's captured evaluation time.
 - *Exact snapshots require backend history:* `at-exact-snapshot` and continued
   cursors require the backend to reconstruct the selected database value.
   Ordinary Datomic history and history-enabled Datahike do not age-expire.
