@@ -2,6 +2,21 @@
 
 EACL is a situated [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library inspired by [SpiceDB](https://authzed.com/spicedb), built in Clojure and backed by [Datomic Pro](https://www.datomic.com/), [Datahike](https://datahike.io/), [DataScript](https://github.com/tonsky/datascript/), or a qualified embedded [Datalevin](https://datalevin.org/) deployment.
 
+## Is it any good?
+
+Yes.
+
+## Demos
+
+Try the [EACL Demo](https://demo.eacl.dev/) at [`demo.eacl.dev`](https://demo.eacl.dev/) with options for:
+- **Backend:** Datomic Pro, Datahike, Datalevin or DataScript (in-browser)
+- **Storage:** S3 or DynamoDB
+- **Execution:** AWS Lambda or EC2 (t3.small instance)
+
+[EACL Drive](https://demo.eacl.dev/) is a toy clone of Google Drive that shows how easy it is to add fine-grained permissions to your app.
+
+## Overview
+
 | Authentication (AuthN)                     | Authorization (AuthZ)    |
 |--------------------------------------------|--------------------------|
 | Who are you?, i.e. who is the `<subject>`? | What can `<subject>` do? |
@@ -123,10 +138,6 @@ the entity. See [safe deletion](#deleting-a-secured-entity).
 - [Set an expiration date on a share](docs/caveats.md#expiring-access).
 - [Upgrade an existing application](docs/v8-backend-modules-and-upgrade.md#upgrading-an-application).
 - [Datahike quickstart](#datahike-quickstart) or [DataScript quickstart](#datascript-quickstart).
-
-## Is it any good?
-
-Yes.
 
 ## Supported Backends
 
