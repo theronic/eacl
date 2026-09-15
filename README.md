@@ -13,7 +13,7 @@ Try the [EACL Demo](https://demo.eacl.dev/) at [`demo.eacl.dev`](https://demo.ea
 - **Storage:** S3 or DynamoDB
 - **Execution:** AWS Lambda or EC2 (t3.small instance)
 
-[EACL Drive](https://demo.eacl.dev/) is a toy clone of Google Drive that shows how easy it is to add fine-grained permissions to your app.
+[EACL Drive](https://drive.eacl.dev/) is a toy clone of Google Drive that shows how easy it is to add fine-grained permissions to your app.
 
 ## Overview
 
