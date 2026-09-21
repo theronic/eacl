@@ -477,6 +477,23 @@ as replayed counterexamples against the stable engine.
   to a native EID; explicit ghost repair uses `delete-object-by-eid!`, and
   resolver failures propagate. EACL-FORMAL-068 records the model, mutants, and
   cross-runtime regressions.
+- **Fail-open public request shapes.** Point/count/schema reads now reject
+  unknown keys before consistency selection. Relationship mutation helpers
+  reject nil, single-record, missing-update, and unknown-field batch shapes
+  instead of reporting an empty success; a misspelled expiry can no longer be
+  discarded to create a permanent relationship. `delete-object!` accepts only a public
+  object with a non-nil ID; its envelope cannot carry `:native-eid`, and the
+  client protocol also rejects malformed or mixed identities. Reserved
+  `:page/basis` modes are rejected rather than ignored, and the backend-only
+  `:allow-empty-schema?` safety escape hatch no longer crosses the public
+  writer boundary. EACL-FORMAL-069
+  records the request-boundary model,
+  mutants, and real-backend regressions.
+- **Snapshot option injection.** The shared snapshot protocol now rejects all
+  caller-supplied runtime options. Previously, direct protocol invocation could
+  replace trusted dependencies such as public-ID resolution and turn a denied
+  check into another user's grant. EACL-FORMAL-070 records the dedicated model,
+  mutant, and real-backend regression.
 - **Datomic raw writer stamp mismatch.** Managed Datomic validation now uses
   only the physical `:eacl/relation-version` assertion written by the public
   and documented low-level helpers. Every relation is initialized on schema

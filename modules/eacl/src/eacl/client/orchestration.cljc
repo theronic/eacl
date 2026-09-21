@@ -3162,6 +3162,7 @@
   IAuthorizationReader
   (-check-permission [_ {:keys [subject permission resource consistency]
                          :as request}]
+    (eacl/validate-reader-request! :check-permission request)
     (let [read-opts (snapshot-read-opts runtime basis request)
           {:keys [cache-enabled? populate-cache?]}
           (request-cache-controls request)]
@@ -3176,10 +3177,12 @@
        subject permission resource
        (or consistency consistency/minimize-latency))))
   (-read-schema [_ request]
+    (eacl/validate-reader-request! :read-schema request)
     (read-current-schema api nil
                          (snapshot-read-opts runtime basis request)
                          request))
   (-read-relationships [_ request]
+    (eacl/validate-reader-request! :read-relationships request)
     (let [read-opts (snapshot-read-opts runtime basis request)
           {:keys [cache-enabled? populate-cache?]}
           (request-cache-controls request)]
@@ -3191,6 +3194,7 @@
               (snapshot-populate-cache? basis populate-cache?))
        (dissoc request :cache? :populate-cache?))))
   (-lookup-resources [_ request]
+    (eacl/validate-reader-request! :lookup-resources request)
     (let [read-opts (snapshot-read-opts runtime basis request)
           {:keys [cache-enabled? populate-cache?]}
           (request-cache-controls request)]
@@ -3203,6 +3207,7 @@
               :continuation-cache-request? cache-enabled?)
        (dissoc request :cache? :populate-cache?))))
   (-lookup-subjects [_ request]
+    (eacl/validate-reader-request! :lookup-subjects request)
     (let [read-opts (snapshot-read-opts runtime basis request)
           {:keys [cache-enabled? populate-cache?]}
           (request-cache-controls request)]
@@ -3215,6 +3220,7 @@
               :continuation-cache-request? cache-enabled?)
        (dissoc request :cache? :populate-cache?))))
   (-count-resources [_ request]
+    (eacl/validate-reader-request! :count-resources request)
     (let [read-opts (snapshot-read-opts runtime basis request)
           {:keys [cache-enabled? populate-cache?]}
           (request-cache-controls request)]
@@ -3226,6 +3232,7 @@
               (snapshot-populate-cache? basis populate-cache?))
        (dissoc request :cache? :populate-cache?))))
   (-count-subjects [_ request]
+    (eacl/validate-reader-request! :count-subjects request)
     (let [read-opts (snapshot-read-opts runtime basis request)
           {:keys [cache-enabled? populate-cache?]}
           (request-cache-controls request)]
@@ -3237,6 +3244,7 @@
               (snapshot-populate-cache? basis populate-cache?))
        (dissoc request :cache? :populate-cache?))))
   (-expand-permission-tree [_ request]
+    (eacl/validate-reader-request! :expand-permission-tree request)
     (let [read-opts (snapshot-read-opts runtime basis request)
           {:keys [cache-enabled? populate-cache?]}
           (request-cache-controls request)]
@@ -3340,6 +3348,86 @@
      :backend (backend-writer/backend-id writer)
      :actual actual
      :maximum (backend-writer/max-transaction-size writer)})))
+
+(defn- invalid-public-request!
+  [operation message data]
+  (throw
+   (ex-info
+    message
+    (merge {:type :eacl/invalid-request
+            :eacl/error :eacl/invalid-request
+            :operation operation}
+           data))))
+
+(defn- validate-closed-request!
+  [operation request required-keys known-keys]
+  (when-not (map? request)
+    (invalid-public-request!
+     operation "A public operation requires a request map."
+     {:reason :invalid-request-shape :value request}))
+  (when-let [unknown-keys (seq (remove known-keys (keys request)))]
+    (invalid-public-request!
+     operation "A public operation received unknown request keys."
+     {:reason :unknown-request-key
+      :unknown-keys (vec unknown-keys)
+      :known-keys known-keys}))
+  (when-let [missing-keys
+             (seq (remove #(contains? request %) required-keys))]
+    (invalid-public-request!
+     operation "A public operation is missing required request keys."
+     {:reason :missing-request-key
+      :missing-keys (vec missing-keys)}))
+  request)
+
+(defn- validate-update-request!
+  [operation request]
+  (validate-closed-request!
+   operation request #{:updates} #{:updates :tx-data})
+  (when-not (sequential? (:updates request))
+    (invalid-public-request!
+     operation ":updates must be a sequential collection."
+     {:reason :invalid-request-shape
+      :position :updates
+      :value (:updates request)}))
+  request)
+
+(defn- validate-delete-object-request!
+  [request]
+  (validate-closed-request!
+   :delete-object! request #{} #{:object :native-eid})
+  (when (= (contains? request :object)
+           (contains? request :native-eid))
+    (invalid-public-request!
+     :delete-object!
+     "Object deletion requires exactly one public object or native entity ID."
+     {:reason :ambiguous-object-identity
+      :present-keys (vec (filter #(contains? request %)
+                                 [:object :native-eid]))}))
+  (when (contains? request :object)
+    (let [object (:object request)]
+      (when-not (and (map? object)
+                     (every? #{:type :id :relation} (keys object))
+                     (keyword? (:type object))
+                     (contains? object :id)
+                     (some? (:id object))
+                     (or (nil? (:relation object))
+                         (keyword? (:relation object))))
+        (invalid-public-request!
+         :delete-object!
+         "Object deletion requires a typed public object with a non-nil ID."
+         {:reason :invalid-object-shape
+          :position :object
+          :value object}))))
+  request)
+
+(defn ^:no-doc validate-public-snapshot-options!
+  "Rejects protocol-level attempts to replace trusted client dependencies.
+
+  The public snapshot API has no options map. The protocol retains its legacy
+  arity for implementers, but the shared client accepts only the empty map."
+  [options]
+  (validate-closed-request! :snapshot options #{} #{})
+  options)
 
 (defn- call-with-writer-basis
   [writer f]
@@ -3503,8 +3591,10 @@
           (:value outcome))))))
 
 (defn- writer-write-relationships!
-  [writer {:keys [updates tx-data] :or {tx-data []}}]
-  (let [updates (relationship-mutations/normalize-public-updates (vec updates))
+  [writer request]
+  (validate-update-request! :write-relationships! request)
+  (let [{:keys [updates tx-data] :or {tx-data []}} request
+        updates (relationship-mutations/normalize-public-updates (vec updates))
         app-datoms (qualified-writes/application-datoms tx-data #{})]
     (when (and (not *qualified-authorization-enabled?*)
                (some #(seq (select-keys (:relationship %) relationship-mutations/qualifier-keys)) updates))
@@ -3580,8 +3670,10 @@
 (defn- writer-delete-object!
   "Removes every relationship touching object in final-transaction-bounded
   batches. Each contention retry reacquires and replans from a fresh basis."
-  [writer {:keys [object native-eid]}]
-  (let [{:keys [api qualified-writer]} (backend-writer/state writer)
+  [writer request]
+  (validate-delete-object-request! request)
+  (let [{:keys [object native-eid]} request
+        {:keys [api qualified-writer]} (backend-writer/state writer)
         native-writer (when *qualified-authorization-enabled?*
                         (or (some-> qualified-writer deref)
                             (typed-capability-error! :qualified-relationship-publication (:backend-id api))))
@@ -3659,6 +3751,9 @@
 
 (defn- write-schema-through!
   [writer {:keys [schema] :as request}]
+  (validate-closed-request!
+   :write-schema! request #{:schema}
+   #{:schema :orphan-policy})
   (when (= :retain-inert (:orphan-policy request))
     (throw
      (ex-info
@@ -3690,7 +3785,7 @@
                          (select-keys options
                                       [:token-ttl-seconds :expression-limits])
                          (select-keys request
-                                      [:allow-empty-schema? :orphan-policy]) admission)
+                                      [:orphan-policy]) admission)
                         expected-generation)})
                     (catch #?(:clj Throwable :cljs :default) error
                       {:error error}))]
@@ -3899,6 +3994,12 @@
 
 (defn speculative-with-snapshot
   [snapshot tx-data]
+  (when-not (sequential? tx-data)
+    (invalid-public-request!
+     :with ":tx-data must be a sequential collection."
+     {:reason :invalid-request-shape
+      :position :tx-data
+      :value tx-data}))
   (let [{:keys [basis api]} snapshot
         _ (basis-open! basis)
         native-with (:native-with api)]
@@ -3914,6 +4015,8 @@
 
 (defn speculative-with-schema-snapshot
   [snapshot schema options]
+  (validate-closed-request!
+   :with-schema options #{} #{:orphan-policy})
   (let [{:keys [runtime basis api]} snapshot
         _ (basis-open! basis)
         native-with (:native-with api)
@@ -3981,8 +4084,10 @@
       (if (seq raw) (vec (prepare db raw)) []))))
 
 (defn snapshot-tx-relationships
-  [snapshot {:keys [updates tx-data] :or {tx-data []}}]
-  (let [{:keys [basis api runtime]} snapshot
+  [snapshot request]
+  (validate-update-request! :tx-relationships request)
+  (let [{:keys [updates tx-data] :or {tx-data []}} request
+        {:keys [basis api runtime]} snapshot
         _ (basis-open! basis)
         updates (relationship-mutations/normalize-public-updates (vec updates))
         app-datoms (qualified-writes/application-datoms tx-data #{})]
@@ -4070,14 +4175,17 @@
 (defrecord Acl [runtime source writer api]
   IAuthorizationReader
   (-check-permission [_ request]
+    (eacl/validate-reader-request! :check-permission request)
     (call-with-transient-snapshot
      runtime source api :check-permission request
      #(eacl/-check-permission % request)))
   (-read-schema [_ request]
+    (eacl/validate-reader-request! :read-schema request)
     (call-with-transient-snapshot
      runtime source api :read-schema request
      #(eacl/-read-schema % request)))
   (-read-relationships [this request]
+    (eacl/validate-reader-request! :read-relationships request)
     (relationship-filters/validate! request)
     (authorization-filters/validate-scan-authorization! request)
     (with-page-lookahead
@@ -4088,6 +4196,7 @@
           runtime source api :read-relationships request
           (fn [snapshot] (eacl/-read-relationships snapshot request))))))
   (-lookup-resources [this request]
+    (eacl/validate-reader-request! :lookup-resources request)
     (authorization-filters/validate-lookup! :lookup-resources request)
     (with-page-lookahead
       this runtime :lookup-resources request
@@ -4096,6 +4205,7 @@
           runtime source api :lookup-resources request
           (fn [snapshot] (eacl/-lookup-resources snapshot request))))))
   (-lookup-subjects [this request]
+    (eacl/validate-reader-request! :lookup-subjects request)
     (authorization-filters/validate-lookup! :lookup-subjects request)
     (with-page-lookahead
       this runtime :lookup-subjects request
@@ -4104,14 +4214,17 @@
           runtime source api :lookup-subjects request
           (fn [snapshot] (eacl/-lookup-subjects snapshot request))))))
   (-count-resources [_ request]
+    (eacl/validate-reader-request! :count-resources request)
     (call-with-transient-snapshot
      runtime source api :count-resources request
      #(eacl/-count-resources % request)))
   (-count-subjects [_ request]
+    (eacl/validate-reader-request! :count-subjects request)
     (call-with-transient-snapshot
      runtime source api :count-subjects request
      #(eacl/-count-subjects % request)))
   (-expand-permission-tree [_ request]
+    (eacl/validate-reader-request! :expand-permission-tree request)
     (permission-tree/validate-request! request)
     (call-with-transient-snapshot
      runtime source api :expand-permission-tree request
@@ -4138,6 +4251,7 @@
 
   ISnapshotSource
   (-snapshot [_ consistency-value options]
+    (validate-public-snapshot-options! options)
     (let [opts
           (ensure-execution-contract
            (merge (runtime-options runtime) options)
@@ -4188,6 +4302,7 @@
   (-write-relationships! [_ request]
     (writer-write-relationships! (writable! writer) request))
   (-delete-object! [_ {:keys [object native-eid] :as request}]
+    (validate-delete-object-request! request)
     (when (and (contains? request :native-eid)
                (not (and (integer? native-eid) (pos? native-eid))))
       (throw
@@ -4196,9 +4311,7 @@
         {:type :eacl/invalid-object-id
          :eacl/error :eacl/invalid-object-id
          :native-eid native-eid})))
-    (writer-delete-object!
-     (writable! writer)
-     {:object object :native-eid native-eid})))
+    (writer-delete-object! (writable! writer) request)))
 
 (defn client?
   "True when `client` is a shared-orchestration client for `backend-id`."

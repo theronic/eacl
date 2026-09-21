@@ -104,6 +104,14 @@
    {:source "formal/dafny/PublicIdentityBoundary.dfy"
     :claim :proof-only-representation-sensitive-public-identity-boundary
     :minimum-proof-efforts 10}
+   :public-request-boundary
+   {:source "formal/dafny/PublicRequestBoundary.dfy"
+    :claim :proof-only-closed-public-request-and-mutation-dispatch-boundary
+    :minimum-proof-efforts 13}
+   :snapshot-option-boundary
+   {:source "formal/dafny/SnapshotOptionBoundary.dfy"
+    :claim :proof-only-trusted-snapshot-runtime-option-boundary
+    :minimum-proof-efforts 3}
    :permission-tree-expansion
    {:source "formal/dafny/PermissionTree.dfy"
     :claim :conditional-shallow-tree-topology-cycle-and-limit-model
@@ -514,6 +522,49 @@
     :adapter-obligations [:deterministic-public-to-internal-resolution
                           :injective-public-to-internal-resolution
                           :atomic-resolved-relationship-mutation]
+    :runtime-targets [:clj-java :cljs-javascript]
+    :remaining [:mechanized-host-control-source-refinement
+                :independent-review]}
+   {:operation :closed-public-request-shapes
+    :entry-points ['eacl.core/check-permission
+                   'eacl.core/read-schema
+                   'eacl.core/read-relationships
+                   'eacl.core/lookup-resources
+                   'eacl.core/lookup-subjects
+                   'eacl.core/count-resources
+                   'eacl.core/count-subjects
+                   'eacl.core/expand-permission-tree
+                   'eacl.core/write-schema!
+                   'eacl.core/write-relationship!
+                   'eacl.core/write-relationships!
+                   'eacl.core/delete-relationships!
+                   'eacl.core/delete-object!
+                   'eacl.core/with-schema
+                   'eacl.core/tx-relationships]
+    :theorems [:closed-request-rejects-misspelled-consistency
+               :closed-request-rejects-every-unknown-key
+               :reserved-live-page-basis-is-rejected
+               :backend-only-empty-schema-escape-hatch-is-rejected
+               :closed-relationship-write-rejects-misspelled-expiry
+               :invalid-relationship-batches-never-succeed
+               :public-delete-cannot-select-native-identity
+               :ambiguous-delete-identity-is-always-rejected
+               :malformed-public-object-delete-is-always-rejected]
+    :dafny ["formal/dafny/PublicRequestBoundary.dfy"]
+    :adapter-obligations [:public-wrapper-validation-before-dispatch
+                          :client-protocol-defense-in-depth
+                          :typed-fail-closed-request-errors]
+    :runtime-targets [:clj-java :cljs-javascript]
+    :remaining [:mechanized-host-control-source-refinement
+                :independent-review]}
+   {:operation :trusted-snapshot-capture
+    :entry-points ['eacl.core/snapshot
+                   'eacl.core/-snapshot]
+    :theorems [:empty-public-snapshot-captures-trusted-runtime
+               :closed-protocol-rejects-every-caller-option]
+    :dafny ["formal/dafny/SnapshotOptionBoundary.dfy"]
+    :adapter-obligations [:snapshot-options-not-caller-overridable
+                          :identity-resolution-captured-from-client]
     :runtime-targets [:clj-java :cljs-javascript]
     :remaining [:mechanized-host-control-source-refinement
                 :independent-review]}

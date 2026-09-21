@@ -140,7 +140,11 @@
     :EACL-FORMAL-067
     eacl.datomic.recursive-cache-test/recursive-page-order-is-stable-across-scan-wave-boundaries-test
     :EACL-FORMAL-068
-    eacl.datascript.contract-test/representation-sensitive-identities-do-not-alias-batch-decisions-or-writes-test})
+    eacl.datascript.contract-test/representation-sensitive-identities-do-not-alias-batch-decisions-or-writes-test
+    :EACL-FORMAL-069
+    eacl.datascript.contract-test/public-request-shapes-fail-closed-before-datascript-mutation-test
+    :EACL-FORMAL-070
+    eacl.datascript.contract-test/public-request-shapes-fail-closed-before-datascript-mutation-test})
 
 (defn- read-edn
   [path]

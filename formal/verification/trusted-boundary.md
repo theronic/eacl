@@ -256,6 +256,17 @@ For an operation to inherit a kernel theorem, its adapter must establish:
 10. source lifecycle and adapter fingerprint change whenever an
     assumption-affecting implementation identity changes.
 
+Before any adapter obligation applies, the public host boundary must reject
+unknown request and object fields, malformed mutation collection shapes, and
+ambiguous public/native identity selectors. `PublicRequestBoundary.dfy` models
+that pre-adapter obligation; CLJ/CLJS regressions and executed mutants bind it
+to the public wrappers and shared client protocol methods.
+
+Snapshot selection also trusts the client runtime assembled by `make-client`.
+No caller-supplied protocol option may replace its identity conversion,
+security, clock, or cache dependencies. `SnapshotOptionBoundary.dfy` models
+the empty-options rule enforced before the shared client selects a basis.
+
 Backend certification provides evidence for these assumptions. It does not
 verify DataScript, Datomic, Datahike, their storage engines, or host databases.
 

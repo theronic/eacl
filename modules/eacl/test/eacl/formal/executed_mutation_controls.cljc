@@ -6,10 +6,12 @@
             [eacl.backend.direct-membership :as direct]
             [eacl.authorization.batch :as batch]
             [eacl.cache :as cache]
+            [eacl.core :as eacl]
             [eacl.uuid :as uuid]
             [eacl.secure-format :as secure]
             [eacl.causal-token :as causal-token]
             [eacl.engine.portable-decisions :as portable]
+            [eacl.client.orchestration :as orchestration]
             [eacl.client.range-reuse :as range-reuse]
             [eacl.engine.scan-cache :as scan-cache]
             [eacl.engine.sealed-plan :as sealed-plan]
@@ -751,6 +753,229 @@
                       (relationship-mutations/coalesce-updates
                        (original candidate)))]
         (gate))))))
+
+(defn unknown-public-request-key-killed?
+  []
+  (let [reader
+        (reify eacl/IAuthorizationReader
+          (-check-permission [_ _] {:allowed? true})
+          (-read-schema [_ _] nil)
+          (-read-relationships [_ _] nil)
+          (-lookup-resources [_ _] nil)
+          (-lookup-subjects [_ _] nil)
+          (-count-resources [_ _] nil)
+          (-count-subjects [_ _] nil)
+          (-expand-permission-tree [_ _] nil))
+        request {:subject {:type :user :id "u"}
+                 :permission :view
+                 :resource {:type :document :id "d"}
+                 :consistncy :fully-consistent}
+        rejected?
+        #(try
+           (eacl/check-permission reader request)
+           false
+           (catch #?(:clj clojure.lang.ExceptionInfo
+                     :cljs cljs.core.ExceptionInfo) error
+             (= :unknown-request-key (:reason (ex-data error)))))]
+    (and
+     (rejected?)
+     (false?
+      (with-redefs [eacl/check-permission
+                    (fn [target candidate]
+                      (eacl/-check-permission target candidate))]
+        (rejected?))))))
+
+(defn fail-open-revocation-shape-killed?
+  []
+  (let [calls (atom [])
+        writer
+        (reify eacl/IAuthorizationWriter
+          (-write-schema! [_ _] nil)
+          (-write-relationships! [_ request]
+            (swap! calls conj request)
+            {:zed/token "mutation-control"})
+          (-delete-object! [_ _] nil))
+        relationship
+        (eacl/->Relationship
+         {:type :user :id "u"}
+         :viewer
+         {:type :document :id "d"})
+        rejected-without-dispatch?
+        #(do
+           (reset! calls [])
+           (try
+             (eacl/delete-relationships! writer relationship)
+             false
+             (catch #?(:clj clojure.lang.ExceptionInfo
+                       :cljs cljs.core.ExceptionInfo) error
+               (and (= :invalid-request-shape
+                       (:reason (ex-data error)))
+                    (empty? @calls)))))]
+    (and
+     (rejected-without-dispatch?)
+     (false?
+      (with-redefs [eacl/delete-relationships!
+                    (fn [target relationships]
+                      (eacl/write-relationships!
+                       target
+                       (mapv #(eacl/->RelationshipUpdate :delete %)
+                             (:data relationships))))]
+        (rejected-without-dispatch?))))))
+
+(defn relationship-write-qualifier-typo-killed?
+  []
+  (let [calls (atom [])
+        writer
+        (reify eacl/IAuthorizationWriter
+          (-write-schema! [_ _] nil)
+          (-write-relationships! [_ request]
+            (swap! calls conj request)
+            {:zed/token "mutation-control"})
+          (-delete-object! [_ _] nil))
+        update
+        {:operation :touch
+         :subject {:type :user :id "u"}
+         :relation :viewer
+         :resource {:type :document :id "d"}
+         :valid-until-mss 0}
+        rejected-without-dispatch?
+        #(do
+           (reset! calls [])
+           (try
+             (eacl/write-relationship! writer update)
+             false
+             (catch #?(:clj clojure.lang.ExceptionInfo
+                       :cljs cljs.core.ExceptionInfo) error
+               (and (= :unknown-request-key
+                       (:reason (ex-data error)))
+                    (empty? @calls)))))]
+    (and
+     (rejected-without-dispatch?)
+     (false?
+      (with-redefs
+       [eacl/write-relationship!
+        (fn [target candidate]
+          (let [{:keys [operation subject relation resource]} candidate]
+            (eacl/write-relationships!
+             target
+             [(eacl/->RelationshipUpdate
+               operation
+               (merge
+                (eacl/->Relationship subject relation resource)
+                (select-keys
+                 candidate [:caveat :caveat-context :valid-until-ms])))])))]
+        (rejected-without-dispatch?))))))
+
+(defn nil-public-object-delete-killed?
+  []
+  (let [calls (atom [])
+        writer
+        (reify eacl/IAuthorizationWriter
+          (-write-schema! [_ _] nil)
+          (-write-relationships! [_ _] nil)
+          (-delete-object! [_ request]
+            (swap! calls conj request)
+            {:retracted-datoms 0}))
+        object {:type :user :id nil}
+        rejected-without-dispatch?
+        #(do
+           (reset! calls [])
+           (try
+             (eacl/delete-object! writer object)
+             false
+             (catch #?(:clj clojure.lang.ExceptionInfo
+                       :cljs cljs.core.ExceptionInfo) error
+               (and (= :invalid-object-shape
+                       (:reason (ex-data error)))
+                    (empty? @calls)))))]
+    (and
+     (rejected-without-dispatch?)
+     (false?
+      (with-redefs [eacl/delete-object!
+                    (fn [target candidate]
+                      (eacl/-delete-object! target {:object candidate}))]
+        (rejected-without-dispatch?))))))
+
+(defn snapshot-option-injection-killed?
+  []
+  (let [injected
+        {:spice-object->internal
+         (fn [_ object] (assoc object :id :attacker-selected))}
+        rejected?
+        #(try
+           (orchestration/validate-public-snapshot-options! injected)
+           false
+           (catch #?(:clj clojure.lang.ExceptionInfo
+                     :cljs cljs.core.ExceptionInfo) error
+             (= :unknown-request-key (:reason (ex-data error)))))]
+    (and
+     (= {} (orchestration/validate-public-snapshot-options! {}))
+     (rejected?)
+     (false?
+      (with-redefs [orchestration/validate-public-snapshot-options! identity]
+        (rejected?))))))
+
+(defn reserved-live-page-basis-killed?
+  []
+  (let [reader
+        (reify eacl/IAuthorizationReader
+          (-check-permission [_ _] nil)
+          (-read-schema [_ _] nil)
+          (-read-relationships [_ _] nil)
+          (-lookup-resources [_ _] {:data []})
+          (-lookup-subjects [_ _] nil)
+          (-count-resources [_ _] nil)
+          (-count-subjects [_ _] nil)
+          (-expand-permission-tree [_ _] nil))
+        request {:subject {:type :user :id "u"}
+                 :permission :view
+                 :resource/type :document
+                 :first 1
+                 :page/basis :live}
+        rejected?
+        #(try
+           (eacl/lookup-resources reader request)
+           false
+           (catch #?(:clj clojure.lang.ExceptionInfo
+                     :cljs cljs.core.ExceptionInfo) error
+             (= :unsupported-page-basis (:reason (ex-data error)))))]
+    (and
+     (rejected?)
+     (false?
+      (with-redefs [eacl/lookup-resources
+                    (fn [target candidate]
+                      (eacl/-lookup-resources target candidate))]
+        (rejected?))))))
+
+(defn public-empty-schema-opt-in-killed?
+  []
+  (let [calls (atom [])
+        writer
+        (reify eacl/IAuthorizationWriter
+          (-write-schema! [_ request]
+            (swap! calls conj request)
+            {:zed/token "mutation-control"})
+          (-write-relationships! [_ _] nil)
+          (-delete-object! [_ _] nil))
+        request {:schema "definition user {}"
+                 :allow-empty-schema? true}
+        rejected-without-dispatch?
+        #(do
+           (reset! calls [])
+           (try
+             (eacl/write-schema! writer request)
+             false
+             (catch #?(:clj clojure.lang.ExceptionInfo
+                       :cljs cljs.core.ExceptionInfo) error
+               (and (= :unknown-request-key (:reason (ex-data error)))
+                    (empty? @calls)))))]
+    (and
+     (rejected-without-dispatch?)
+     (false?
+      (with-redefs [eacl/write-schema!
+                    (fn [target candidate]
+                      (eacl/-write-schema! target candidate))]
+        (rejected-without-dispatch?))))))
 
 (defn aggregate-deadline-renewal-killed?
   []
@@ -2066,6 +2291,14 @@ definition document {
    public-identity-representation-alias-killed?
    :unresolved-relationship-coalescing
    unresolved-relationship-coalescing-killed?
+   :unknown-public-request-key unknown-public-request-key-killed?
+   :fail-open-revocation-shape fail-open-revocation-shape-killed?
+   :relationship-write-qualifier-typo
+   relationship-write-qualifier-typo-killed?
+   :nil-public-object-delete nil-public-object-delete-killed?
+   :snapshot-option-injection snapshot-option-injection-killed?
+   :reserved-live-page-basis reserved-live-page-basis-killed?
+   :public-empty-schema-opt-in public-empty-schema-opt-in-killed?
    :aggregate-deadline-renewal aggregate-deadline-renewal-killed?
    :operator-wrong-precedence operator-wrong-precedence-killed?
    :operator-swapped-exclusion operator-swapped-exclusion-killed?

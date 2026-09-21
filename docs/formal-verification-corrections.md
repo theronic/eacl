@@ -249,6 +249,44 @@ no verified-release claim existed.
   executed mutants, and the shared backend regressions close the omitted
   boundary.
 
+### EACL-FORMAL-069 — public request shapes could fail open
+
+- **Affected:** scalar reads, counts, schema reads, relationship revocation and
+  transaction planning, plus object cleanup on the shared client path.
+- **Impact:** a consistency typo could silently use the default consistency; a
+  reserved live-page request could be accepted but ignored; the backend-only
+  empty-schema escape hatch crossed the public boundary; a
+  misspelled expiry could create a permanent relationship; a single-record
+  revocation or malformed plan could report success with no updates; and a
+  nil-ID cleanup could report success with no work while a mixed public/native
+  object envelope could delete another entity's relationships.
+- **Root cause:** the formal abstraction began after open Clojure maps had
+  already been destructured. Unknown keys, collection shape, and mutually
+  exclusive identity selectors were therefore outside the model.
+- **Correction:** public requests and endpoints are closed before dispatch;
+  unsupported page-basis values and the backend-only empty-schema option are
+  rejected;
+  mutation batches must be explicit sequential collections; the single-write
+  helper rejects unknown fields; public and native object deletion cannot
+  share an envelope; shared client protocol methods
+  repeat mutation validation. `PublicRequestBoundary.dfy`, six executed
+  mutants, and public plus real-backend regressions close the boundary.
+
+### EACL-FORMAL-070 — snapshot protocol options could replace trusted identity resolution
+
+- **Affected:** retained snapshots on every shared-orchestration backend.
+- **Impact:** a direct protocol caller could replace the public-ID resolver and
+  make one user's authorization check run as another user. A real DataScript
+  witness changed Alice's denied check into Bob's grant.
+- **Root cause:** the public wrapper supplied an empty internal options map,
+  but the protocol method accepted arbitrary options and merged them over the
+  client runtime before snapshot selection.
+- **Correction:** the shared snapshot protocol accepts only an exactly empty
+  options map; consistency remains the sole caller choice. Trusted codecs,
+  clocks, caches, and security configuration are captured from the client.
+  `SnapshotOptionBoundary.dfy`, an executed mutant, and the real-backend
+  regression close the omitted boundary.
+
 The authoritative minimized fixtures and closing evidence are under
 `formal/counterexamples/`. Run them with
 `EACL_NREPL_PORT=<dev-port> bin/formal counterexample-replay`.
