@@ -285,7 +285,19 @@
             store context relationship-key (rendered-page 1))))
     (is (= {:published? true :reason :published}
            (cache/publish-rendered-page!
-            store context relationship-key (rendered-relationship-page 1))))))
+            store context relationship-key (rendered-relationship-page 1))))
+    (is (= {:published? false :reason :invalid-value}
+           (cache/publish-rendered-page!
+            store context lookup-key
+            (assoc-in (rendered-page 1)
+                      [:page :data 0 :relation]
+                      :member))))
+    (is (= {:published? false :reason :invalid-value}
+           (cache/publish-rendered-page!
+            store context relationship-key
+            (assoc-in (rendered-relationship-page 1)
+                      [:page :data 0 :subject :relation]
+                      :member))))))
 
 (deftest rendered-pages-reject-request-owned-metadata-test
   (let [store (cache/basis-cache {:max-entries 4})
@@ -1025,7 +1037,7 @@
               (cache/managed-source-identity
                (lineage default-lifecycle)
                default-fingerprint
-              :identity-v2)
+               :identity-v2)
               :managed-key-fn (constantly proof)}
              query (constantly :uncached))]
         (is (false? (:cached? miss)))

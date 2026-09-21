@@ -196,8 +196,8 @@
     :basis-ownership :borrowed
     :operations
     {:source-scope
-      (constantly {:source-id "generated-plan" :branch nil})
-      :source-lifecycle (constantly "generated-plan-lifecycle")
+     (constantly {:source-id "generated-plan" :branch nil})
+     :source-lifecycle (constantly "generated-plan-lifecycle")
      :acquire-current! (fn [& _] nil)
      :acquire-authoritative! (fn [& _] nil)
      :acquire-at-least! (fn [& _] nil)
@@ -599,6 +599,8 @@
       :exact-locator (constantly 1)
       :object-id->internal
       #(case % "document-1" 1 "document-2" 2 nil)
+      :public-object-id->internal
+      #(case % "document-1" 1 "document-2" 2 nil)
       :internal-id->object
       #(case % 1 "document-1" 2 "document-2" nil)
       :proof-frame
@@ -724,6 +726,7 @@
      (merge
       (::backend/operations base)
       {:object-id->internal identity
+       :public-object-id->internal identity
        :internal-id->object identity
        :relation-populated?
        (fn [_subject-type relation-id _resource-type]
@@ -865,8 +868,7 @@
            :current-proof "new"
            :cursor-proof "old"
            :cursor-graph 0
-           :exact nil})))
-  )
+           :exact nil}))))
 
 (deftest generated-javascript-materialized-queue-limit-is-instantaneous
   (let [result

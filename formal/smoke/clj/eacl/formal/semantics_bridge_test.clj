@@ -117,26 +117,26 @@
       (is (= (and (= user-1 subject)
                   (= document-1 resource))
              (formal/direct-can?
-             fixture subject :view resource))))))
+              fixture subject :view resource))))))
 
 (defn- seed-recursive-datascript-client
   ([]
    (seed-recursive-datascript-client recursive-fixture))
   ([fixture]
-  (let [conn (datascript/create-conn)
-        client (datascript/make-client conn {})]
-    (eacl/write-schema! client fixtures/recursive-schema)
-    (ds/transact!
-     conn
-     (map-indexed
-      (fn [index {:keys [id]}]
-        {:db/id (- (inc index))
-         :eacl/id id})
-      (:objects fixture)))
-    (eacl/create-relationships!
-     client
-     (:relationships fixture))
-    client)))
+   (let [conn (datascript/create-conn)
+         client (datascript/make-client conn {})]
+     (eacl/write-schema! client fixtures/recursive-schema)
+     (ds/transact!
+      conn
+      (map-indexed
+       (fn [index {:keys [id]}]
+         {:db/id (- (inc index))
+          :eacl/id id})
+       (:objects fixture)))
+     (eacl/create-relationships!
+      client
+      (:relationships fixture))
+     client)))
 
 (def recursive-shape-fixtures
   (let [user (fixtures/->user "shape-user")
@@ -444,6 +444,10 @@
          :order-hint (constantly 1)
          :exact-locator (constantly 1)
          :object-id->internal
+         (fn [object-id]
+           (some-> (get id->object object-id)
+                   external->internal))
+         :public-object-id->internal
          (fn [object-id]
            (some-> (get id->object object-id)
                    external->internal))

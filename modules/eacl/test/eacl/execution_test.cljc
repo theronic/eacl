@@ -44,10 +44,13 @@
 (deftest invalid-controls-fail-during-normalization-test
   (doseq [[request key]
           [[{:evaluation :speculate} :evaluation]
+           [{:evaluation false} :evaluation]
            [{:timeout-ms 0} :timeout-ms]
            [{:timeout-ms -1} :timeout-ms]
            [{:timeout-ms 1.5} :timeout-ms]
+           [{:timeout-ms false} :timeout-ms]
            [{:cancellation-token (atom false)} :cancellation-token]
+           [{:cancellation-token false} :cancellation-token]
            [{:count-limit -1} :count-limit]]]
     (testing (pr-str request)
       (let [data

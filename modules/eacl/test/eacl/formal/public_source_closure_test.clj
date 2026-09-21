@@ -57,7 +57,9 @@
   {'backend/direct-match-invoker :direct-match?
    'eacl.backend.v8/direct-match-invoker :direct-match?
    'backend/direct-edge-invoker :direct-edge
-   'eacl.backend.v8/direct-edge-invoker :direct-edge})
+   'eacl.backend.v8/direct-edge-invoker :direct-edge
+   'backend/public-object-id->internal :public-object-id->internal
+   'eacl.backend.v8/public-object-id->internal :public-object-id->internal})
 
 (defn- invoke-calls
   [[file source] features]
@@ -93,7 +95,7 @@
         (into (conj backend/required-snapshot-operations :proof-frame)
               backend/optional-snapshot-operations)]
     (doseq [[runtime features] [[:clj #{:clj}]
-                               [:cljs #{:cljs}]]]
+                                [:cljs #{:cljs}]]]
       (testing (name runtime)
         (let [calls (mapcat #(invoke-calls % features) files)
               nonliteral
@@ -105,5 +107,5 @@
           (is (= required-operations observed))
           (is (empty?
                (set/difference
-                 observed
-                 (set (keys backend/basis-adapter-obligations))))))))))
+                observed
+                (set (keys backend/basis-adapter-obligations))))))))))

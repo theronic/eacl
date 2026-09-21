@@ -156,11 +156,10 @@
       :position position
       :key :id
       :value (:id endpoint)}))
-  (when-not (or (nil? (:relation endpoint))
-                (keyword? (:relation endpoint)))
+  (when (some? (:relation endpoint))
     (invalid-request!
-     "A batch authorization endpoint :relation must be a keyword when present."
-     {:reason :malformed-demand
+     "EACL does not support subject#relation object identities."
+     {:reason :unsupported-subject-relation
       :demand-index demand-index
       :position position
       :key :relation
@@ -205,12 +204,8 @@
   (validate-endpoint! (:resource demand) :resource demand-index)
   demand)
 
-(defn validate-request!
-  "Validates and normalizes the complete public batch envelope.
-
-  This function is deliberately called before snapshot selection or cache
-  lifecycle capture."
-  [request configured-limits]
+(defn- validate-envelope!
+  [request]
   (when-not (map? request)
     (invalid-request!
      "check-permissions requires a request map."
@@ -231,6 +226,31 @@
      {:reason :malformed-request
       :key :checks
       :value (:checks request)}))
+  request)
+
+(defn- validate-demands!
+  [checks]
+  (doseq [[index demand] (map-indexed vector checks)]
+    (validate-demand! demand index))
+  checks)
+
+(defn validate-request-shape!
+  "Validates the complete portable batch shape without applying a client's
+  configured aggregate ceilings. The generic public protocol wrapper uses
+  this before dispatch; shared clients additionally call `validate-request!`
+  with their captured limits before snapshot selection."
+  [request]
+  (validate-envelope! request)
+  (validate-demands! (:checks request))
+  request)
+
+(defn validate-request!
+  "Validates and normalizes the complete public batch envelope.
+
+  This function is deliberately called before snapshot selection or cache
+  lifecycle capture."
+  [request configured-limits]
+  (validate-envelope! request)
   (let [limits
         (normalize-request-limits
          configured-limits (:aggregate-limits request))
@@ -246,8 +266,7 @@
          :limit-kind :batch-size
          :limit maximum
          :actual (count checks)})))
-    (doseq [[index demand] (map-indexed vector checks)]
-      (validate-demand! demand index))
+    (validate-demands! checks)
     (assoc request :aggregate-limits limits)))
 
 (defn demand-key

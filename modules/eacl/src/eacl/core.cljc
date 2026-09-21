@@ -1,7 +1,13 @@
 (ns eacl.core
   "Public authorization capabilities, records, and normalization helpers."
-  (:require [eacl.execution :as execution]
-            [eacl.security.keyring :as keyring]))
+  (:require [eacl.authorization.batch :as authorization-batch]
+            [eacl.authorization.filters :as authorization-filters]
+            [eacl.authorization.result :as authorization-result]
+            [eacl.execution :as execution]
+            [eacl.relationships.filters :as relationship-filters]
+            [eacl.relationships.mutations :as relationship-mutations]
+            [eacl.security.keyring :as keyring]
+            [eacl.spicedb.consistency :as consistency]))
 
 (defn security-keyring
   "Creates a non-durable controller from {:keys {kid material} :active-kid kid}.
@@ -212,6 +218,21 @@
        :reason :unknown-request-key
        :unknown-keys (vec unknown-keys)
        :known-keys known-keys})))
+  (when (contains? request :consistency)
+    (consistency/descriptor (:consistency request)))
+  request)
+
+(defn- validate-required-request-keys!
+  [operation request required-keys]
+  (when-let [missing-keys
+             (seq (remove #(contains? request %) required-keys))]
+    (throw
+     (typed-error
+      :eacl/invalid-request
+      (str (name operation) " is missing required request keys.")
+      {:operation operation
+       :reason :missing-request-key
+       :missing-keys (vec missing-keys)})))
   request)
 
 (defn- validate-endpoint-keys!
@@ -235,9 +256,7 @@
   (when-not (and (map? object)
                  (keyword? (:type object))
                  (contains? object :id)
-                 (some? (:id object))
-                 (or (nil? (:relation object))
-                     (keyword? (:relation object))))
+                 (some? (:id object)))
     (throw
      (typed-error
       :eacl/invalid-request
@@ -247,6 +266,15 @@
        :reason :invalid-object-shape
        :position position
        :value object})))
+  (when (some? (:relation object))
+    (throw
+     (typed-error
+      :eacl/unsupported-subject-relation
+      "EACL does not support subject#relation object identities."
+      {:operation operation
+       :reason :unsupported-subject-relation
+       :position position
+       :relation (:relation object)})))
   object)
 
 (defn- validate-keyword-fields!
@@ -281,8 +309,16 @@
 (defn- validate-read-request!
   [operation request known-keys endpoint-positions keyword-positions]
   (validate-request-keys! operation request known-keys)
+  ;; Preserve the established fail-fast contract for a malformed public
+  ;; result policy even when another required lookup/count field is absent.
+  ;; This check is pure and still runs after closed-key admission above.
+  (when (contains? #{:lookup-resources :lookup-subjects
+                     :count-resources :count-subjects}
+                   operation)
+    (authorization-result/result-policy request))
+  (validate-required-request-keys!
+   operation request (concat endpoint-positions keyword-positions))
   (doseq [position endpoint-positions
-          :when (contains? request position)
           :let [endpoint (get request position)]]
     (validate-public-object! operation position endpoint))
   (validate-keyword-fields! operation request keyword-positions)
@@ -357,13 +393,17 @@
     (validate-request-keys! operation request read-schema-request-keys)
 
     :read-relationships
-    (validate-relationship-read-request! request)
+    (do
+      (validate-relationship-read-request! request)
+      (relationship-filters/validate! request)
+      (authorization-filters/validate-scan-authorization! request))
 
     :lookup-resources
     (do
       (validate-read-request!
        operation request lookup-resources-request-keys [:subject]
        [:permission :resource/type])
+      (authorization-filters/validate-lookup! operation request)
       (validate-stable-page-basis! operation request))
 
     :lookup-subjects
@@ -371,6 +411,7 @@
       (validate-read-request!
        operation request lookup-subjects-request-keys [:resource]
        [:permission :subject/type])
+      (authorization-filters/validate-lookup! operation request)
       (validate-stable-page-basis! operation request)
       (when (contains? request :subject/relation)
         (throw
@@ -512,13 +553,16 @@
     (validate-request-keys!
      :write-relationships! request #{:updates :tx-data})
     (validate-sequential! :write-relationships! :updates (:updates request))
+    (relationship-mutations/normalize-public-updates
+     (vec (:updates request)))
     (-write-relationships! (writer! target) request)))
 
 (defn prepare-relationship!
   "Creates an inert qualifier for a Relationship and returns an opaque handle
    (nil for an ordinary Relationship). Pass it as :prepared-qualifier on the
-   update supplied to tx-relationship. Preparation never grants access."
+  update supplied to tx-relationship. Preparation never grants access."
   [target relationship]
+  (relationship-mutations/normalize-relationship relationship)
   (if (satisfies? IRelationshipPreparation target)
     (-prepare-relationship! target relationship)
     (throw (typed-error :eacl/unsupported-capability
@@ -633,6 +677,8 @@
            :reason :missing-request-key
            :missing-key :updates})))
       (validate-sequential! :tx-relationships :updates (:updates request))
+      (relationship-mutations/normalize-public-updates
+       (vec (:updates request)))
       (-tx-relationships snapshot request))
     (throw (typed-error :eacl/unsupported-capability
                         "Target cannot plan a Relationship batch."
@@ -647,7 +693,9 @@
   ([snapshot update]
    (if (and (snapshot? snapshot)
             (satisfies? ISpeculativeAuthorization snapshot))
-     (-tx-relationship snapshot update)
+     (do
+       (relationship-mutations/normalize-public-updates [update])
+       (-tx-relationship snapshot update))
      (throw
       (typed-error
        :eacl/unsupported-capability
@@ -724,6 +772,7 @@
   ([target]
    (snapshot target nil))
   ([target consistency]
+   (consistency/descriptor consistency)
    (if (satisfies? ISnapshotSource target)
      (-snapshot target consistency {})
      (throw
@@ -801,6 +850,8 @@
    :check-permissions request
    #{:checks :caveat-context :consistency :timeout-ms :cancellation-token
      :cache? :populate-cache? :evaluation :aggregate-limits})
+  (validate-required-request-keys! :check-permissions request [:checks])
+  (authorization-batch/validate-request-shape! request)
   (reader! target)
   (if (satisfies? IBatchedAuthorization target)
     (-check-permissions target request)
@@ -817,10 +868,15 @@
 
 ; Todo: move SpiceObject out of core impl to Spice-specific namespace.
 
-(defrecord SpiceObject [type id relation]) ; where relation means subject_relation, which is distinct from Relationship.relation
+(defrecord SpiceObject [type id relation]) ; non-nil subject_relation is retained for wire compatibility but rejected by public operations
 
 (defn spice-object
   "Multi-arity helper for SubjectReference.
-  Need a better name for this. Only used internally here."
+  Need a better name for this. Only used internally here.
+
+  The three-argument form preserves wire/data compatibility, but EACL does
+  not implement subject#relation usersets: public authorization and mutation
+  operations reject a non-nil relation instead of treating it as the base
+  object."
   ([type id] (->SpiceObject type id nil))
   ([type id relation] (->SpiceObject type id relation)))

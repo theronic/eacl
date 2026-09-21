@@ -591,12 +591,11 @@
         key (checkpoint-key binding)
         payload (when-let [token (or after before)]
                   (decode-token options binding token))
-        anchor-eid (backend/invoke adapter :object-id->internal
-                                   (second anchor))
+        anchor-eid (backend/public-object-id->internal adapter
+                                                       (second anchor))
         boundary-eid (when payload
-                       (backend/invoke (:adapter options)
-                                       :object-id->internal
-                                       (:boundary payload)))
+                       (backend/public-object-id->internal
+                        (:adapter options) (:boundary payload)))
         _ (when (and payload (nil? boundary-eid))
             (page-error! :eacl.page/invalid-cursor
                          "Cursor boundary identity is unknown at this basis."
