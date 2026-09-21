@@ -235,8 +235,10 @@ absolute performance and payload ceilings in `cljs-production.edn`.
 For an operation to inherit a kernel theorem, its adapter must establish:
 
 1. every read in the operation observes one immutable selected snapshot;
-2. external/internal object conversion is injective and round-trips for every
-   visible object;
+2. external/internal object conversion is deterministic, injective, and
+   round-trips for every visible object; host equality is not resolver
+   congruence for representation-distinct public values, so unresolved IDs
+   may be equality-keyed only after canonical-representation admission;
 3. relation and permission definitions are complete for the requested schema;
 4. forward and reverse scans are finite, duplicate-free, complete,
    directionally equivalent, strictly ordered within the adapter's internal

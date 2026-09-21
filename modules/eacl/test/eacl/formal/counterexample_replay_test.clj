@@ -138,7 +138,9 @@
     :EACL-FORMAL-066
     eacl.engine.stable-reducer-test/frozen-baseline-denotation-differential-test
     :EACL-FORMAL-067
-    eacl.datomic.recursive-cache-test/recursive-page-order-is-stable-across-scan-wave-boundaries-test})
+    eacl.datomic.recursive-cache-test/recursive-page-order-is-stable-across-scan-wave-boundaries-test
+    :EACL-FORMAL-068
+    eacl.datascript.contract-test/representation-sensitive-identities-do-not-alias-batch-decisions-or-writes-test})
 
 (defn- read-edn
   [path]

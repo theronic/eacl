@@ -30,6 +30,7 @@
             [eacl.operator.plan :as operator-plan]
             [eacl.operator.recursive :as operator-recursive]
             [eacl.proof-frame :as proof-frame]
+            [eacl.relationships.mutations :as relationship-mutations]
             [eacl.request.context :as request-context]
             [eacl.request.counters :as request-counters]
             [eacl.schema.expression :as expression]
@@ -725,6 +726,40 @@
                     (fn [demand]
                       (assoc (original demand)
                              :subject (:subject alice)))]
+        (gate))))))
+
+(defn public-identity-representation-alias-killed?
+  []
+  (let [gate #(and (cache/canonical-cursor-identity? [1])
+                   (not (cache/canonical-cursor-identity? (list 1))))]
+    (and
+     (gate)
+     (false?
+      (with-redefs [cache/canonical-cursor-identity? sequential?]
+        (gate))))))
+
+(defn unresolved-relationship-coalescing-killed?
+  []
+  (let [updates [{:operation :touch
+                  :relationship
+                  {:subject {:type :user :id (list 1)}
+                   :relation :viewer
+                   :resource {:type :document :id "one"}}}
+                 {:operation :touch
+                  :relationship
+                  {:subject {:type :user :id [1]}
+                   :relation :viewer
+                   :resource {:type :document :id "one"}}}]
+        gate #(= 2 (count
+                    (relationship-mutations/normalize-public-updates updates)))
+        original relationship-mutations/normalize-public-updates]
+    (and
+     (gate)
+     (false?
+      (with-redefs [relationship-mutations/normalize-public-updates
+                    (fn [candidate]
+                      (relationship-mutations/coalesce-updates
+                       (original candidate)))]
         (gate))))))
 
 (defn aggregate-deadline-renewal-killed?
@@ -2437,6 +2472,10 @@ definition folder {
    checkpoint-admissions-counter-drop-killed?
    :aggregate-counter-reset aggregate-counter-reset-killed?
    :batch-cross-demand-contamination batch-cross-demand-contamination-killed?
+   :public-identity-representation-alias
+   public-identity-representation-alias-killed?
+   :unresolved-relationship-coalescing
+   unresolved-relationship-coalescing-killed?
    :aggregate-deadline-renewal aggregate-deadline-renewal-killed?
    :operator-wrong-precedence operator-wrong-precedence-killed?
    :operator-swapped-exclusion operator-swapped-exclusion-killed?

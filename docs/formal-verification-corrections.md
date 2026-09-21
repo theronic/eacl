@@ -230,6 +230,25 @@ no verified-release claim existed.
   portable CLJS, mutation, and reduced cached/cacheless Datomic controls cover
   the policy and public continuation sequence.
 
+### EACL-FORMAL-068 — host-equal public IDs crossed semantic identity boundaries
+
+- **Affected:** ordered batch checks, relationship writes, and public object
+  cleanup with custom external-ID codecs; the implicit native-EID fallback also
+  affected numeric public IDs.
+- **Impact:** a representation-distinct object could reuse another object's
+  memoized allow/deny decision, a relationship update could be discarded during
+  pre-resolution coalescing, public cleanup could target the wrong native
+  entity, and resolver infrastructure failure could be hidden as not-found.
+- **Root cause:** the formal abstraction began with typed semantic identity and
+  omitted unresolved host values. Clojure equality can equate values such as a
+  list and vector that a deterministic injective codec resolves differently.
+- **Correction:** public batch memoization admits only canonical identity
+  representations under the immutable/injective adapter contract; relationship
+  updates resolve before coalescing; public and native-EID deletion are separate
+  entry points; resolver failures propagate. `PublicIdentityBoundary.dfy`, two
+  executed mutants, and the shared backend regressions close the omitted
+  boundary.
+
 The authoritative minimized fixtures and closing evidence are under
 `formal/counterexamples/`. Run them with
 `EACL_NREPL_PORT=<dev-port> bin/formal counterexample-replay`.

@@ -182,12 +182,25 @@ The decisions above flow into these externally observable families:
 - relationship pagination and cursor continuation;
 - authorization-filtered relationship scans and relationship-filtered resource/subject enumeration;
 - ordered batch permission checks under one selected snapshot and aggregate budget;
+- relationship mutation normalization, endpoint resolution, and coalescing;
+- public object cleanup and the separate explicit native-EID cleanup path;
 - cache-enabled variants of checks, lookup, and count.
 
 No production decision may be omitted from the assurance matrix when it can
 alter allow/deny, membership, the stable per-query pagination sequence, page
 flags, typed errors, selected snapshot, or cache provenance. “Ordering” here
 does not imply a global, lexical, domain, or cross-backend order.
+
+Public object identity is a decision boundary before the semantic engine.
+Clojure host equality can equate representation-distinct values (including a
+list and vector with the same members, or different integer representations)
+that a deterministic injective custom codec may resolve to different internal
+objects. Public values may therefore be compared or memoized before resolution
+only when their representation passes the canonical identity predicate.
+Relationship mutations normalize but do not coalesce unresolved public
+updates; endpoint resolution precedes coalescing. Public deletion never treats
+a numeric external ID as a native EID, and resolution failure remains distinct
+from not-found. `delete-object-by-eid!` is the sole public native-EID path.
 
 ## Machine-enforced source closure
 

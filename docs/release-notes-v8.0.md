@@ -469,6 +469,14 @@ as replayed counterexamples against the stable engine.
 
 ## Correctness findings closed
 
+- **Representation-sensitive public identity aliasing.** Ordered batch checks
+  memoize unresolved public demands only when both IDs have canonical
+  representations and the adapter certifies immutable/injective identities.
+  Relationship writes and speculative transaction planning now resolve
+  endpoints before coalescing. Public numeric object deletion cannot fall back
+  to a native EID; explicit ghost repair uses `delete-object-by-eid!`, and
+  resolver failures propagate. EACL-FORMAL-068 records the model, mutants, and
+  cross-runtime regressions.
 - **Datomic raw writer stamp mismatch.** Managed Datomic validation now uses
   only the physical `:eacl/relation-version` assertion written by the public
   and documented low-level helpers. Every relation is initialized on schema
