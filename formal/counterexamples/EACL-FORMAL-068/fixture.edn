@@ -1,0 +1,16 @@
+{:operation-family [:check-permissions :write-relationships! :delete-object!]
+ :public-identities
+ {:host-equal [{:representation :list :value (1)}
+               {:representation :vector :value [1]}]
+  :codec-results [{:representation :list :internal-eid 101}
+                  {:representation :vector :internal-eid 202}]}
+ :before
+ {:batch-memoization :keyed-by-unresolved-host-equal-demand
+  :relationship-mutation :coalesced-before-endpoint-resolution
+  :public-numeric-delete :fell-back-to-native-eid
+  :resolver-failure :treated-as-not-found}
+ :risk
+ [:decision-reused-for-different-object
+  :relationship-update-omitted
+  :wrong-native-object-cleaned
+  :identity-infrastructure-failure-hidden]}

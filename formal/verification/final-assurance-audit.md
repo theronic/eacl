@@ -190,7 +190,7 @@ valuable precisely at this boundary.
 
 ## Bugs and regressions found
 
-The retained corpus contains 67 minimized findings, all marked fixed. Each
+The retained corpus contains 68 minimized findings, all marked fixed. Each
 entry under `formal/counterexamples/EACL-FORMAL-NNN/` records its witness,
 impact, affected backends/version, root cause, fix, and closing evidence. The
 complete corpus is the exact bug ledger; the table below calls out the
@@ -218,6 +218,7 @@ highest-value findings.
 | 059 | assurance-harness correctness | A clean generated-JavaScript rebuild exposed obsolete six-field page-request test arguments and a CLJS recursive-page expectation that disagreed with the equivalent JVM fixture. Cached local generated artifacts had masked both. | Align the direct JS bridge with the current four-field datatype, keep removed API rejection at the host boundary, make JVM/JS consume one shared recursive-page vector, and retain a clean-build source regression. |
 | 060–063 | routing, continuation, and execution-contract fidelity | Production either routed all enumeration recursively, dropped DataScript/Datahike private continuation state, treated inactive recursive syntax as active recursion, or ignored explicit completion on acyclic roots. The last defect also exposed a completed-artifact ordering/cache-key mismatch. | Route from the generated certificate plus snapshot-local cycle guards, wire bounded private continuation through shared core, override every defined root to fixed-point evaluation only for explicit completion, preserve the certified public order/cursor ABI, bind that order in version-5 artifact keys, and kill the regressions in CLJ/CLJS plus model/source mutation controls. |
 | 064–067 | cursor cost, progress, and page-order fidelity | Cursor proof scans could scale with relationship content, pure aliases duplicated traversal streams, fuel-cut waves could livelock, and page size could change recursive traversal order by flushing speculative scans at different FIFO positions. | Exact-current cursor binding, alias canonicalization, lossless fuel-cut publication, and render-owned generated scheduling: page renders admit one scan independent of size while Boolean/count renders retain 64-command waves. |
+| 068 | unresolved public identity representation | Host-equal representation-distinct IDs could be memoized or coalesced before a custom codec resolved them, numeric public deletion could fall back to a native EID, and resolver failure could look absent. | Canonical-only public memoization, resolve-before-coalesce mutation planning, explicit native-EID deletion, failure propagation, and a dedicated identity-boundary model plus mutation controls. |
 
 These findings also expose defects in the verification program itself. Findings
 024–025, 028–034, 040–045, 048–050, and 056–059 are especially important: they
@@ -317,7 +318,7 @@ Recommended:
 > backend-neutral ReBAC semantics, recursive traversal, pagination, cursor,
 > consistency, and cache decision laws are mechanically verified under
 > documented assumptions; browser answers remain advisory and require a
-> server re-check. Sixty-two minimized correctness, assurance-harness, and
+> server re-check. Sixty-eight minimized correctness, assurance-harness, and
 > performance defects were found and fixed during the verification program.
 > Datomic, Datahike, and DataScript are covered by shared adapter and
 > public-contract suites. Mechanized host-control, cache-transition, portable

@@ -100,6 +100,10 @@
    :pagination-and-cursor-kernel
    {:source "formal/dafny/PageWindow.dfy"
     :minimum-proof-efforts 40}
+   :public-identity-boundary
+   {:source "formal/dafny/PublicIdentityBoundary.dfy"
+    :claim :proof-only-representation-sensitive-public-identity-boundary
+    :minimum-proof-efforts 10}
    :permission-tree-expansion
    {:source "formal/dafny/PermissionTree.dfy"
     :claim :conditional-shallow-tree-topology-cycle-and-limit-model
@@ -239,7 +243,8 @@
      :trusted-monotonic-clock-platform-contract
      :independent-review]}
    {:operation :expand-permission-tree
-    :entry-points ['eacl.permission-tree/expand]
+    :entry-points ['eacl.core/expand-permission-tree
+                   'eacl.permission-tree/expand]
     :theorems
     [:tree-node-oneof-and-annotation-well-formedness
      :direct-leaf-exactness
@@ -267,7 +272,7 @@
      :causal-token-authentication
      :independent-review]}
    {:operation :can?
-    :entry-points ['eacl.core/can?]
+    :entry-points ['eacl.core/can? 'eacl.core/check-permission]
     :theorems
     [:authorization-membership-iff
      :permission-path-materialization-refines-raw-typed-definitions
@@ -302,6 +307,22 @@
      :acyclic-optimized-clojure-language-refinement-and-independent-review
      :backend-permission-path-to-indexed-routing-edge-source-refinement
      :independent-review]}
+   {:operation :ordered-batch-permission-check
+    :entry-points ['eacl.core/check-permissions
+                   'eacl.client.orchestration/check-permissions
+                   'eacl.authorization.batch/demand-key
+                   'eacl.cache/canonical-cursor-identity?]
+    :theorems [:host-equality-has-representation-sensitive-counterexamples
+               :canonical-host-equality-is-resolver-congruent
+               :representation-aliases-bypass-public-memoization
+               :equal-public-memo-keys-have-equal-internal-identity]
+    :dafny ["formal/dafny/PublicIdentityBoundary.dfy"]
+    :adapter-obligations [:deterministic-public-to-internal-resolution
+                          :injective-public-to-internal-resolution
+                          :immutable-selected-snapshot]
+    :runtime-targets [:clj-java :cljs-javascript]
+    :remaining [:mechanized-host-control-source-refinement
+                :independent-review]}
    {:operation :lookup
     :entry-points ['eacl.core/lookup-resources 'eacl.core/lookup-subjects]
     :theorems
@@ -476,9 +497,43 @@
     [:mechanized-host-alias-canonicalization-source-refinement
      :backend-permission-body-materialization-refinement
      :independent-review]}
+   {:operation :relationship-mutation-identity
+    :entry-points ['eacl.core/write-relationships!
+                   'eacl.core/write-relationship!
+                   'eacl.core/create-relationships!
+                   'eacl.core/create-relationship!
+                   'eacl.core/delete-relationships!
+                   'eacl.core/delete-relationship!
+                   'eacl.core/tx-relationships
+                   'eacl.core/tx-relationship
+                   'eacl.relationships.mutations/normalize-public-updates
+                   'eacl.relationships.mutations/coalesce-updates]
+    :theorems [:host-equality-has-representation-sensitive-counterexamples
+               :resolve-before-coalescing-preserves-distinct-relationships]
+    :dafny ["formal/dafny/PublicIdentityBoundary.dfy"]
+    :adapter-obligations [:deterministic-public-to-internal-resolution
+                          :injective-public-to-internal-resolution
+                          :atomic-resolved-relationship-mutation]
+    :runtime-targets [:clj-java :cljs-javascript]
+    :remaining [:mechanized-host-control-source-refinement
+                :independent-review]}
+   {:operation :object-deletion-identity
+    :entry-points ['eacl.core/delete-object!
+                   'eacl.core/delete-object-by-eid!]
+    :theorems [:missing-numeric-public-id-never-falls-back-to-native-eid
+               :native-eid-deletion-requires-the-explicit-native-path
+               :public-resolution-failure-is-not-not-found]
+    :dafny ["formal/dafny/PublicIdentityBoundary.dfy"]
+    :adapter-obligations [:typed-public-resolution-outcome
+                          :explicit-native-identity-entry-point
+                          :fail-closed-resolution-errors]
+    :runtime-targets [:clj-java :cljs-javascript]
+    :remaining [:mechanized-host-control-source-refinement
+                :independent-review]}
    {:operation :relationship-pagination
     :entry-points
-    ['eacl.engine.relationships/execute-page
+    ['eacl.core/read-relationships
+     'eacl.engine.relationships/execute-page
      'eacl.engine.relationships/execute-filtered-window
      'eacl.engine.v8/execute-filtered-lookup-window
      'eacl.relay/externalize-relationship-page]
@@ -716,27 +771,27 @@
      :complete-portable-error-comparison]
     :converter-categories
     '{:schema-ir
-     [object->dafny dafny-object->object permission-node relation-node
-      rule-definition]
-     :relationships [relationship->dafny]
-     :queries
-     [authorization-inputs traversal-limits page-presence indexed-render-mode]
-     :adapter-callbacks
-     [indexed-projection indexed-scan-decision indexed-rule relation-binding
-      indexed-plan-decision indexed-seed-decision indexed-limits
-      indexed-projection-value indexed-command-value indexed-counters-value
-      compile-indexed-plan indexed-init indexed-drive indexed-continue-page
-     indexed-resume]
-     :cache-and-cursors
-     [exact-selection continuation-decision]
-     :results
-     [work-counters sequence-outcome boolean-outcome count-outcome
-      authorization-outcome page-decision keyset-page-decision
-      consistency-plan-decision consistency-selection-decision
-      ordered-merge-decision ordered-merge-chunk indexed-public-result]
-     :typed-errors
-     [limit-kind page-error consistency-error indexed-scan-rejection-reason
-      indexed-plan-rejection-reason indexed-limit-kind indexed-render-error]}
+      [object->dafny dafny-object->object permission-node relation-node
+       rule-definition]
+      :relationships [relationship->dafny]
+      :queries
+      [authorization-inputs traversal-limits page-presence indexed-render-mode]
+      :adapter-callbacks
+      [indexed-projection indexed-scan-decision indexed-rule relation-binding
+       indexed-plan-decision indexed-seed-decision indexed-limits
+       indexed-projection-value indexed-command-value indexed-counters-value
+       compile-indexed-plan indexed-init indexed-drive indexed-continue-page
+       indexed-resume]
+      :cache-and-cursors
+      [exact-selection continuation-decision]
+      :results
+      [work-counters sequence-outcome boolean-outcome count-outcome
+       authorization-outcome page-decision keyset-page-decision
+       consistency-plan-decision consistency-selection-decision
+       ordered-merge-decision ordered-merge-chunk indexed-public-result]
+      :typed-errors
+      [limit-kind page-error consistency-error indexed-scan-rejection-reason
+       indexed-plan-rejection-reason indexed-limit-kind indexed-render-error]}
     :runtime-sources
     {:clj-java "modules/eacl/src/eacl/formal/production_kernel.clj"
      :cljs-javascript

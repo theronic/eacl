@@ -3,13 +3,13 @@
  :introduced-after-historical-audit
  [:uuid-type-coercion :uuid-comparator-collision :uuid-dropped-high-half
   :uuid-dropped-low-half :uuid-number-truncation :uuid-noncanonical-alias
-  :uuid-scope :uuid-lifecycle :uuid-detached]
+  :uuid-scope :uuid-lifecycle :uuid-detached
+  :public-identity-representation-alias :unresolved-relationship-coalescing]
  :historical-mutant-count 152
  :historical-clojure-mutant-count 138
  :historical-model-mutant-count 14
  :mutants
- [
-  {:id :uuid-type-coercion
+ [{:id :uuid-type-coercion
    :mechanism :executed-production
    :mutation :uuid-type-coercion
    :target-symbol "uuid/capture"
@@ -83,8 +83,8 @@
    :detector "wrong-arrow-direction-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :scan-cache-serves-short-prefix
    :mechanism :executed-production
    :mutation :serve-short-non-exhausted-prefix
@@ -92,8 +92,8 @@
    :detector "scan-cache-serves-short-prefix-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :scan-cache-serves-values-at-bound
    :mechanism :executed-production
    :mutation :include-exclusive-bound-in-reply
@@ -101,8 +101,8 @@
    :detector "scan-cache-serves-values-at-bound-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :scan-cache-reuses-stale-generation
    :mechanism :executed-production
    :mutation :drop-relation-generation-from-shared-key
@@ -110,8 +110,8 @@
    :detector "scan-cache-reuses-stale-generation-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :scan-cache-widens-command
    :mechanism :executed-production
    :mutation :widen-forwarded-limit
@@ -119,8 +119,8 @@
    :detector "scan-cache-widens-command-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :scan-cache-deposits-fragment
    :mechanism :executed-production
    :mutation :retain-fragment-as-prefix
@@ -128,8 +128,8 @@
    :detector "scan-cache-deposits-fragment-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :range-derivation-end-edge-off-by-one
    :mechanism :executed-production
    :mutation :end-cursor-from-the-edge-after-the-last-result
@@ -137,8 +137,8 @@
    :detector "range-derivation-end-edge-off-by-one-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :range-derivation-ignores-next-page
    :mechanism :executed-production
    :mutation :answer-longer-request-from-incomplete-resident-page
@@ -146,8 +146,8 @@
    :detector "range-derivation-ignores-next-page-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :range-window-position-off-by-one
    :mechanism :executed-production
    :mutation :window-starts-at-the-boundary-result-instead-of-after-it
@@ -155,8 +155,8 @@
    :detector "range-window-position-off-by-one-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :range-window-past-segment-served-as-complete
    :mechanism :executed-production
    :mutation :serve-segment-tail-as-the-whole-answer-despite-a-next-page
@@ -164,8 +164,8 @@
    :detector "range-window-past-segment-served-as-complete-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :range-composition-order
    :mechanism :executed-production
    :mutation :swap-the-segment-and-continuation-order-when-composing
@@ -173,8 +173,8 @@
    :detector "range-composition-order-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :premature-cycle-cut
    :mechanism :executed-production
    :mutation :treat-recursive-node-visit-as-complete
@@ -182,8 +182,8 @@
    :detector "premature-cycle-cut-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :missing-de-duplication
    :mechanism :executed-production
    :mutation :emit-every-semantic-path
@@ -191,8 +191,8 @@
    :detector "missing-de-duplication-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :incomplete-dependency
    :mechanism :executed-production
    :mutation :omit-reachable-relation-from-proof-scope
@@ -200,8 +200,8 @@
    :detector "incomplete-dependency-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :numeric-ancestry
    :mechanism :executed-production
    :mutation :accept-future-equal-proof-candidate-for-older-selection
@@ -209,8 +209,8 @@
    :detector "numeric-ancestry-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :wrong-frontier
    :mechanism :executed-production
    :mutation :resume-from-inclusive-after-bound
@@ -218,8 +218,8 @@
    :detector "wrong-frontier-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :cursor-scope
    :mechanism :executed-production
    :mutation :ignore-operation-and-query-scope
@@ -227,8 +227,8 @@
    :detector "cursor-scope-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :mismatched-indexed-request-scope-response
    :mechanism :executed-production
    :mutation :accept-response-from-another-request-scope
@@ -236,8 +236,8 @@
    :detector "mismatched-indexed-request-scope-response-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :ordered-merge-wrong-comparator
    :mechanism :executed-production
    :mutation :take-larger-head-in-ascending-merge
@@ -245,8 +245,8 @@
    :detector "ordered-merge-wrong-comparator-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :acyclic-merge-emits-overlap-twice
    :mechanism :executed-production
    :mutation :emit-equal-heads-twice
@@ -254,8 +254,8 @@
    :detector "acyclic-merge-emits-overlap-twice-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :adapter-negative-eid-admitted
    :mechanism :executed-production
    :mutation :accept-negative-internal-eid
@@ -263,8 +263,8 @@
    :detector "adapter-negative-eid-admitted-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :enumeration-route-forces-recursive
    :mechanism :executed-production
    :mutation :force-recursive-route-without-active-recursive-data
@@ -272,8 +272,8 @@
    :detector "enumeration-route-forces-recursive-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :acyclic-work-allows-recursive-budget
    :mechanism :executed-production
    :mutation :accept-positive-recursive-work-on-acyclic-route
@@ -281,8 +281,8 @@
    :detector "acyclic-work-allows-recursive-budget-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :consistency-malformed-exact-treated-absent
    :mechanism :executed-production
    :mutation :map-malformed-present-exact-to-unavailable
@@ -290,8 +290,8 @@
    :detector "consistency-malformed-exact-treated-absent-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :consistency-at-least-revision-floor-ignored
    :mechanism :executed-production
    :mutation :accept-selection-below-requested-floor
@@ -299,8 +299,8 @@
    :detector "consistency-at-least-revision-floor-ignored-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :consistency-unsupported-exact-becomes-generic
    :mechanism :executed-production
    :mutation :map-unsupported-exact-to-generic-head-barrier
@@ -308,8 +308,8 @@
    :detector "consistency-unsupported-exact-becomes-generic-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :exact-basis-key-omits-lifecycle
    :mechanism :executed-production
    :mutation :omit-source-lifecycle-from-exact-basis-key
@@ -317,8 +317,8 @@
    :detector "exact-basis-key-omits-lifecycle-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :adapter-generation-domain
    :mechanism :executed-production
    :mutation :accept-non-numeric-relation-generation-as-proof-evidence
@@ -327,8 +327,8 @@
    :detector "adapter-generation-domain-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :adapter-generation-ceiling
    :mechanism :executed-production
    :mutation :validate-relation-generation-against-an-inflated-revision
@@ -337,8 +337,8 @@
    :detector "adapter-generation-ceiling-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :non-durable-live-source-id-collision
    :mechanism :executed-production
    :mutation :collapse-distinct-live-source-identities-in-managed-lineage
@@ -346,8 +346,8 @@
    :detector "non-durable-live-source-id-collision-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :plan-read-scope-escape
    :mechanism :executed-production
    :mutation :admit-sealed-plan-relation-outside-certified-closure
@@ -355,8 +355,8 @@
    :detector "plan-read-scope-escape-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :checkpoint-native-revision-key
    :mechanism :executed-production
    :mutation :restore-native-revision-to-frame-checkpoint-key
@@ -364,8 +364,8 @@
    :detector "checkpoint-native-revision-key-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :checkpoint-admissions-counter-drop
    :mechanism :executed-production
    :mutation :remove-accumulated-admissions-from-history-free-state
@@ -373,8 +373,8 @@
    :detector "checkpoint-admissions-counter-drop-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :aggregate-counter-reset
    :mechanism :executed-production
    :mutation :reset-cumulative-work-at-each-window
@@ -382,8 +382,8 @@
    :detector "aggregate-counter-reset-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :batch-cross-demand-contamination
    :mechanism :executed-production
    :mutation :reuse-one-demand-key-for-another-demand
@@ -391,8 +391,26 @@
    :detector "batch-cross-demand-contamination-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :public-identity-representation-alias
+   :mechanism :executed-production
+   :mutation :admit-representation-distinct-host-equal-public-ids-to-memoization
+   :target-symbol "cache/canonical-cursor-identity?"
+   :detector "public-identity-representation-alias-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :unresolved-relationship-coalescing
+   :mechanism :executed-production
+   :mutation :coalesce-host-equal-public-ids-before-endpoint-resolution
+   :target-symbol "relationship-mutations/normalize-public-updates"
+   :detector "unresolved-relationship-coalescing-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :aggregate-deadline-renewal
    :mechanism :executed-production
    :mutation :drop-request-wide-absolute-deadline
@@ -400,8 +418,8 @@
    :detector "aggregate-deadline-renewal-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
 
   {:id :operator-wrong-precedence
    :mechanism :executed-production
@@ -611,8 +629,8 @@
      :forbidden ["eacl.formal.production-kernel-js :as production-kernel"]}]
    :control {:kind :clojure :runtimes [:clj]}
    :killed-by
-    {:test
-     :eacl.formal.mutation-control-test/registry-mechanisms-name-and-execute-their-targets-test}}
+   {:test
+    :eacl.formal.mutation-control-test/registry-mechanisms-name-and-execute-their-targets-test}}
   {:id :cljs-generated-browser-payload-restored
    :mechanism :source-text
    :mutation :restore-generated-browser-payload-to-published-module
@@ -629,8 +647,8 @@
      :forbidden []}]
    :control {:kind :clojure :runtimes [:clj]}
    :killed-by
-    {:test
-     :eacl.formal.mutation-control-test/registry-mechanisms-name-and-execute-their-targets-test}}
+   {:test
+    :eacl.formal.mutation-control-test/registry-mechanisms-name-and-execute-their-targets-test}}
   {:id :generated-java-boundary-restores-reflection
    :mechanism :source-text
    :mutation :remove-concrete-generated-java-type-hints
@@ -656,8 +674,8 @@
      :forbidden []}]
    :control {:kind :clojure :runtimes [:clj]}
    :killed-by
-    {:test
-     :eacl.formal.mutation-control-test/registry-mechanisms-name-and-execute-their-targets-test}}
+   {:test
+    :eacl.formal.mutation-control-test/registry-mechanisms-name-and-execute-their-targets-test}}
   {:id :indexed-scan-validator-restores-pairwise-runtime
    :mechanism :source-text
    :mutation :restore-pairwise-quantified-runtime-validator
@@ -669,8 +687,8 @@
      :forbidden ["if !StrictlyIncreasing(response.values) {"]}]
    :control {:kind :clojure :runtimes [:clj]}
    :killed-by
-    {:test
-     :eacl.formal.mutation-control-test/registry-mechanisms-name-and-execute-their-targets-test}}
+   {:test
+    :eacl.formal.mutation-control-test/registry-mechanisms-name-and-execute-their-targets-test}}
   {:id :generated-target-collections-restore-quadratic
    :mechanism :source-text
    :mutation :restore-copying-generated-target-collections
@@ -687,8 +705,8 @@
      :forbidden ["super(length);"]}]
    :control {:kind :clojure :runtimes [:clj]}
    :killed-by
-    {:test
-     :eacl.formal.mutation-control-test/registry-mechanisms-name-and-execute-their-targets-test}}
+   {:test
+    :eacl.formal.mutation-control-test/registry-mechanisms-name-and-execute-their-targets-test}}
 
   {:id :partial-denotation-hit
    :mechanism :executed-model

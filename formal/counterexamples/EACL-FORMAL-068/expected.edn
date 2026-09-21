@@ -1,0 +1,11 @@
+{:batch-public-memoization
+ {:canonical-representation-only true
+  :noncanonical-demand-evaluated-independently true}
+ :relationship-mutation
+ {:endpoint-resolution-before-coalescing true
+  :resolved-distinct-updates 2}
+ :object-deletion
+ {:public-numeric-id-never-native-eid true
+  :explicit-native-eid-entry-point :delete-object-by-eid!
+  :resolver-failure-propagates true}
+ :dafny-obligation :public-identity-representation-boundary}
