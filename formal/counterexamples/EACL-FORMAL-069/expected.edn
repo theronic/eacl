@@ -1,0 +1,18 @@
+{:read-requests
+ {:unknown-keys-rejected-before-snapshot-selection true
+  :misspelled-consistency-rejected true
+  :reserved-live-page-basis-rejected true}
+ :relationship-mutations
+ {:single-record-delete-rejected true
+  :misspelled-expiry-rejected true
+  :missing-or-nil-updates-rejected true
+  :unknown-envelope-fields-rejected true
+  :invalid-input-never-reported-as-empty-success true}
+ :object-deletion
+ {:malformed-public-object-rejected true
+  :public-and-native-identity-mutually-exclusive true
+  :public-wrapper-rejects-native-eid true
+  :client-protocol-rejects-ambiguous-identity true}
+ :schema-write
+ {:backend-only-empty-schema-opt-in-rejected true}
+ :dafny-obligation :closed-public-request-boundary}

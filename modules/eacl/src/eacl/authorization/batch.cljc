@@ -148,13 +148,23 @@
       :position position
       :key :type
       :value (:type endpoint)}))
-  (when-not (contains? endpoint :id)
+  (when-not (and (contains? endpoint :id) (some? (:id endpoint)))
     (invalid-request!
-     "A batch authorization endpoint must contain :id."
+     "A batch authorization endpoint must contain a non-nil :id."
      {:reason :malformed-demand
       :demand-index demand-index
       :position position
-      :missing-key :id})))
+      :key :id
+      :value (:id endpoint)}))
+  (when-not (or (nil? (:relation endpoint))
+                (keyword? (:relation endpoint)))
+    (invalid-request!
+     "A batch authorization endpoint :relation must be a keyword when present."
+     {:reason :malformed-demand
+      :demand-index demand-index
+      :position position
+      :key :relation
+      :value (:relation endpoint)})))
 
 (defn validate-demand!
   "Validates one closed scalar point demand without consulting a snapshot."

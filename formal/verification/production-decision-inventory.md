@@ -202,6 +202,23 @@ updates; endpoint resolution precedes coalescing. Public deletion never treats
 a numeric external ID as a native EID, and resolution failure remains distinct
 from not-found. `delete-object-by-eid!` is the sole public native-EID path.
 
+Public request shape is also a decision boundary before consistency selection
+or mutation dispatch. Unknown top-level or endpoint fields are rejected;
+the single-relationship writer cannot silently discard a misspelled qualifier;
+plural mutation and planning APIs require explicit sequential collections;
+and public-object and native-EID deletion selectors are mutually exclusive.
+Public object deletion additionally requires a typed object with a non-nil ID.
+Reserved page-basis values and the backend-only empty-schema escape hatch are
+also rejected at this boundary rather than ignored or forwarded.
+The shared client repeats mutation-envelope checks at its protocol boundary so
+direct protocol invocation cannot bypass the public wrapper.
+
+Snapshot capture has a separate trust boundary. Callers choose only the
+documented consistency descriptor. The shared `ISnapshotSource` implementation
+rejects every protocol options key before basis selection, so identity codecs,
+clocks, cache stores, and security configuration cannot be replaced after
+`make-client` validation.
+
 ## Machine-enforced source closure
 
 `target/formal/verification/public-source-closure.json` is generated from both CLJ and CLJS analysis of

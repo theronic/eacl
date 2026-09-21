@@ -41,6 +41,33 @@
                     {:valid-until-ms 9007199254740992} {:qualifier-eid 123}]]
       (is (some? (errors/error-data #(mutations/normalize-relationship (merge relationship fields))))))))
 
+(deftest public-mutation-shapes-are-closed
+  (doseq [[value reason]
+          [[(dissoc relationship :resource) :relationship-shape]
+           [(assoc-in relationship [:subject :tenant] "unexpected")
+            :subject-shape]
+           [(assoc-in relationship [:resource :tenant] "unexpected")
+            :resource-shape]
+           [(assoc-in relationship [:subject :id] nil) :subject-shape]
+           [(assoc-in relationship [:resource :type] "folder")
+            :resource-shape]
+           [(assoc relationship :relation "member") :relation-shape]]]
+    (is (= reason
+           (:reason
+            (errors/error-data
+             #(mutations/normalize-relationship value))))))
+  (doseq [update
+          [{:operation :touch :relationship relationship
+            :prepared-qualifer :misspelled}
+           {:operation :touch :relationship relationship
+            :expected-value :ignored}
+           {:operation :touch}]]
+    (let [data
+          (errors/error-data
+           #(mutations/normalize-public-updates [update]))]
+      (is (= :eacl/invalid-relationship-update-batch (:type data)))
+      (is (= :update-shape (:reason data))))))
+
 (deftest batch-identity-excludes-qualifiers-but-update-intent-does-not
   (let [a (assoc relationship :caveat "enabled" :caveat-context {"flag" true} :valid-until-ms 100)
         b (assoc a :valid-until-ms 200)

@@ -1533,6 +1533,130 @@
                             :reboot
                             (contract/->server "server-1")))))))
 
+(deftest public-request-shapes-fail-closed-before-datascript-mutation-test
+  (let [conn (datascript/create-conn)
+        client (datascript/make-client conn {:cache cache/no-cache})
+        alice (eacl/spice-object :user "shape-alice")
+        bob (eacl/spice-object :user "shape-bob")
+        document-a (eacl/spice-object :document "shape-a")
+        document-b (eacl/spice-object :document "shape-b")
+        capture-error
+        (fn [operation]
+          (try
+            (operation)
+            nil
+            (catch #?(:clj clojure.lang.ExceptionInfo
+                      :cljs cljs.core.ExceptionInfo) error
+              (ex-data error))))]
+    (eacl/write-schema!
+     client
+     "definition user {}
+      definition document {
+        relation reader: user
+        permission view = reader
+      }")
+    (ds/transact! conn [{:eacl/id (:id alice)}
+                        {:eacl/id (:id bob)}
+                        {:eacl/id (:id document-a)}
+                        {:eacl/id (:id document-b)}])
+    (eacl/create-relationships!
+     client
+     [(eacl/->Relationship alice :reader document-a)
+      (eacl/->Relationship bob :reader document-b)])
+    (let [bob-eid (ds/entid (ds/db conn) [:eacl/id (:id bob)])
+          document-b-eid
+          (ds/entid (ds/db conn) [:eacl/id (:id document-b)])
+          public-error
+          (capture-error
+           #(eacl/delete-object!
+             client {:object alice :native-eid bob-eid}))
+          protocol-error
+          (capture-error
+           #(eacl/-delete-object!
+             client {:object alice :native-eid bob-eid}))
+          nil-id-error
+          (capture-error
+           #(eacl/delete-object! client {:type :user :id nil}))
+          protocol-nil-id-error
+          (capture-error
+           #(eacl/-delete-object!
+             client {:object {:type :user :id nil}}))
+          snapshot-option-error
+          (capture-error
+           #(eacl/-snapshot
+             client nil
+             {:spice-object->internal
+              (fn [_ object]
+                (assoc object :id
+                       (if (= :user (:type object))
+                         bob-eid
+                         document-b-eid)))}))
+          empty-schema-option-error
+          (capture-error
+           #(eacl/-write-schema!
+             client {:schema "definition user {}"
+                     :allow-empty-schema? true}))]
+      (is (= :eacl/invalid-request (:type public-error)))
+      (is (= :unknown-request-key (:reason public-error)))
+      (is (= :eacl/invalid-request (:type protocol-error)))
+      (is (= :ambiguous-object-identity (:reason protocol-error)))
+      (is (= :eacl/invalid-request (:type nil-id-error)))
+      (is (= :invalid-object-shape (:reason nil-id-error)))
+      (is (= :eacl/invalid-request (:type protocol-nil-id-error)))
+      (is (= :invalid-object-shape (:reason protocol-nil-id-error)))
+      (is (= :eacl/invalid-request (:type snapshot-option-error)))
+      (is (= :unknown-request-key (:reason snapshot-option-error)))
+      (is (= :eacl/invalid-request (:type empty-schema-option-error)))
+      (is (= :unknown-request-key (:reason empty-schema-option-error)))
+      (is (false? (eacl/can? client alice :view document-b))
+          "a caller cannot replace the client's trusted public-ID resolver")
+      (is (true? (eacl/can? client alice :view document-a)))
+      (is (true? (eacl/can? client bob :view document-b))))
+    (doseq [operation
+            [#(eacl/can?
+               client {:subject alice :permission :view :resource document-a
+                       :consistncy :fully-consistent})
+             #(eacl/-check-permission
+               client {:subject alice :permission :view :resource document-a
+                       :consistncy :fully-consistent})
+             #(eacl/read-schema client {:consistncy :fully-consistent})
+             #(eacl/count-resources
+               client {:subject alice :permission :view
+                       :resource/type :document
+                       :consistncy :fully-consistent})]]
+      (let [error (capture-error operation)]
+        (is (= :eacl/invalid-request (:type error)))
+        (is (= :unknown-request-key (:reason error)))
+        (is (= [:consistncy] (:unknown-keys error)))))
+    (doseq [operation
+            [#(eacl/-check-permission
+               client {:subject (assoc alice :id nil)
+                       :permission :view
+                       :resource document-a})
+             #(eacl/-lookup-resources
+               client {:subject alice :permission :view
+                       :resource/type :document :first 1
+                       :page/basis :live})]]
+      (let [error (capture-error operation)]
+        (is (contains? #{:eacl/invalid-request
+                         :eacl.pagination/invalid-page-request}
+                       (:type error)))
+        (is (contains? #{:invalid-object-shape
+                         :unsupported-page-basis}
+                       (:reason error)))))
+    (eacl/with-snapshot [snapshot (eacl/snapshot client)]
+      (let [tx-error (capture-error #(eacl/with snapshot nil))
+            schema-error
+            (capture-error
+             #(eacl/with-schema
+                snapshot
+                "definition user {}"
+                {:orphan-polciy :retain-inert}))]
+        (is (= :eacl/invalid-request (:type tx-error)))
+        (is (= :invalid-request-shape (:reason tx-error)))
+        (is (= :eacl/invalid-request (:type schema-error)))
+        (is (= :unknown-request-key (:reason schema-error)))))))
+
 (deftest delete-object-keeps-public-numeric-ids-separate-from-native-eids-test
   (let [conn (datascript/create-conn)
         client (datascript/make-client conn {:cache cache/no-cache})

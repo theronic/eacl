@@ -141,6 +141,265 @@
   [type message data]
   (ex-info message (assoc data :type type :eacl/error type)))
 
+(def ^:private endpoint-keys #{:type :id :relation})
+
+(def ^:private single-relationship-write-keys
+  #{:operation :subject :relation :resource
+    :caveat :caveat-context :valid-until-ms})
+
+(def ^:private execution-request-keys
+  #{:consistency :cache? :populate-cache? :evaluation :timeout-ms
+    :cancellation-token :caveat-context :aggregate-limits})
+
+(def ^:private point-request-keys
+  (into execution-request-keys #{:subject :permission :resource}))
+
+(def ^:private read-schema-request-keys
+  #{:consistency :timeout-ms :cancellation-token})
+
+(def ^:private relationship-read-request-keys
+  #{:subject/type :subject/id :resource/type :resource/id
+    :resource/relation :resource/id-prefix :subject/relation
+    :first :last :after :before :cursor :limit
+    :page/basis :consistency :cache? :populate-cache? :evaluation
+    :timeout-ms :caveat-context :relationship-state :cancellation-token
+    :aggregate-limits :authorization})
+
+(def ^:private page-request-keys
+  #{:first :last :after :before :cursor :limit :page/basis
+    :consistency :cache? :populate-cache? :evaluation :timeout-ms
+    :cancellation-token :caveat-context :result-policy :aggregate-limits})
+
+(def ^:private lookup-resources-request-keys
+  (into page-request-keys
+        #{:subject :permission :resource/type :resource/relationship}))
+
+(def ^:private lookup-subjects-request-keys
+  (into page-request-keys
+        #{:resource :permission :subject/type :subject/relation
+          :subject/relationship}))
+
+(def ^:private count-resources-request-keys
+  (into execution-request-keys
+        #{:subject :permission :resource/type :count-limit :result-policy}))
+
+(def ^:private count-subjects-request-keys
+  (into execution-request-keys
+        #{:resource :permission :subject/type :subject/relation
+          :count-limit :result-policy}))
+
+(def ^:private count-pagination-request-keys
+  #{:first :last :after :before :cursor :limit :page/basis})
+
+(def ^:private permission-tree-request-keys
+  #{:resource :permission :consistency :timeout-ms :cancellation-token
+    :cache? :populate-cache?})
+
+(defn- validate-request-keys!
+  [operation request known-keys]
+  (when-not (map? request)
+    (throw
+     (typed-error
+      :eacl/invalid-request
+      (str (name operation) " requires a request map.")
+      {:operation operation :reason :invalid-request-shape :value request})))
+  (when-let [unknown-keys (seq (remove known-keys (keys request)))]
+    (throw
+     (typed-error
+      :eacl/invalid-request
+      (str (name operation) " received unknown request keys.")
+      {:operation operation
+       :reason :unknown-request-key
+       :unknown-keys (vec unknown-keys)
+       :known-keys known-keys})))
+  request)
+
+(defn- validate-endpoint-keys!
+  [operation position endpoint]
+  (when (map? endpoint)
+    (when-let [unknown-keys (seq (remove endpoint-keys (keys endpoint)))]
+      (throw
+       (typed-error
+        :eacl/invalid-request
+        (str (name operation) " received unknown object keys.")
+        {:operation operation
+         :reason :unknown-object-key
+         :position position
+         :unknown-keys (vec unknown-keys)
+         :known-keys endpoint-keys}))))
+  endpoint)
+
+(defn- validate-public-object!
+  [operation position object]
+  (validate-endpoint-keys! operation position object)
+  (when-not (and (map? object)
+                 (keyword? (:type object))
+                 (contains? object :id)
+                 (some? (:id object))
+                 (or (nil? (:relation object))
+                     (keyword? (:relation object))))
+    (throw
+     (typed-error
+      :eacl/invalid-request
+      (str (name operation)
+           " requires a typed public object with a non-nil ID.")
+      {:operation operation
+       :reason :invalid-object-shape
+       :position position
+       :value object})))
+  object)
+
+(defn- validate-keyword-fields!
+  [operation request positions]
+  (doseq [position positions
+          :when (contains? request position)]
+    (when-not (keyword? (get request position))
+      (throw
+       (typed-error
+        :eacl/invalid-request
+        (str (name operation) " requires keyword authorization names and types.")
+        {:operation operation
+         :reason :invalid-request-value
+         :position position
+         :value (get request position)}))))
+  request)
+
+(defn- validate-stable-page-basis!
+  [operation request]
+  (when (and (contains? request :page/basis)
+             (not= :stable (:page/basis request)))
+    (throw
+     (typed-error
+      :eacl.pagination/invalid-page-request
+      ":page/basis currently supports only :stable."
+      {:operation operation
+       :reason :unsupported-page-basis
+       :key :page/basis
+       :value (:page/basis request)})))
+  request)
+
+(defn- validate-read-request!
+  [operation request known-keys endpoint-positions keyword-positions]
+  (validate-request-keys! operation request known-keys)
+  (doseq [position endpoint-positions
+          :when (contains? request position)
+          :let [endpoint (get request position)]]
+    (validate-public-object! operation position endpoint))
+  (validate-keyword-fields! operation request keyword-positions)
+  request)
+
+(defn- validate-count-request!
+  [operation request known-keys endpoint-positions keyword-positions]
+  (when (map? request)
+    (when-let [pagination-key
+               (some #(when (contains? request %) %)
+                     count-pagination-request-keys)]
+      (throw
+       (typed-error
+        :eacl.pagination/invalid-page-request
+        (str (name operation) " does not accept pagination fields.")
+        {:operation operation :key pagination-key}))))
+  (validate-read-request!
+   operation request known-keys endpoint-positions keyword-positions))
+
+(defn- validate-relationship-read-request!
+  [request]
+  (when-not (map? request)
+    (throw
+     (ex-info
+      "read-relationships requires a filter map."
+      {:type :eacl.filters/invalid-filter
+       :eacl/error :eacl.filters/invalid-filter
+       :value request})))
+  (doseq [unsupported-key [:resource/id-prefix :subject/relation]]
+    (when (contains? request unsupported-key)
+      (throw
+       (ex-info
+        (str (pr-str unsupported-key)
+             " is not supported by read-relationships.")
+        {:eacl/error :eacl.pagination/unsupported-filter
+         :filter unsupported-key}))))
+  (when-let [unknown-keys
+             (seq (remove relationship-read-request-keys (keys request)))]
+    (throw
+     (ex-info
+      "read-relationships was passed unknown filter keys."
+      {:eacl/error :eacl.filters/unknown-filter
+       :unknown-keys (vec unknown-keys)})))
+  (validate-stable-page-basis! :read-relationships request)
+  request)
+
+(defn- validate-sequential!
+  [operation position value]
+  (when-not (sequential? value)
+    (throw
+     (typed-error
+      :eacl/invalid-request
+      (str (name operation) " requires a sequential " (name position) ".")
+      {:operation operation
+       :reason :invalid-request-shape
+       :position position
+       :value value})))
+  value)
+
+(defn ^:no-doc validate-reader-request!
+  "Validates the closed public shape for a reader protocol operation.
+
+  Shared clients call this again inside protocol methods so direct protocol
+  invocation cannot bypass wrapper validation or select a basis first."
+  [operation request]
+  (case operation
+    :check-permission
+    (validate-read-request!
+     operation request point-request-keys [:subject :resource] [:permission])
+
+    :read-schema
+    (validate-request-keys! operation request read-schema-request-keys)
+
+    :read-relationships
+    (validate-relationship-read-request! request)
+
+    :lookup-resources
+    (do
+      (validate-read-request!
+       operation request lookup-resources-request-keys [:subject]
+       [:permission :resource/type])
+      (validate-stable-page-basis! operation request))
+
+    :lookup-subjects
+    (do
+      (validate-read-request!
+       operation request lookup-subjects-request-keys [:resource]
+       [:permission :subject/type])
+      (validate-stable-page-basis! operation request)
+      (when (contains? request :subject/relation)
+        (throw
+         (ex-info
+          ":subject/relation is not supported by lookup-subjects."
+          {:eacl/error :eacl.pagination/unsupported-filter
+           :filter :subject/relation})))
+      request)
+
+    :count-resources
+    (validate-count-request!
+     operation request count-resources-request-keys [:subject]
+     [:permission :resource/type])
+
+    :count-subjects
+    (validate-count-request!
+     operation request count-subjects-request-keys [:resource]
+     [:permission :subject/type])
+
+    :expand-permission-tree
+    (validate-read-request!
+     operation request permission-tree-request-keys [:resource] [:permission])
+
+    (throw
+     (typed-error
+      :eacl/invalid-request
+      "Unknown authorization reader operation."
+      {:operation operation :reason :unknown-operation}))))
+
 (defn- reader!
   [target]
   (if (satisfies? IAuthorizationReader target)
@@ -165,6 +424,7 @@
 (defn check-permission
   "Returns the canonical detailed authorization decision."
   ([target request]
+   (validate-reader-request! :check-permission request)
    (-check-permission (reader! target) request))
   ([target subject permission resource]
    (check-permission target
@@ -202,45 +462,57 @@
   ([target]
    (read-schema target {}))
   ([target request]
+   (validate-reader-request! :read-schema request)
    (-read-schema (reader! target) request)))
 
 (defn read-relationships
   [target request]
+  (validate-reader-request! :read-relationships request)
   (-read-relationships (reader! target) request))
 
 (defn lookup-resources
   [target request]
+  (validate-reader-request! :lookup-resources request)
   (-lookup-resources (reader! target) request))
 
 (defn lookup-subjects
   [target request]
+  (validate-reader-request! :lookup-subjects request)
   (-lookup-subjects (reader! target) request))
 
 (defn count-resources
   [target request]
+  (validate-reader-request! :count-resources request)
   (-count-resources (reader! target) request))
 
 (defn count-subjects
   [target request]
+  (validate-reader-request! :count-subjects request)
   (-count-subjects (reader! target) request))
 
 (defn expand-permission-tree
   [target request]
+  (validate-reader-request! :expand-permission-tree request)
   (-expand-permission-tree (reader! target) request))
 
 (defn write-schema!
   [target schema]
-  (-write-schema! (writer! target)
-                  (if (and (map? schema) (contains? schema :schema))
-                    schema
-                    {:schema schema})))
+  (let [request (if (and (map? schema) (contains? schema :schema))
+                  schema
+                  {:schema schema})]
+    (validate-request-keys!
+     :write-schema! request #{:schema :orphan-policy})
+    (-write-schema! (writer! target) request)))
 
 (defn write-relationships!
   [target updates]
-  (-write-relationships! (writer! target)
-                         (if (and (map? updates) (contains? updates :updates))
-                           updates
-                           {:updates updates})))
+  (let [request (if (and (map? updates) (contains? updates :updates))
+                  updates
+                  {:updates updates})]
+    (validate-request-keys!
+     :write-relationships! request #{:updates :tx-data})
+    (validate-sequential! :write-relationships! :updates (:updates request))
+    (-write-relationships! (writer! target) request)))
 
 (defn prepare-relationship!
   "Creates an inert qualifier for a Relationship and returns an opaque handle
@@ -270,10 +542,12 @@
   entity IDs. Use `delete-object-by-eid!` for explicit ghost repair after an
   entity's public identity has already been retracted."
   [target object]
-  (-delete-object! (writer! target)
-                   (if (and (map? object) (contains? object :object))
-                     object
-                     {:object object})))
+  (let [request (if (and (map? object) (contains? object :object))
+                  object
+                  {:object object})]
+    (validate-request-keys! :delete-object! request #{:object})
+    (validate-public-object! :delete-object! :object (:object request))
+    (-delete-object! (writer! target) request)))
 
 (defn delete-object-by-eid!
   "Removes every Relationship touching one explicit native entity ID.
@@ -297,13 +571,16 @@
             :subject subject
             :relation relation
             :resource resource}))
-  ([target {:keys [operation subject relation resource] :as update}]
-   (write-relationships!
-    target
-    [(->RelationshipUpdate
-      operation
-      (merge (->Relationship subject relation resource)
-             (select-keys update [:caveat :caveat-context :valid-until-ms])))])))
+  ([target update]
+   (validate-request-keys!
+    :write-relationship! update single-relationship-write-keys)
+   (let [{:keys [operation subject relation resource]} update]
+     (write-relationships!
+      target
+      [(->RelationshipUpdate
+        operation
+        (merge (->Relationship subject relation resource)
+               (select-keys update [:caveat :caveat-context :valid-until-ms])))]))))
 
 (defn with
   "Applies native transaction data in memory and returns an immutable,
@@ -311,7 +588,9 @@
   EACL-created snapshot; native database values are never accepted."
   [target tx-data]
   (if (satisfies? ISpeculativeAuthorization target)
-    (-with target tx-data)
+    (do
+      (validate-sequential! :with :tx-data tx-data)
+      (-with target tx-data))
     (throw
      (typed-error
       :eacl/unsupported-capability
@@ -325,7 +604,10 @@
    (with-schema target schema {}))
   ([target schema options]
    (if (satisfies? ISpeculativeAuthorization target)
-     (-with-schema target schema options)
+     (do
+       (validate-request-keys!
+        :with-schema options #{:orphan-policy})
+       (-with-schema target schema options))
      (throw
       (typed-error
        :eacl/unsupported-capability
@@ -339,7 +621,19 @@
    backends require :prepared-qualifier handles on qualified updates."
   [snapshot request]
   (if (and (snapshot? snapshot) (satisfies? IRelationshipPlanning snapshot))
-    (-tx-relationships snapshot (if (map? request) request {:updates request}))
+    (let [request (if (map? request) request {:updates request})]
+      (validate-request-keys!
+       :tx-relationships request #{:updates :tx-data})
+      (when-not (contains? request :updates)
+        (throw
+         (typed-error
+          :eacl/invalid-request
+          "tx-relationships requires :updates in its request envelope."
+          {:operation :tx-relationships
+           :reason :missing-request-key
+           :missing-key :updates})))
+      (validate-sequential! :tx-relationships :updates (:updates request))
+      (-tx-relationships snapshot request))
     (throw (typed-error :eacl/unsupported-capability
                         "Target cannot plan a Relationship batch."
                         {:capability :tx-relationships :target (target-kind snapshot)}))))
@@ -382,6 +676,7 @@
 
 (defn create-relationships!
   [target relationships]
+  (validate-sequential! :create-relationships! :relationships relationships)
   (write-relationships!
    target
    (mapv #(->RelationshipUpdate :create %) relationships)))
@@ -396,8 +691,19 @@
 (defn- relationship-seq
   [relationships]
   (if (map? relationships)
-    (:data relationships)
-    relationships))
+    (do
+      (when-not (contains? relationships :data)
+        (throw
+         (typed-error
+          :eacl/invalid-request
+          "delete-relationships! requires a relationship collection or a page containing :data."
+          {:operation :delete-relationships!
+           :reason :invalid-request-shape
+           :value relationships})))
+      (validate-sequential!
+       :delete-relationships! :data (:data relationships)))
+    (validate-sequential!
+     :delete-relationships! :relationships relationships)))
 
 (defn delete-relationships!
   [target relationships]
@@ -491,6 +797,10 @@
   batch fail with a typed unsupported capability instead of looping over public
   scalar calls."
   [target request]
+  (validate-request-keys!
+   :check-permissions request
+   #{:checks :caveat-context :consistency :timeout-ms :cancellation-token
+     :cache? :populate-cache? :evaluation :aggregate-limits})
   (reader! target)
   (if (satisfies? IBatchedAuthorization target)
     (-check-permissions target request)
