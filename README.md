@@ -192,6 +192,7 @@ This README is too long & too technical, so I am working to simplify it and brea
     * [Lookups](#lookups)
     * [Counting](#counting)
   * [Snapshots](#snapshots)
+  * [Rationale](#rationale)
   * [The Benefits of Situated Authorization](#the-benefits-of-situated-authorization)
   * [ReBAC: Relationship-based Access Control](#rebac-relationship-based-access-control)
   * [Consistency Semantics](#consistency-semantics)
@@ -401,6 +402,16 @@ raw Datomic `d/with` or `d/filter` value in an implementation-level client.
 See [atomic writes](docs/atomic-writes.md) and the
 [backend guide](docs/v8-backend-modules-and-upgrade.md) for supported snapshot
 operations and backend limits.
+
+## Rationale
+
+I spent the better half of 2024 integrating [SpiceDB](https://authzed.com/spicedb) at [CloudAfrica](https://cloudafrica.net/).
+
+- Keeping permission data synced to an external authorization system is non-trivial, especially if there is an impedance mismatch between your data model and SpiceDB's permission schema (3-tuple Relationships).
+- SpiceDB write operations such as `WriteRelationships` return _ZedToken_ strings, which you can store alongside entities in your database to use the [SpiceDB cache](https://authzed.com/docs/spicedb/concepts/consistency#consistency-in-spicedb) with `at_least_as_fresh` and `at_exact_snapshot` consistency semantics.
+- If you need to hit the DB (or cache) anyway to query Spice, you might as well situate your permission data in Datomic and avoid an external network hop as well as complex diffing & syncing operations – this is the promise of EACL.
+
+Worried about load? You can horizontally scale Datomic Peers dedicated to authorization and even expose the EACL API to external consumers.
 
 ## The Benefits of Situated Authorization
 
