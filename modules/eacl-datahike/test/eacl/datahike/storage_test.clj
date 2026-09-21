@@ -785,9 +785,9 @@
 
             (is (= 1
                    (:retracted-datoms
-                    (eacl/delete-object!
+                    (eacl/delete-object-by-eid!
                      client
-                     (assoc account :id account-eid)))))
+                     account-eid))))
             (is (:valid?
                  (integrity/dangling-relationship-report
                   (d/db conn))))

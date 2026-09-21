@@ -35,9 +35,9 @@
   (schema/write-schema! conn test-schema)
   @(d/transact conn [{:eacl/id "u"} {:eacl/id "a"}])
   @(d/transact conn (impl/tx-relationship (d/db conn)
-                      (Relationship (spice-object :user [:eacl/id "u"])
-                                    :owner
-                                    (spice-object :account [:eacl/id "a"]))))
+                                          (Relationship (spice-object :user [:eacl/id "u"])
+                                                        :owner
+                                                        (spice-object :account [:eacl/id "a"]))))
   (let [db (d/db conn)]
     {:u (d/entid db [:eacl/id "u"])
      :a (d/entid db [:eacl/id "a"])}))
@@ -116,7 +116,7 @@
       @(d/transact conn [[:db.fn/retractEntity u]])
       (is (= 1 (reverse-count (d/db conn) a)) "orphan present before repair")
 
-      (let [result (eacl/delete-object! acl (spice-object :user u))]
+      (let [result (eacl/delete-object-by-eid! acl u)]
         (is (= 1 (:retracted-datoms result))
             "only the surviving half is counted"))
 

@@ -825,6 +825,7 @@ Relationship Conflicts?
 - `(eacl/create-relationships! acl relationships)` simply calls `write-relationships!` with `:create` operation.
 - `(eacl/delete-relationships! acl relationships)` simply calls `write-relationships!` with `:delete` operation.
 - `(eacl/delete-object! acl object) => {:zed/token "eacl_z4_...", :retracted-datoms n}` is a convenience helper that removes every relationship touching `object`, in both directions. `n` counts relationship datoms actually retracted by the committed transactions. On Datomic the retractions are committed in batches of 1,000 (a concurrent reader can observe a partially deleted object between batches); on DataScript and Datahike they are one atomic transaction. Consumers are expected to delete relationships before retracting a secured entity — see [Deleting a Secured Entity](#deleting-a-secured-entity).
+- `(eacl/delete-object-by-eid! acl native-eid)` is the explicit ghost-repair form for an entity whose public identity has already been retracted. Numeric IDs passed to `delete-object!` remain public IDs and are never reinterpreted as backend entity IDs.
 
 All list APIs use the v8 Relay pagination contract:
 
