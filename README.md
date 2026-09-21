@@ -1630,7 +1630,12 @@ release's limitation for new entities and tempids.
   replacement require quiescing affected traffic, completing the operation,
   rotating the shared source lifecycle and affected clients/caches, and then
   resuming with deliberate token/cursor key-version policy.
-- SpiceDB `subject#relation` subject sets are not supported. Model group membership with explicit group Relationships and arrow permissions when that expresses the required semantics.
+- SpiceDB `subject#relation` subject sets are not supported. Public operations
+  reject any object with a non-nil `:relation` as
+  `:eacl/unsupported-subject-relation`; EACL never silently treats it as the
+  base `type:id` object. Model group membership with explicit group
+  Relationships and arrow permissions when that expresses the required
+  semantics.
 - *Expansion is structural, not a membership proof:* permission trees preserve
   relation, permission, union, intersection, directed exclusion, and arrow
   boundaries. Use `can?` for an authorization decision.

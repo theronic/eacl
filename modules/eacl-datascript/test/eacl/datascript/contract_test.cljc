@@ -974,6 +974,168 @@
              [(eacl/can? client vector-user :view revoked-document)
               (eacl/can? client list-user :view revoked-document)])))))
 
+(deftest false-valued-public-identities-remain-present-across-inspection-test
+  (let [conn (datascript/create-conn)
+        external->stored
+        {false "stored-false-user"
+         "second-user" "stored-second-user"
+         "document" "stored-document"}
+        stored->external
+        (into {} (map (fn [[external stored]] [stored external]))
+              external->stored)
+        client
+        (datascript/make-client
+         conn
+         {:security-key "01234567890123456789012345678901"
+          :adapter-fingerprint {:codec :false-valued-id :version 1}
+          :adapter-deterministic? true
+          :identity-immutable? true
+          :object-id->lookup-ref
+          (fn [object-id]
+            [:eacl/id (get external->stored object-id object-id)])
+          :entid->object-id
+          (fn [db eid]
+            (let [stored-id (:eacl/id (ds/entity db eid))]
+              (get stored->external stored-id stored-id)))})
+        false-user (eacl/spice-object :user false)
+        second-user (eacl/spice-object :user "second-user")
+        document (eacl/spice-object :document "document")
+        relationship (eacl/->Relationship false-user :reader document)
+        by-resource {:resource/type :document
+                     :resource/id "document"
+                     :first 1
+                     :cache? false}]
+    (eacl/write-schema! client custom-codec-cache-schema)
+    (ds/transact!
+     conn
+     [{:eacl/id (get external->stored false)}
+      {:eacl/id (get external->stored "second-user")}
+      {:eacl/id (get external->stored "document")}])
+    (eacl/create-relationships!
+     client
+     [relationship
+      (eacl/->Relationship second-user :reader document)])
+
+    (is (true? (eacl/can? client false-user :view document))
+        "the admitted false-valued identity is an active authorization subject")
+    (is (= [relationship]
+           (:data
+            (eacl/read-relationships
+             client
+             {:subject/type :user
+              :subject/id false
+              :first 10
+              :cache? false})))
+        "a present false ID must not be mistaken for an omitted filter")
+    (let [first-page (eacl/read-relationships client by-resource)
+          after (get-in first-page [:page-info :end-cursor])
+          second-page
+          (eacl/read-relationships client (assoc by-resource :after after))]
+      (is (= [relationship] (:data first-page)))
+      (is (= [(eacl/->Relationship second-user :reader document)]
+             (:data second-page))
+          "a relationship cursor containing external ID false must be internalized on resume"))
+    (let [query {:resource document
+                 :permission :view
+                 :subject/type :user
+                 :first 1
+                 :cache? false}
+          first-page (eacl/lookup-subjects client query)
+          second-page
+          (eacl/lookup-subjects
+           client (assoc query :after
+                         (get-in first-page [:page-info :end-cursor])))]
+      (is (= [false-user] (:data first-page)))
+      (is (= [second-user] (:data second-page))
+          "a stable authorization cursor containing external ID false must preserve its boundary"))))
+
+(deftest numeric-public-identities-never-become-native-cursor-eids-test
+  (let [conn (datascript/create-conn)
+        external->stored
+        {"first-user" "stored-first-user"
+         0 "stored-zero-user"
+         "later-user" "stored-later-user"
+         7 "stored-numeric-document"}
+        stored->external
+        (into {} (map (fn [[external stored]] [stored external]))
+              external->stored)
+        client
+        (datascript/make-client
+         conn
+         {:security-key "01234567890123456789012345678901"
+          :adapter-fingerprint {:codec :numeric-public-id :version 1}
+          :adapter-deterministic? true
+          :identity-immutable? true
+          :object-id->lookup-ref
+          (fn [object-id]
+            [:eacl/id (get external->stored object-id object-id)])
+          :entid->object-id
+          (fn [db eid]
+            (let [stored-id (:eacl/id (ds/entity db eid))]
+              (get stored->external stored-id stored-id)))})
+        users (mapv #(eacl/spice-object :user %)
+                    ["first-user" 0 "later-user"])
+        document (eacl/spice-object :document 7)
+        relationships
+        (mapv #(eacl/->Relationship % :reader document) users)
+        query {:resource/type :document
+               :resource/id 7
+               :first 1
+               :cache? false}]
+    (eacl/write-schema! client custom-codec-cache-schema)
+    (ds/transact!
+     conn
+     (mapv (fn [stored-id] {:eacl/id stored-id})
+           ["stored-first-user"
+            "stored-zero-user"
+            "stored-later-user"
+            "stored-numeric-document"]))
+    (eacl/create-relationships! client relationships)
+
+    (let [first-page (eacl/read-relationships client query)
+          second-page
+          (eacl/read-relationships
+           client (assoc query :after
+                         (get-in first-page [:page-info :end-cursor])))
+          third-page
+          (eacl/read-relationships
+           client (assoc query :after
+                         (get-in second-page [:page-info :end-cursor])))]
+      (is (= [(nth relationships 0)] (:data first-page)))
+      (is (= [(nth relationships 1)] (:data second-page)))
+      (is (= [(nth relationships 2)] (:data third-page))
+          "numeric public cursor IDs must pass through the public codec instead of rewinding to a native eid")
+      (is (false? (get-in third-page [:page-info :has-next-page?])))
+
+      (let [lookup-query {:resource document
+                          :permission :view
+                          :subject/type :user
+                          :first 1
+                          :cache? false}
+            lookup-first (eacl/lookup-subjects client lookup-query)
+            lookup-second
+            (eacl/lookup-subjects
+             client (assoc lookup-query :after
+                           (get-in lookup-first
+                                   [:page-info :end-cursor])))
+            lookup-third
+            (eacl/lookup-subjects
+             client (assoc lookup-query :after
+                           (get-in lookup-second
+                                   [:page-info :end-cursor])))]
+        (is (= [(nth users 0)] (:data lookup-first)))
+        (is (= [(nth users 1)] (:data lookup-second)))
+        (is (= [(nth users 2)] (:data lookup-third))
+            "numeric public authorization-result cursors must preserve the codec identity"))
+
+      (is (= (set users)
+             (set
+              (get-in
+               (eacl/expand-permission-tree
+                client {:resource document :permission :view})
+               [:tree-root :intermediate :children 0 :leaf :subjects])))
+          "a numeric public permission-tree root must pass through the public codec"))))
+
 (deftest rendered-keys-copy-caller-owned-query-containers-test
   #?(:clj
      (let [conn (datascript/create-conn)
@@ -2210,6 +2372,117 @@
     (catch #?(:clj Exception :cljs :default) ex
       (ex-data ex))))
 
+(deftest unsupported-subject-relations-never-degrade-to-base-objects-test
+  (let [client (seeded-client)
+        user (contract/->user "user-1")
+        account (contract/->account "account-1")
+        server (contract/->server "server-1")
+        user-set (assoc user :relation :member)
+        account-set (assoc account :relation :member)
+        server-set (assoc server :relation :owner)
+        point-error
+        (fn [subject resource]
+          (thrown-data
+           #(eacl/check-permission
+             client
+             {:subject subject :permission :view :resource resource})))]
+    (is (true? (eacl/can? client user :view server))
+        "the base object really is authorized in this fixture")
+
+    (testing "point and enumeration reads reject, rather than erase, #relation"
+      (doseq [error [(point-error user-set server)
+                     (point-error user server-set)
+                     (thrown-data
+                      #(eacl/lookup-resources
+                        client
+                        {:subject user-set
+                         :permission :view
+                         :resource/type :server
+                         :first 1}))
+                     (thrown-data
+                      #(eacl/count-resources
+                        client
+                        {:subject user-set
+                         :permission :view
+                         :resource/type :server}))
+                     (thrown-data
+                      #(eacl/lookup-subjects
+                        client
+                        {:resource server-set
+                         :permission :view
+                         :subject/type :user
+                         :first 1}))
+                     (thrown-data
+                      #(eacl/count-subjects
+                        client
+                        {:resource server-set
+                         :permission :view
+                         :subject/type :user}))
+                     (thrown-data
+                      #(eacl/expand-permission-tree
+                        client
+                        {:resource server-set :permission :view}))]]
+        (is (= :eacl/unsupported-subject-relation (:type error)))
+        (is (= :unsupported-subject-relation (:reason error)))))
+
+    (testing "batch validation rejects unsupported endpoint semantics"
+      (let [error
+            (thrown-data
+             #(eacl/check-permissions
+               client
+               {:checks [{:subject user-set
+                          :permission :view
+                          :resource server}]}))]
+        (is (= :eacl.batch/invalid-request (:type error)))
+        (is (= :unsupported-subject-relation (:reason error)))))
+
+    (testing "authorization-aware filters reject nested endpoint sets"
+      (doseq [error
+              [(thrown-data
+                #(eacl/read-relationships
+                  client
+                  {:resource/type :server
+                   :authorization {:subject user-set
+                                   :permission :view
+                                   :on :resource}
+                   :first 1}))
+               (thrown-data
+                #(eacl/lookup-resources
+                  client
+                  {:subject user
+                   :permission :view
+                   :resource/type :server
+                   :resource/relationship
+                   {:relation :account :subject account-set}
+                   :first 1}))]]
+        (is (= :eacl.filters/invalid-authorization-clause (:type error)))
+        (is (= :unsupported-subject-relation (:reason error)))))
+
+    (testing "relationship writes and object deletion reject endpoint sets"
+      (doseq [relationship
+              [(eacl/->Relationship user-set :owner account)
+               (eacl/->Relationship user :account server-set)]]
+        (let [error
+              (thrown-data
+               #(eacl/create-relationship! client relationship))]
+          (is (= :eacl/invalid-relationship-qualifier (:type error)))
+          (is (= :unsupported-subject-relation (:reason error)))))
+      (let [error (thrown-data #(eacl/delete-object! client server-set))]
+        (is (= :eacl/unsupported-subject-relation (:type error)))
+        (is (= :unsupported-subject-relation (:reason error))))
+      (eacl/with-snapshot [snapshot (eacl/snapshot client)]
+        (doseq [error
+                [(thrown-data
+                  #(eacl/prepare-relationship!
+                    client
+                    (eacl/->Relationship user-set :owner account)))
+                 (thrown-data
+                  #(eacl/tx-relationship
+                    snapshot
+                    :touch user-set :owner account))]]
+          (is (= :eacl/invalid-relationship-qualifier (:type error)))
+          (is (= :unsupported-subject-relation (:reason error))))))))
+
 (deftest oversized-raw-cursor-bypasses-rendered-cache-key-construction-test
   (let [client (seeded-client)
         lookups (atom 0)
@@ -2246,7 +2519,7 @@
      [cache/lookup-rendered-page!
       (fn [& args]
         (swap! lookups inc)
-        (apply original args))]
+        (apply original args))
       (doseq [object-id [deep-id wide-id]]
         (let [page
               (eacl/lookup-resources
@@ -2256,7 +2529,7 @@
                 :resource/type :server
                 :first 1})]
           (is (empty? (:data page)))
-          (is (false? (:cached? page))))))
+          (is (false? (:cached? page)))))])
     (is (zero? @lookups)
         "oversized IDs are rejected before hashing a rendered cache key")))
 

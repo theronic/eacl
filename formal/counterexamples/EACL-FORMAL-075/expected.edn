@@ -1,0 +1,15 @@
+{:malformed-nested-update
+ {:validation :rejected-before-dispatch
+  :typed-error :eacl/invalid-relationship-qualifier
+  :reason :relationship-shape
+  :writer-dispatched false}
+ :valid-nested-update
+ {:validation :accepted
+  :writer-dispatched true}
+ :covered-boundaries
+ [:write-relationships :write-relationship :create-relationships
+  :delete-relationships :prepare-relationship :tx-relationships
+  :tx-relationship]
+ :dafny-obligations
+ [:open-nested-mutation-accepts-malformed-update
+  :strict-mutation-rejects-malformed-nested-update]}

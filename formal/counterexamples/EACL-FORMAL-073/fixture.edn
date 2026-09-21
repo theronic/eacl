@@ -1,0 +1,17 @@
+{:operation-family
+ [:check-permission :check-permissions :lookup :read-relationships
+  :expand-permission-tree :write-relationships :delete-object]
+ :documented-capability
+ {:subject-relations-supported false}
+ :attacker-controlled-object
+ {:type :user :id "grandmother-caregiver" :relation :member}
+ :authorized-base-object
+ {:type :user :id "grandmother-caregiver"}
+ :before
+ {:validation :accepted
+  :resolved-as {:type :user :id "grandmother-caregiver"}
+  :point-decision :allowed}
+ :risk
+ [:unsupported-semantics-silently-erased
+  :different-identity-authorized
+  :false-grant-when-spicedb-shaped-input-is-forwarded]}

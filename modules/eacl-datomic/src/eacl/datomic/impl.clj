@@ -136,22 +136,22 @@
   (if (can? db subject permission resource)
     true
     (throw (ex-info "Unauthorized"
-             {:type :eacl/unauthorized :eacl/error :eacl/unauthorized
-              :subject subject
-              :permission permission
-              :resource resource}))))
+                    {:type :eacl/unauthorized :eacl/error :eacl/unauthorized
+                     :subject subject
+                     :permission permission
+                     :resource resource}))))
 
 (defn- unknown-object!
   [object]
   (let [public-object (or (:eacl.relationship/public-object object)
                           (select-keys object [:type :id]))
         object-id (:id public-object)]
-  (throw (ex-info (str "Unknown object: " (pr-str object-id) " does not resolve to an existing entity."
-                       " Pass {:allow-tempids? true} to tx-relationship for same-transaction tempids.")
-           {:type :eacl/unknown-object
-            :eacl/error :eacl/unknown-object
-            :object public-object
-            :object-id object-id}))))
+    (throw (ex-info (str "Unknown object: " (pr-str object-id) " does not resolve to an existing entity."
+                         " Pass {:allow-tempids? true} to tx-relationship for same-transaction tempids.")
+                    {:type :eacl/unknown-object
+                     :eacl/error :eacl/unknown-object
+                     :object public-object
+                     :object-id object-id}))))
 
 (defn- object-id->eid-or-tempid
   "Resolves an object id to an existing eid. Unresolvable ids throw
@@ -316,12 +316,12 @@
 (defn- forward-tuple-exists?
   [db {:keys [subject-eid] :as resolved}]
   (boolean (seq (db/relationship-identity-datoms db subject-eid relationship-storage/forward-attribute
-                          (relationship-tuple resolved)))))
+                                                 (relationship-tuple resolved)))))
 
 (defn- reverse-tuple-exists?
   [db {:keys [resource-eid] :as resolved}]
   (boolean (seq (db/relationship-identity-datoms db resource-eid relationship-storage/reverse-attribute
-                          (reverse-relationship-tuple resolved)))))
+                                                 (reverse-relationship-tuple resolved)))))
 
 (defn find-one-relationship-id
   "Returns the resolved identity for a supported complete pair, or nil."
@@ -422,11 +422,11 @@
                               subject-eid (assoc :subject/id subject-eid)
                               resource-eid (assoc :resource/id resource-eid))]
      (cond
-       (and subject-id (nil? subject-eid))
+       (and (some? subject-id) (nil? subject-eid))
        (throw (ex-info "read-relationships is missing a valid :subject/id."
                        {:subject/id subject-id}))
 
-       (and resource-id (nil? resource-eid))
+       (and (some? resource-id) (nil? resource-eid))
        (throw (ex-info "read-relationships is missing a valid :resource/id."
                        {:resource/id resource-id}))
 
@@ -666,8 +666,8 @@
                {:type :eacl/schema-changed :eacl/error :eacl/schema-changed
                 :relation-eid relation-eid})))
            (let [current (some-> ^datomic.Datom
-                                 (first (d/datoms db :eavt relation-eid
-                                                  relation-version-attr))
+                          (first (d/datoms db :eavt relation-eid
+                                           relation-version-attr))
                                  (.v))]
              [:db.fn/cas relation-eid relation-version-attr
               current "datomic.tx"]))
@@ -709,7 +709,7 @@
                                         relationship-storage/reverse-attribute
                                         reverse-value)))
               (endpoint-pair/retractions subject-type eid relation-eid
-                                             resource-type resource-eid qualifier-eid))))
+                                         resource-type resource-eid qualifier-eid))))
         (d/datoms db :eavt eid relationship-storage/forward-attribute))
 
        ;; Orphaned reverse halves. Healthy self-edges were emitted above.
@@ -721,7 +721,7 @@
                                     relationship-storage/forward-attribute
                                     forward-value))
               (endpoint-pair/retractions subject-type subject-eid
-                                             relation-eid resource-type eid qualifier-eid))))
+                                         relation-eid resource-type eid qualifier-eid))))
         (d/datoms db :eavt eid relationship-storage/reverse-attribute))
 
        ;; Peer halves naming this object as the SUBJECT.
@@ -732,9 +732,9 @@
              ;; Self-edges are canonicalized to the own-forward scan above.
              (when (not= eid (:e datom))
                (endpoint-pair/retractions subject-type eid relation-eid
-                                              resource-type (:e datom) (nth (:v datom) 4))))
+                                          resource-type (:e datom) (nth (:v datom) 4))))
            (db/global-relationship-identity-datoms db relationship-storage/reverse-attribute
-                     (endpoint-pair/reverse-value resource-type relation-eid subject-type eid))))
+                                                   (endpoint-pair/reverse-value resource-type relation-eid subject-type eid))))
         triples)
 
        ;; Peer halves naming this object as the RESOURCE.
@@ -744,9 +744,9 @@
            (fn [datom]
              (when (not= eid (:e datom))
                (endpoint-pair/retractions subject-type (:e datom)
-                                              relation-eid resource-type eid (nth (:v datom) 4))))
+                                          relation-eid resource-type eid (nth (:v datom) 4))))
            (db/global-relationship-identity-datoms db relationship-storage/forward-attribute
-                     (endpoint-pair/forward-value subject-type relation-eid resource-type eid))))
+                                                   (endpoint-pair/forward-value subject-type relation-eid resource-type eid))))
         triples)))
     ()))
 

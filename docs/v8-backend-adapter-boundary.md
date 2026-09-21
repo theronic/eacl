@@ -13,7 +13,7 @@ database, datom, attribute-ID, or tuple implementation types.
 | Public request normalization, errors, traversal, recursion, de-duplication, batches, authorized candidate windows, Relay windowing, counts | Shared engine |
 | Consistency capability validation | Shared selection code |
 | Current, authoritative, causal-floor, and exact basis selection | Source |
-| Object ID internalization/externalization | Adapter, under a declared round-trip contract |
+| Public object ID internalization, resolved native-ID pass-through, and externalization | Adapter, under separate declared trust-domain contracts |
 | Relation and permission definition reads | Adapter returns normalized definitions |
 | Forward/reverse ordered adjacency scans, direct match | Adapter |
 | Dependency extraction, sealed plan compilation and rank certification | Shared engine |
@@ -30,7 +30,8 @@ configuration. It contains no connection, source, writer, or selection
 callback. It provides:
 
 - snapshot ID, basis kind, native revision, order, and exact-locator identity;
-- external/internal object conversion;
+- separate public-ID internalization, already-resolved native-ID pass-through,
+  and internal/external object conversion;
 - normalized relation and permission definitions;
 - ordered forward/reverse adjacency, direct match, and permission-node
   operations;
@@ -46,6 +47,15 @@ its implementation may perform at most one index probe. A backend advertising
 `:cache-proofs #{:ordered-generations}` must implement `:proof-frame`. An
 adapter without that capability is still a correct exact-basis adapter and
 may still certify schema generation for derived-plan reuse.
+
+`:public-object-id->internal` receives only untrusted public IDs. It must apply
+the backend's configured public identity codec and must never interpret a
+numeric public value as an already-resolved entity ID. `:object-id->internal`
+is the distinct engine-side operation for values that have already crossed the
+public identity boundary; it may preserve a validated native ID. Backends must
+not implement both operations with a numeric pass-through. This separation is
+required even when an application's current codec emits only strings, because
+the adapter contract must remain safe when a codec admits numeric IDs.
 
 `:direct-match?` is a certified semantic operation, not an optimization hint.
 For every schema-valid triple it must return exactly whether that one direct

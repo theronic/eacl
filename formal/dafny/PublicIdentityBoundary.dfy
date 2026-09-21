@@ -8,6 +8,7 @@ module PublicIdentityBoundary {
     | ListAlias(listValue: seq<int>)
     | Number(numberValue: int)
     | BigNumberAlias(bigNumberValue: int)
+    | BooleanFalse
 
   datatype InternalId =
     | TextInternal(internalTextValue: string)
@@ -15,6 +16,7 @@ module PublicIdentityBoundary {
     | ListInternal(internalListValue: seq<int>)
     | NumberInternal(internalNumberValue: int)
     | BigNumberInternal(internalBigNumberValue: int)
+    | BooleanFalseInternal
 
   predicate HostEqual(left: PublicId, right: PublicId) {
     if left.Text? then
@@ -29,14 +31,16 @@ module PublicIdentityBoundary {
       (right.Number? && left.numberValue == right.numberValue) ||
       (right.BigNumberAlias? &&
        left.numberValue == right.bigNumberValue)
-    else
+    else if left.BigNumberAlias? then
       (right.Number? && left.bigNumberValue == right.numberValue) ||
       (right.BigNumberAlias? &&
        left.bigNumberValue == right.bigNumberValue)
+    else
+      right.BooleanFalse?
   }
 
   predicate CanonicalPublicIdentity(id: PublicId) {
-    id.Text? || id.Vector? || id.Number?
+    id.Text? || id.Vector? || id.Number? || id.BooleanFalse?
   }
 
   function Resolve(id: PublicId): InternalId {
@@ -46,6 +50,7 @@ module PublicIdentityBoundary {
     case ListAlias(value) => ListInternal(value)
     case Number(value) => NumberInternal(value)
     case BigNumberAlias(value) => BigNumberInternal(value)
+    case BooleanFalse => BooleanFalseInternal
   }
 
   datatype MemoKey = NoMemo | PublicMemo(memoId: PublicId)
@@ -169,6 +174,81 @@ module PublicIdentityBoundary {
   lemma PublicResolutionFailureIsNotNotFound()
     ensures PlanPublicDelete(ResolutionFailed) == DeleteRejected
     ensures PlanPublicDelete(ResolutionFailed) != PlanPublicDelete(Missing)
+  {
+  }
+
+  datatype OptionalPublicId =
+    | MissingPublicId
+    | PresentPublicId(publicId: PublicId)
+
+  datatype FilterResolution =
+    | FilterOmitted
+    | FilterResolved(internalId: InternalId)
+
+  // Models the former host implementation: boolean false was admitted as a
+  // public ID but then used as the branch condition for filter/cursor work.
+  function TruthinessBasedFilterResolution(
+    anchor: OptionalPublicId
+  ): FilterResolution {
+    match anchor
+    case MissingPublicId => FilterOmitted
+    case PresentPublicId(id) =>
+      if id.BooleanFalse? then FilterOmitted
+      else FilterResolved(Resolve(id))
+  }
+
+  function PresenceBasedFilterResolution(
+    anchor: OptionalPublicId
+  ): FilterResolution {
+    match anchor
+    case MissingPublicId => FilterOmitted
+    case PresentPublicId(id) => FilterResolved(Resolve(id))
+  }
+
+  lemma TruthinessDropsAnAdmittedFalseIdentity()
+    ensures TruthinessBasedFilterResolution(
+              PresentPublicId(BooleanFalse)
+            ) == FilterOmitted
+    ensures PresenceBasedFilterResolution(
+              PresentPublicId(BooleanFalse)
+            ) == FilterResolved(BooleanFalseInternal)
+  {
+  }
+
+  lemma PresencePreservesEveryAdmittedIdentity(id: PublicId)
+    ensures PresenceBasedFilterResolution(PresentPublicId(id)) ==
+            FilterResolved(Resolve(id))
+  {
+  }
+
+  // Native entity IDs and public numeric IDs occupy different trust domains.
+  // The former mixed adapter callback selected the native branch solely from
+  // the host value's numeric shape, even for an authenticated public cursor.
+  datatype IdentitySelection =
+    | CodecSelection(codecIdentity: InternalId)
+    | NativeSelection(nativeIdentity: int)
+
+  function MixedDomainCursorResolution(id: PublicId): IdentitySelection {
+    if id.Number? then NativeSelection(id.numberValue)
+    else CodecSelection(Resolve(id))
+  }
+
+  function PublicDomainCursorResolution(id: PublicId): IdentitySelection {
+    CodecSelection(Resolve(id))
+  }
+
+  lemma NumericPublicCursorHasANativeAliasCounterexample()
+    ensures MixedDomainCursorResolution(Number(0)) == NativeSelection(0)
+    ensures PublicDomainCursorResolution(Number(0)) ==
+            CodecSelection(NumberInternal(0))
+    ensures MixedDomainCursorResolution(Number(0)) !=
+            PublicDomainCursorResolution(Number(0))
+  {
+  }
+
+  lemma PublicCursorResolutionNeverSelectsNativeIdentity(id: PublicId)
+    ensures PublicDomainCursorResolution(id).CodecSelection?
+    ensures PublicDomainCursorResolution(id) == CodecSelection(Resolve(id))
   {
   }
 }

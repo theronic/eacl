@@ -36,6 +36,8 @@
            :exact-locator (constantly nil)
            :object-id->internal (fn [external-id]
                                   (get objects external-id))
+           :public-object-id->internal (fn [external-id]
+                                         (get objects external-id))
            :internal-id->object (fn [internal-id]
                                   (when codec-counts
                                     (swap! codec-counts
@@ -303,9 +305,9 @@
   (let [realized (atom 0)
         events (atom [])
         values (letfn [(items [value]
-                        (lazy-seq
-                         (swap! realized inc)
-                         (cons value (items (inc value)))))]
+                         (lazy-seq
+                          (swap! realized inc)
+                          (cons value (items (inc value)))))]
                  (items 10))
         adapter
         (fake-adapter

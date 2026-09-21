@@ -319,11 +319,17 @@
     (doseq [object [nil
                     {:type :user}
                     {:type :user :id nil}
-                    {:type "user" :id "user-1"}
-                    {:type :user :id "user-1" :relation "member"}]]
+                    {:type "user" :id "user-1"}]]
       (let [data (error-data #(eacl/delete-object! acl object))]
         (is (= :eacl/invalid-request (:type data)))
         (is (= :invalid-object-shape (:reason data)))))
+    (doseq [relation [:member "member"]]
+      (let [data
+            (error-data
+             #(eacl/delete-object!
+               acl {:type :user :id "user-1" :relation relation}))]
+        (is (= :eacl/unsupported-subject-relation (:type data)))
+        (is (= :unsupported-subject-relation (:reason data)))))
     (is (empty? @calls)
         "malformed mutation requests must not reach a writer")))
 
@@ -348,6 +354,25 @@
         "invalid plans must not be reported as successful empty transactions")
     (is (= [] (eacl/tx-relationships snapshot [update])))
     (is (= [[:tx-relationships {:updates [update]}]] @calls))))
+
+(deftest nested-relationship-mutations-fail-before-protocol-dispatch-test
+  (let [calls (atom [])
+        acl (->RecordingAcl calls nil)
+        snapshot (->PlanningSnapshot calls (atom false))
+        malformed
+        {:operation :touch
+         :relationship
+         {:subject {:type :user :id "user-1"}
+          :relation :viewer
+          :resource {:type :document :id "document-1"}
+          :valid-until-mss 1000}}]
+    (doseq [operation [#(eacl/write-relationships! acl [malformed])
+                       #(eacl/tx-relationships snapshot [malformed])]]
+      (let [data (error-data operation)]
+        (is (= :eacl/invalid-relationship-qualifier (:type data)))
+        (is (= :relationship-shape (:reason data)))))
+    (is (empty? @calls)
+        "nested mutation fields must be validated by the shared wrapper")))
 
 (deftest unknown-public-read-keys-fail-before-dispatch-test
   (let [calls (atom [])
@@ -383,6 +408,70 @@
                        (:reason data)))))
     (is (empty? @calls)
         "typos must not silently weaken consistency or endpoint identity")))
+
+(deftest missing-public-read-keys-fail-before-dispatch-test
+  (let [calls (atom [])
+        acl (->RecordingAcl calls nil)
+        subject {:type :user :id "user-1"}
+        resource {:type :document :id "document-1"}
+        cases
+        [[#(eacl/check-permission
+            acl {:permission :view :resource resource}) [:subject]]
+         [#(eacl/check-permission
+            acl {:subject subject :resource resource}) [:permission]]
+         [#(eacl/check-permission
+            acl {:subject subject :permission :view}) [:resource]]
+         [#(eacl/lookup-resources
+            acl {:permission :view :resource/type :document}) [:subject]]
+         [#(eacl/lookup-subjects
+            acl {:resource resource :permission :view}) [:subject/type]]
+         [#(eacl/count-resources
+            acl {:subject subject :resource/type :document}) [:permission]]
+         [#(eacl/count-subjects
+            acl {:permission :view :subject/type :user}) [:resource]]
+         [#(eacl/expand-permission-tree
+            acl {:resource resource}) [:permission]]
+         [#(eacl/check-permissions (->BatchedReader :unsafe-grant) {})
+          [:checks]]]]
+    (doseq [[operation expected-missing] cases]
+      (let [data (error-data operation)]
+        (is (= :eacl/invalid-request (:type data)))
+        (is (= :missing-request-key (:reason data)))
+        (is (= expected-missing (:missing-keys data)))))
+    (is (empty? @calls)
+        "incomplete authorization demands must not reach a reader")))
+
+(deftest public-reader-extensions-receive-only-validated-request-shapes-test
+  (let [calls (atom [])
+        acl (->RecordingAcl calls nil)
+        subject {:type :user :id "user-1"}
+        operations
+        [#(eacl/read-relationships acl {})
+         #(eacl/check-permission
+           acl {:subject subject
+                :permission :view
+                :resource {:type :document :id "document-1"}
+                :consistency false})
+         #(eacl/lookup-resources
+           acl {:subject subject
+                :permission :view
+                :resource/type :document
+                :resource/relationship {:relation :viewer}})
+         #(eacl/check-permissions (->BatchedReader :unsafe-grant)
+                                  {:checks nil})
+         #(eacl/check-permissions (->BatchedReader :unsafe-grant)
+                                  {:checks [{}]})]]
+    (doseq [operation operations]
+      (is (some? (error-data operation))))
+    (is (empty? @calls)
+        "full scans and malformed nested demands must fail before dispatch")))
+
+(deftest malformed-snapshot-consistency-fails-before-source-dispatch-test
+  (let [calls (atom [])
+        acl (->RecordingAcl calls nil)
+        data (error-data #(eacl/snapshot acl false))]
+    (is (= :eacl/unsupported-consistency (:type data)))
+    (is (empty? @calls))))
 
 (deftest snapshot-capability-and-lifecycle-test
   (let [calls (atom [])
@@ -458,7 +547,8 @@
     (is (true? (eacl/can? remote demand)))
     (is (:remote? (eacl/check-permission remote demand)))
     (is (:remote? (eacl/read-schema remote)))
-    (is (:remote? (eacl/read-relationships remote {})))
+    (is (:remote?
+         (eacl/read-relationships remote {:resource/type :document})))
     (is (:remote?
          (eacl/lookup-resources
           remote {:subject subject :permission :view

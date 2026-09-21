@@ -190,7 +190,7 @@ valuable precisely at this boundary.
 
 ## Bugs and regressions found
 
-The retained corpus contains 68 minimized findings, all marked fixed. Each
+The retained corpus contains 75 minimized findings, all marked fixed. Each
 entry under `formal/counterexamples/EACL-FORMAL-NNN/` records its witness,
 impact, affected backends/version, root cause, fix, and closing evidence. The
 complete corpus is the exact bug ledger; the table below calls out the
@@ -221,6 +221,11 @@ highest-value findings.
 | 068 | unresolved public identity representation | Host-equal representation-distinct IDs could be memoized or coalesced before a custom codec resolved them, numeric public deletion could fall back to a native EID, and resolver failure could look absent. | Canonical-only public memoization, resolve-before-coalesce mutation planning, explicit native-EID deletion, failure propagation, and a dedicated identity-boundary model plus mutation controls. |
 | 069 | open public request shapes | Unknown request keys could weaken consistency or discard a requested relationship expiry, a reserved live-page control was ignored, the backend-only empty-schema escape hatch crossed the public boundary, malformed plural revocations and plans or nil-ID cleanup could become successful no-ops, and a mixed public/native delete envelope selected the native identity. | Closed public and endpoint maps, rejection of unsupported controls and backend-only options, explicit sequential mutation batches, validated non-nil public object identities, mutually exclusive deletion selectors, defense-in-depth client validation, and a dedicated request-boundary model plus mutation controls. |
 | 070 | caller-controlled snapshot runtime options | Direct snapshot protocol invocation could replace trusted client dependencies; replacing public-ID resolution changed a denied Alice check into Bob's grant. | Require an exactly empty protocol options map before selection, capture identity/security dependencies only from the client runtime, and bind the rule with a dedicated model, mutant, and real-backend regression. |
+| 071 | false value confused with absence | A boolean-false public ID could keep authorizing while disappearing from relationship filters or cursor continuation; explicit false execution controls silently defaulted or disabled their intended control. | Use non-nil presence throughout public identity resolution, reject malformed false controls, and bind both rules with Dafny lemmas, five executed mutants, and a real-backend regression. |
+| 072 | public/native numeric identity confusion | A custom-codec public ID such as user `0` could be resumed as native database EID `0`, making authenticated pagination repeat and omit later grants; numeric permission-tree roots crossed the same boundary. | Split public identity resolution from native-EID pass-through in the required adapter contract across all bundled backends, then bind the rule with Dafny, an executed mutant, and a real three-page regression. |
+| 073 | unsupported endpoint semantics erased | A SpiceDB-shaped `subject#relation` object was accepted even though usersets are unsupported, then resolved as the different base `type:id` object; an authorized base object could therefore produce a false grant. | Reject non-nil endpoint relations before every public read, batch, filter, tree, mutation, and deletion dispatch; bind the rule with Dafny, an executed mutant, and a real-backend regression. |
+| 074 | missing required request identity | Closed-map validation rejected unknown keys but accepted incomplete known-key maps, allowing scalar and batch demands without a subject, resource, permission, or checks collection to reach a reader. Bundled readers failed closed later, while a third-party reader could assign unsafe default semantics. | Require every operation's mandatory fields before protocol dispatch; bind the rule with Dafny, an executed mutant, and a protocol-level regression. |
+| 075 | nested mutation validation bypass | Plural relationship writes and transaction plans checked only their outer collection before generic protocol dispatch. A remote writer could ignore a misspelled expiry or malformed endpoint and create broader access, although bundled clients rejected it later. | Apply backend-neutral nested update validation in the shared wrapper before writer, preparation, or planning dispatch; bind the distinction with Dafny, an executed mutant, and a protocol-level regression. |
 
 These findings also expose defects in the verification program itself. Findings
 024–025, 028–034, 040–045, 048–050, and 056–059 are especially important: they
@@ -254,6 +259,28 @@ all three adapters (366 injected Datomic clients, 71 Datahike, 127 DataScript).
 The latest portable CLJS suite observed 79 injected DataScript clients. These
 counters prevent a green suite that accidentally bypasses the selected
 authority.
+
+### 2026-09-22 security-correction rerun
+
+The identity and public-request corrections in EACL-FORMAL-068 through -075
+were rerun against the current tree rather than inferred from the historical
+pre-audit results above:
+
+| Gate | Result |
+| --- | --- |
+| Dafny | 61 modules, 9,611 solver proof efforts, 0 errors |
+| JVM public/backend/build suite | 1,564 tests, 169,835 assertions, 0 failures/errors |
+| Generated Java differential boundary | 52 tests, 18,280 assertions, 0 failures/errors |
+| Portable CLJS formal/generated-oracle boundary | 47 tests, 11,972 assertions, 0 failures/errors |
+| Minimized counterexample replay | 79 tests, 18,676 assertions, 0 failures/errors |
+| Mutation control | 3 tests, 221 assertions, 0 failures/errors; all 102 registered mutants remain covered |
+| Public source closure | 133 roots and 3,090 reachable definitions, with 0 forbidden-policy matches |
+
+The advanced-optimized formal and DataScript CLJS suites, production bundle
+gate, release manifest, and JVM reflection gate also passed. This additional
+evidence does not discharge the trusted-host, adapter-refinement, or independent
+security/formal-review obligations, so the release remains
+`:conditionally-verified`.
 
 ## Performance conclusions
 

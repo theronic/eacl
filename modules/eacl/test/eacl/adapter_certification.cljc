@@ -166,7 +166,7 @@
    (map
     (fn [object]
       [object
-       (backend/invoke adapter :object-id->internal (:id object))])
+       (backend/invoke adapter :public-object-id->internal (:id object))])
     objects)))
 
 (defn- materialized-forward
@@ -670,7 +670,7 @@
               {:relations (count catalog)})))
          (check
           :identity-round-trip
-          :object-id->internal
+          :public-object-id->internal
           :injective-round-trip-exact
           (fn []
             (let [catalog
@@ -681,7 +681,7 @@
           :schema-enumeration
           :all-permission-nodes
           :exact-schema-coverage
-         (fn []
+          (fn []
             (certify-definitions!
              adapter fixture
              (or @relations

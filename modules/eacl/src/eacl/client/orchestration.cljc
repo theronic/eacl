@@ -194,18 +194,27 @@
     frontier
     (f frontier)))
 
+(defn ^:no-doc public-id-present?
+  "True for every admitted public ID, including boolean false.
+
+  Public object validation rejects nil, not false. Keeping this predicate
+  named prevents cursor and relationship-filter paths from drifting back to
+  Clojure truthiness and treating a valid external identity as omission."
+  [value]
+  (some? value))
+
 (defn default-internal-cursor->spice
   [db {:keys [entid->object-id]} cursor]
   (when cursor
     (cond
       (= 3 (:v cursor))
       (cond-> cursor
-        (:subject cursor) (update :subject #(entid->object-id db %))
-        (:resource cursor) (update :resource #(entid->object-id db %)))
+        (public-id-present? (:subject cursor)) (update :subject #(entid->object-id db %))
+        (public-id-present? (:resource cursor)) (update :resource #(entid->object-id db %)))
 
       (= 2 (:v cursor))
       (cond-> cursor
-        (:e cursor) (update :e #(entid->object-id db %))
+        (public-id-present? (:e cursor)) (update :e #(entid->object-id db %))
         (:p cursor) (update :p
                             (fn [p]
                               (into {}
@@ -225,12 +234,12 @@
     (cond
       (= 3 (:v cursor))
       (cond-> cursor
-        (:subject cursor) (update :subject #(object-id->entid db %))
-        (:resource cursor) (update :resource #(object-id->entid db %)))
+        (public-id-present? (:subject cursor)) (update :subject #(object-id->entid db %))
+        (public-id-present? (:resource cursor)) (update :resource #(object-id->entid db %)))
 
       (= 2 (:v cursor))
       (cond-> cursor
-        (:e cursor) (update :e #(object-id->entid db %))
+        (public-id-present? (:e cursor)) (update :e #(object-id->entid db %))
         (:p cursor) (update :p
                             (fn [p]
                               (into {}
@@ -614,8 +623,7 @@
   (when (and (map? object)
              (keyword? (:type object))
              (some? (:id object))
-             (or (nil? (:relation object))
-                 (keyword? (:relation object)))
+             (nil? (:relation object))
              (cache/canonical-cursor-identity? (:id object)))
     {:type (:type object)
      :id (:id object)
@@ -1657,10 +1665,10 @@
                                               subject-id (:subject/id filters)
                                               resource-id (:resource/id filters)
                                               subject-eid
-                                              (when subject-id
+                                              (when (public-id-present? subject-id)
                                                 (object-id->entid page-db subject-id))
                                               resource-eid
-                                              (when resource-id
+                                              (when (public-id-present? resource-id)
                                                 (object-id->entid page-db resource-id))
                                               internal-query
                                               (-> page-query
@@ -1669,10 +1677,10 @@
                                                           :cancellation-token :aggregate-limits
                                                           :authorization :relationship-state)
                                                   (cond->
-                                                   subject-id (assoc :subject/id subject-eid)
-                                                   resource-id (assoc :resource/id resource-eid)))]
-                                          (if (or (and subject-id (nil? subject-eid))
-                                                  (and resource-id (nil? resource-eid)))
+                                                   (public-id-present? subject-id) (assoc :subject/id subject-eid)
+                                                   (public-id-present? resource-id) (assoc :resource/id resource-eid)))]
+                                          (if (or (and (public-id-present? subject-id) (nil? subject-eid))
+                                                  (and (public-id-present? resource-id) (nil? resource-eid)))
                                             (do
                                               (call-with-request-schema-cache cursor-opts validate!)
                                               (if (cursor-request? filters)
@@ -3409,15 +3417,20 @@
                      (every? #{:type :id :relation} (keys object))
                      (keyword? (:type object))
                      (contains? object :id)
-                     (some? (:id object))
-                     (or (nil? (:relation object))
-                         (keyword? (:relation object))))
+                     (some? (:id object)))
         (invalid-public-request!
          :delete-object!
          "Object deletion requires a typed public object with a non-nil ID."
          {:reason :invalid-object-shape
           :position :object
-          :value object}))))
+          :value object}))
+      (when (some? (:relation object))
+        (invalid-public-request!
+         :delete-object!
+         "EACL does not support subject#relation object identities."
+         {:reason :unsupported-subject-relation
+          :position :object
+          :relation (:relation object)}))))
   request)
 
 (defn ^:no-doc validate-public-snapshot-options!

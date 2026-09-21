@@ -1,0 +1,19 @@
+{:operation-family
+ [:read-relationships :lookup :expand-permission-tree]
+ :codec
+ {:public-id 0
+  :stored-id "stored-zero-user"
+  :resolved-internal-eid 101}
+ :cursor
+ {:page-size 1
+  :ordered-public-subjects ["first-user" 0 "later-user"]
+  :authenticated-boundary 0}
+ :before
+ {:boundary-resolution :native-eid-0
+  :observed-pages ["first-user" 0 "first-user" 0]
+  :later-grant-reached false}
+ :risk
+ [:audit-pagination-livelock
+  :later-grant-omission
+  :revocation-workflow-denial
+  :wrong-permission-tree-root]}

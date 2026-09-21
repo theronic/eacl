@@ -152,9 +152,11 @@ no verified-release claim existed.
   the then-current default mode, while the positional arity and shared
   descriptor rejected the same value.
 - **Correction:** public map arities forward the raw value to the descriptor.
-  Only omission and nil default; false yields
+  The generic reader and snapshot wrappers also validate the descriptor before
+  protocol dispatch. Only omission and nil default; false yields
   `:eacl/unsupported-consistency`. Dafny models the public input distinction,
-  and one regression per backend checks the production boundary.
+  and regressions cover the bundled backends plus the shared extension
+  boundary.
 
 ### EACL-FORMAL-053 — unknown consistency descriptor fields
 
@@ -286,6 +288,114 @@ no verified-release claim existed.
   clocks, caches, and security configuration are captured from the client.
   `SnapshotOptionBoundary.dfy`, an executed mutant, and the real-backend
   regression close the omitted boundary.
+
+### EACL-FORMAL-071 — boolean false was confused with an omitted value
+
+- **Affected:** relationship inspection and cursor resume for custom public-ID
+  codecs that admit boolean `false`; request evaluation, timeout, and
+  cancellation controls supplied as explicit `false`.
+- **Impact:** a relationship that continued to grant access could disappear
+  from a subject-filtered audit or a paginated inspection, interfering with
+  discovery and revocation. False execution controls could silently select
+  defaults or disable cancellation rather than being rejected.
+- **Root cause:** public validation used non-nil value presence, but later host
+  branches used Clojure truthiness. The formal identity and request models had
+  not represented this distinction.
+- **Correction:** every public identity branch now uses non-nil presence;
+  malformed false controls receive typed rejection. `PublicIdentityBoundary.dfy`
+  and `PublicRequestBoundary.dfy` model the counterexamples and corrected laws;
+  five executed mutants plus a real DataScript regression cover authorization,
+  inspection, relationship continuation, and authorization-result continuation.
+
+### EACL-FORMAL-072 — numeric public IDs crossed into the native-EID domain
+
+- **Affected:** applications whose custom identity codec admits numeric public
+  IDs, when using paginated relationship or authorization lookup APIs or
+  permission-tree expansion. String/UUID-only public-ID applications are not
+  affected.
+- **Impact:** an attacker able to choose public account ID `0` could make an
+  administrator's otherwise valid paginated relationship audit repeat earlier
+  pages and never reach later grants. That can obstruct discovery and
+  revocation. A numeric permission-tree root could also resolve as the wrong
+  database identity. The cursor is authenticated; the attacker does not forge
+  it—the chosen public ID reaches the vulnerable path during normal paging.
+- **Root cause:** one adapter callback served both public identities and
+  already-resolved native entity IDs. Its numeric fast path had no way to know
+  which trust domain supplied the value, and the formal identity model did not
+  represent that distinction.
+- **Correction:** the v8 adapter contract now requires a separate public-only
+  resolver, implemented by every bundled backend and used by Relay cursors,
+  standalone public pagination, permission-tree roots, and certification.
+  `PublicIdentityBoundary.dfy` proves the old counterexample and the corrected
+  domain-separation law; an executed mutant and a real DataScript three-page
+  regression bind the model to production.
+
+### EACL-FORMAL-073 — unsupported `subject#relation` input became a base object
+
+- **Affected:** applications that accept SpiceDB-shaped object references from
+  requests, migration code, or another policy service and pass those maps to
+  EACL. Ordinary documented EACL objects, whose `:relation` is nil, are not
+  affected.
+- **Impact:** EACL could grant a request for an unsupported userset such as
+  `user:grandmother-caregiver#member` whenever the different base object
+  `user:grandmother-caregiver` was authorized. The caller asked about semantics
+  EACL does not implement, but received the base object's answer instead of an
+  error. A malicious caller can exploit this when the surrounding application
+  lets them supply the forwarded object reference.
+- **Root cause:** public object validation admitted keyword `:relation` values,
+  while endpoint resolution deliberately used only `:type` and `:id`. The
+  documented unsupported feature was therefore erased at the trust boundary.
+- **Correction:** every public scalar, batch, lookup, scan, permission-tree,
+  mutation, and deletion boundary rejects a non-nil endpoint `:relation` before
+  dispatch. `PublicRequestBoundary.dfy` models both the old downgrade and the
+  fail-closed rule; an executed mutant and real DataScript regression bind it
+  to production.
+
+### EACL-FORMAL-074 — incomplete authorization demands reached readers
+
+- **Affected:** scalar permission checks, lookups, counts, permission-tree
+  expansion, relationship scans, and the generic batch wrapper. Bundled clients
+  usually rejected or denied these requests later, but third-party or remote
+  protocol readers received incomplete or partially validated shapes.
+- **Impact:** an application that builds a request map from attacker-controlled
+  optional fields could omit `:subject`, `:resource`, or `:permission`. EACL's
+  public wrapper would dispatch the incomplete demand. A reader that assigns a
+  default principal or wildcard meaning to the missing value could grant it;
+  bundled backends instead failed closed, but only after avoidable snapshot or
+  schema work.
+- **Root cause:** the closed-map validation modeled unknown keys but did not
+  require the operation's mandatory keys. The formal request model made the
+  same omission and therefore called an empty or incomplete known-key set
+  accepted.
+- **Correction:** each public read now requires its complete endpoint and
+  schema-name fields before reader dispatch. Batch entries, relationship-scan
+  anchors and authorization clauses, and nested lookup relationship clauses
+  receive their full shared validation at the same boundary.
+  `PublicRequestBoundary.dfy` proves incomplete known-key maps are rejected; an
+  executed mutant and protocol-level regressions bind that rule to production.
+
+### EACL-FORMAL-075 — nested relationship updates bypassed the shared wrapper
+
+- **Affected:** third-party or remote `IAuthorizationWriter` and
+  `IRelationshipPlanning` implementations reached through plural relationship
+  write or transaction-planning helpers. Bundled shared clients already
+  repeated nested validation.
+- **Impact:** a payload such as `:valid-until-mss` could cross the public wrapper
+  inside a nested relationship. A writer that ignored the unknown field could
+  create permanent access instead of the caller's intended expiry. Malformed
+  endpoints or unsupported subject relations could likewise reach that
+  implementation. Exploitation requires an application to expose relationship
+  mutation input to an attacker and use such an extension writer; the bundled
+  backends failed closed.
+- **Root cause:** the generic wrapper validated only that `:updates` was
+  sequential. Backend-neutral nested update validation happened later only in
+  the shared client implementation, while the formal mutation model treated
+  every sequential collection as valid.
+- **Correction:** relationship writes, preparation, and snapshot transaction
+  planning validate every nested operation, endpoint, relation, and qualifier
+  before protocol dispatch. `PublicRequestBoundary.dfy` distinguishes a valid
+  sequential batch from one containing malformed updates; an executed mutant
+  and protocol-level regression bind the rule to production.
 
 The authoritative minimized fixtures and closing evidence are under
 `formal/counterexamples/`. Run them with

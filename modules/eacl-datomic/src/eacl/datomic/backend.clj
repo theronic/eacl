@@ -351,15 +351,20 @@
        :object-id->internal
        (fn [object-id]
          ;; Shared orchestration uses internal numeric eids in cache-normalized
-         ;; engine requests, while permission-tree expansion resolves a public
-         ;; id directly through this operation. Preserve Datomic's historical
-         ;; numeric-eid convention before invoking the configurable public-id
-         ;; resolver; otherwise an already-resolved eid is encoded a second
-         ;; time (for example as [:eacl/id 1759]) and every point/list read
-         ;; becomes a false negative.
+         ;; engine requests. Preserve that native-id convention here; public
+         ;; request and cursor identities use the distinct operation below.
          (if (number? object-id)
            (d/entid db object-id)
            ((or object-id->entid ddb/object-eid) db object-id)))
+       :public-object-id->internal
+       (fn [object-id]
+         (if object-id->entid
+           (object-id->entid db object-id)
+           ;; A raw adapter without client configuration still treats this as
+           ;; public application data. Never fall back to d/entid's numeric
+           ;; native-EID interpretation at the public-only boundary.
+           (when (d/entid db :eacl/id)
+             (d/entid db [:eacl/id object-id]))))
        :internal-id->object (fn [internal-id] (external-id db internal-id))
        :relation-defs
        (fn [resource-type relation-name]

@@ -1,0 +1,15 @@
+{:incomplete-demand
+ {:validation :rejected-before-dispatch
+  :typed-error :eacl/invalid-request
+  :reason :missing-request-key
+  :missing-keys [:subject]}
+ :complete-demand
+ {:required-keys [:subject :permission :resource]
+  :reader-dispatched true}
+ :covered-boundaries
+ [:check-permission :lookup-resources :lookup-subjects
+  :count-resources :count-subjects :expand-permission-tree
+  :read-relationships :check-permissions]
+ :dafny-obligations
+ [:open-boundary-accepts-missing-required-identity
+  :closed-boundary-rejects-missing-required-identity]}

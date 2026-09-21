@@ -55,6 +55,7 @@
     :order-hint
     :exact-locator
     :object-id->internal
+    :public-object-id->internal
     :internal-id->object
     :relation-defs
     :permission-defs
@@ -92,7 +93,10 @@
    :exact-locator
    #{:stable-for-immutable-snapshot}
    :object-id->internal
-   #{:visible-object-total :injective :nonnegative :snapshot-bound}
+   #{:resolved-object-pass-through :nonnegative :snapshot-bound}
+   :public-object-id->internal
+   #{:visible-object-total :injective :nonnegative :snapshot-bound
+     :never-native-id-pass-through}
    :internal-id->object
    #{:visible-object-round-trip :snapshot-bound}
    :relation-defs
@@ -489,23 +493,23 @@
         (invalid-adapter!
          "Operator physical policy identity must be a closed versioned value."
          {:backend id :physical-policy operator-physical-policy})))
-  (cond->
-   {::adapter true
-    ::version adapter-version
-    ::id id
-    ::capabilities normalized
-    ::traversal-execution traversal-execution
-    ::operations operations
-    ::fingerprint
-    (or fingerprint
-        {:backend id :adapter-version adapter-version})
-    ::deterministic? (boolean deterministic?)
-    ::identity-contract identity-contract
-    ::runtime-guards? (boolean runtime-guards?)
-    ::state state
-    ::unmanaged-lifecycle (delay (uuid/fresh))}
-    operator-physical-policy
-    (assoc ::operator-physical-policy operator-physical-policy))))
+    (cond->
+     {::adapter true
+      ::version adapter-version
+      ::id id
+      ::capabilities normalized
+      ::traversal-execution traversal-execution
+      ::operations operations
+      ::fingerprint
+      (or fingerprint
+          {:backend id :adapter-version adapter-version})
+      ::deterministic? (boolean deterministic?)
+      ::identity-contract identity-contract
+      ::runtime-guards? (boolean runtime-guards?)
+      ::state state
+      ::unmanaged-lifecycle (delay (uuid/fresh))}
+      operator-physical-policy
+      (assoc ::operator-physical-policy operator-physical-policy))))
 
 (defn unmanaged-lifecycle
   "Private lifetime identity for cursors from a raw adapter without a source.
@@ -667,6 +671,12 @@
 
 (declare invoke)
 
+(defn public-object-id->internal
+  "Resolves an untrusted public object ID without applying the native numeric
+  entity-ID pass-through used by already-normalized engine requests."
+  [adapter public-id]
+  (invoke adapter :public-object-id->internal public-id))
+
 (defn basis-kind
   "Returns the certified database-view classification for one adapter."
   [adapter]
@@ -738,7 +748,7 @@
       (:subject->resources :resource->subjects)
       (guard-scan! adapter operation-key (or options {}) value)
 
-      :object-id->internal
+      (:object-id->internal :public-object-id->internal)
       (do
         (when (and (some? value)
                    (not (entity-id/valid? value)))
@@ -885,25 +895,25 @@
   (when-not (contains? #{:direct-match? :direct-edge} operation-key)
     (invalid-adapter! "A direct invoker requires a direct membership operation."
                       {:operation operation-key}))
-    (if-not (adapter? adapter)
+  (if-not (adapter? adapter)
+    (fn [subject-type subject-eid relation-eid resource-type resource-eid]
+      (invoke adapter operation-key subject-type subject-eid relation-eid
+              resource-type resource-eid))
+    (let [implementation (operation adapter operation-key)
+          guarded? (runtime-guards? adapter)]
       (fn [subject-type subject-eid relation-eid resource-type resource-eid]
-        (invoke adapter operation-key subject-type subject-eid relation-eid
-                resource-type resource-eid))
-      (let [implementation (operation adapter operation-key)
-            guarded? (runtime-guards? adapter)]
-        (fn [subject-type subject-eid relation-eid resource-type resource-eid]
-          (request-counters/add-adapter-reads!)
-          (when *backend-op-stats*
-            (swap! *backend-op-stats* update operation-key (fnil inc 0)))
-          (observe-invocation! :before adapter operation-key)
-          (try
-            (let [value (implementation subject-type subject-eid relation-eid
-                                        resource-type resource-eid)]
-              (observe-invocation! :after adapter operation-key)
-              (if guarded? (guard-output! adapter operation-key nil value) value))
-            (catch #?(:clj Throwable :cljs :default) error
-              (observe-invocation! :failed adapter operation-key)
-              (throw error)))))))
+        (request-counters/add-adapter-reads!)
+        (when *backend-op-stats*
+          (swap! *backend-op-stats* update operation-key (fnil inc 0)))
+        (observe-invocation! :before adapter operation-key)
+        (try
+          (let [value (implementation subject-type subject-eid relation-eid
+                                      resource-type resource-eid)]
+            (observe-invocation! :after adapter operation-key)
+            (if guarded? (guard-output! adapter operation-key nil value) value))
+          (catch #?(:clj Throwable :cljs :default) error
+            (observe-invocation! :failed adapter operation-key)
+            (throw error)))))))
 
 (defn ^:no-doc direct-match-invoker
   "Captures immutable direct membership with complete metering and guards."

@@ -1,0 +1,20 @@
+{:id :EACL-FORMAL-072
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "custom-codec/numeric-public-cursor-id-reinterpreted-as-native-eid"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions
+ ["v8.0 pre-release before public/native identity domain separation"]
+ :affected-backends
+ [:shared :datomic :datahike :datalevin :datascript :third-party]
+ :root-cause
+ "One adapter operation accepted both authenticated public IDs and already-normalized native entity IDs. Its numeric pass-through treated every number as native, so a numeric public cursor or permission-tree identity bypassed the configured public-ID codec."
+ :fix
+ "Split public identity resolution from native-ID pass-through in the v8 adapter contract; route every public cursor and permission-tree root through the public-only operation; certify the split with a Dafny model, an executed mutation, and a real DataScript multi-page regression."
+ :closing-evidence
+ ["PublicIdentityBoundary.NumericPublicCursorHasANativeAliasCounterexample"
+  "PublicIdentityBoundary.PublicCursorResolutionNeverSelectsNativeIdentity"
+  "eacl.formal.executed-mutation-controls/numeric-public-id-native-eid-alias-killed?"
+  "eacl.datascript.contract-test/numeric-public-identities-never-become-native-cursor-eids-test"]}

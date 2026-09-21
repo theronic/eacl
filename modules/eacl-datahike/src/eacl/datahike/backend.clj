@@ -282,6 +282,10 @@
            object-id
            (object-id->entid db object-id)))
 
+       :public-object-id->internal
+       (fn [object-id]
+         (object-id->entid db object-id))
+
        :internal-id->object
        (fn [internal-id]
          (entid->object-id db internal-id))

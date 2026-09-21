@@ -17,11 +17,13 @@
             [eacl.engine.sealed-plan :as sealed-plan]
             [eacl.engine.stable-reducer :as stable-reducer]
             [eacl.engine.v8 :as engine]
+            [eacl.execution :as execution]
             [eacl.operator.evaluator :as operator-evaluator]
             [eacl.operator.lookup :as operator-lookup]
             [eacl.operator.plan :as operator-plan]
             [eacl.operator.recursive :as operator-recursive]
             [eacl.proof-frame :as proof-frame]
+            [eacl.relay :as relay]
             [eacl.relationships.mutations :as relationship-mutations]
             [eacl.request.context :as request-context]
             [eacl.request.counters :as request-counters]
@@ -754,9 +756,162 @@
                        (original candidate)))]
         (gate))))))
 
+(defn false-public-identity-presence-killed?
+  []
+  (let [cursor {:v 3 :subject false :resource "document"}
+        opts {:object-id->entid
+              (fn [_ public-id]
+                ({false 101 "document" 202} public-id))}
+        expected {:v 3 :subject 101 :resource 202}
+        gate #(= expected
+                 (orchestration/default-spice-cursor->internal
+                  :db opts cursor))]
+    (and
+     (gate)
+     (false?
+      (with-redefs [orchestration/public-id-present? boolean]
+        (gate))))))
+
+(defn- public-identity-domain-adapter
+  []
+  (backend/make-adapter
+   {:id :public-identity-domain-control
+    :capabilities backend/empty-capabilities
+    :operations
+    (merge
+     (operation-map)
+     {:object-id->internal identity
+      :public-object-id->internal
+      (fn [public-id]
+        ({0 101 false 102} public-id))})}))
+
+(defn numeric-public-id-native-eid-alias-killed?
+  []
+  (let [adapter (public-identity-domain-adapter)
+        query {:after {:kind :stable-edge :result-eid 0}}
+        gate
+        #(= 101
+            (get-in
+             (relay/internalize-prepared-page-query adapter query)
+             [:after :result-eid]))]
+    (and
+     (gate)
+     (false?
+      (with-redefs [backend/public-object-id->internal
+                    (fn [candidate public-id]
+                      (backend/invoke
+                       candidate :object-id->internal public-id))]
+        (gate))))))
+
+(defn false-stable-edge-presence-killed?
+  []
+  (let [adapter (public-identity-domain-adapter)
+        query {:after {:kind :stable-edge :result-eid false}}
+        gate
+        #(= 102
+            (get-in
+             (relay/internalize-prepared-page-query adapter query)
+             [:after :result-eid]))]
+    (and
+     (gate)
+     (false?
+      (with-redefs [relay/edge-id-present? boolean]
+        (gate))))))
+
+(defn- invalid-execution-control?
+  [request key]
+  (try
+    (execution/normalize {:execution-timeout-ms 100} :can? request)
+    false
+    (catch #?(:clj clojure.lang.ExceptionInfo
+              :cljs cljs.core.ExceptionInfo) error
+      (let [data (ex-data error)]
+        (and (= :eacl.execution/invalid-contract (:eacl/error data))
+             (= key (:key data)))))))
+
+(defn false-evaluation-control-killed?
+  []
+  (let [gate #(invalid-execution-control? {:evaluation false} :evaluation)
+        original execution/normalize-evaluation]
+    (and
+     (gate)
+     (false?
+      (with-redefs [execution/normalize-evaluation
+                    (fn [value]
+                      (if (false? value) :demand (original value)))]
+        (gate))))))
+
+(defn false-timeout-control-killed?
+  []
+  (let [gate #(invalid-execution-control? {:timeout-ms false} :timeout-ms)
+        original execution/normalize-timeout-ms]
+    (and
+     (gate)
+     (false?
+      (with-redefs [execution/normalize-timeout-ms
+                    (fn [value]
+                      (if (false? value) 100 (original value)))]
+        (gate))))))
+
+(defn false-cancellation-control-killed?
+  []
+  (let [gate #(invalid-execution-control?
+               {:cancellation-token false} :cancellation-token)
+        original execution/cancellation-token?]
+    (and
+     (gate)
+     (false?
+      (with-redefs [execution/cancellation-token?
+                    (fn [value]
+                      (or (false? value) (original value)))]
+        (gate))))))
+
+(defn unsupported-subject-relation-downgrade-killed?
+  []
+  (let [dispatches (atom 0)
+        reader
+        (reify eacl/IAuthorizationReader
+          (-check-permission [_ _]
+            (swap! dispatches inc)
+            {:allowed? true})
+          (-read-schema [_ _] nil)
+          (-read-relationships [_ _] nil)
+          (-lookup-resources [_ _] nil)
+          (-lookup-subjects [_ _] nil)
+          (-count-resources [_ _] nil)
+          (-count-subjects [_ _] nil)
+          (-expand-permission-tree [_ _] nil))
+        request {:subject {:type :user :id "u" :relation :member}
+                 :permission :view
+                 :resource {:type :document :id "d"}}
+        rejected-without-dispatch?
+        #(do
+           (reset! dispatches 0)
+           (try
+             (eacl/check-permission reader request)
+             false
+             (catch #?(:clj clojure.lang.ExceptionInfo
+                       :cljs cljs.core.ExceptionInfo) error
+               (and (= :eacl/unsupported-subject-relation
+                       (:type (ex-data error)))
+                    (= :unsupported-subject-relation
+                       (:reason (ex-data error)))
+                    (zero? @dispatches)))))
+        mutant-invoked? (atom false)]
+    (and
+     (rejected-without-dispatch?)
+     (false?
+      (with-redefs [eacl/validate-reader-request!
+                    (fn [_ candidate]
+                      (reset! mutant-invoked? true)
+                      candidate)]
+        (rejected-without-dispatch?)))
+     @mutant-invoked?)))
+
 (defn unknown-public-request-key-killed?
   []
-  (let [reader
+  (let [original-check-permission eacl/check-permission
+        reader
         (reify eacl/IAuthorizationReader
           (-check-permission [_ _] {:allowed? true})
           (-read-schema [_ _] nil)
@@ -781,9 +936,55 @@
      (rejected?)
      (false?
       (with-redefs [eacl/check-permission
-                    (fn [target candidate]
-                      (eacl/-check-permission target candidate))]
+                    (fn
+                      ([target candidate]
+                       (eacl/-check-permission target candidate))
+                      ([target subject permission resource]
+                       (original-check-permission
+                        target subject permission resource))
+                      ([target subject permission resource consistency]
+                       (original-check-permission
+                        target subject permission resource consistency)))]
         (rejected?))))))
+
+(defn missing-required-read-field-killed?
+  []
+  (let [dispatches (atom 0)
+        reader
+        (reify eacl/IAuthorizationReader
+          (-check-permission [_ _]
+            (swap! dispatches inc)
+            {:allowed? true})
+          (-read-schema [_ _] nil)
+          (-read-relationships [_ _] nil)
+          (-lookup-resources [_ _] nil)
+          (-lookup-subjects [_ _] nil)
+          (-count-resources [_ _] nil)
+          (-count-subjects [_ _] nil)
+          (-expand-permission-tree [_ _] nil))
+        request {:permission :view
+                 :resource {:type :document :id "d"}}
+        rejected-without-dispatch?
+        #(do
+           (reset! dispatches 0)
+           (try
+             (eacl/check-permission reader request)
+             false
+             (catch #?(:clj clojure.lang.ExceptionInfo
+                       :cljs cljs.core.ExceptionInfo) error
+               (and (= :missing-request-key
+                       (:reason (ex-data error)))
+                    (zero? @dispatches)))))
+        mutant-invoked? (atom false)]
+    (and
+     (rejected-without-dispatch?)
+     (false?
+      (with-redefs [eacl/validate-reader-request!
+                    (fn [_ candidate]
+                      (reset! mutant-invoked? true)
+                      candidate)]
+        (rejected-without-dispatch?)))
+     @mutant-invoked?)))
 
 (defn fail-open-revocation-shape-killed?
   []
@@ -824,7 +1025,8 @@
 
 (defn relationship-write-qualifier-typo-killed?
   []
-  (let [calls (atom [])
+  (let [original-write-relationship! eacl/write-relationship!
+        calls (atom [])
         writer
         (reify eacl/IAuthorizationWriter
           (-write-schema! [_ _] nil)
@@ -854,16 +1056,54 @@
      (false?
       (with-redefs
        [eacl/write-relationship!
-        (fn [target candidate]
-          (let [{:keys [operation subject relation resource]} candidate]
-            (eacl/write-relationships!
-             target
-             [(eacl/->RelationshipUpdate
-               operation
-               (merge
-                (eacl/->Relationship subject relation resource)
-                (select-keys
-                 candidate [:caveat :caveat-context :valid-until-ms])))])))]
+        (fn
+          ([target candidate]
+           (let [{:keys [operation subject relation resource]} candidate]
+             (eacl/write-relationships!
+              target
+              [(eacl/->RelationshipUpdate
+                operation
+                (merge
+                 (eacl/->Relationship subject relation resource)
+                 (select-keys
+                  candidate [:caveat :caveat-context :valid-until-ms])))])))
+          ([target operation subject relation resource]
+           (original-write-relationship!
+            target operation subject relation resource)))]
+        (rejected-without-dispatch?))))))
+
+(defn nested-relationship-update-validation-killed?
+  []
+  (let [calls (atom [])
+        writer
+        (reify eacl/IAuthorizationWriter
+          (-write-schema! [_ _] nil)
+          (-write-relationships! [_ request]
+            (swap! calls conj request)
+            {:zed/token "mutation-control"})
+          (-delete-object! [_ _] nil))
+        update
+        {:operation :touch
+         :relationship
+         {:subject {:type :user :id "u"}
+          :relation :viewer
+          :resource {:type :document :id "d"}
+          :valid-until-mss 0}}
+        rejected-without-dispatch?
+        #(do
+           (reset! calls [])
+           (try
+             (eacl/write-relationships! writer [update])
+             false
+             (catch #?(:clj clojure.lang.ExceptionInfo
+                       :cljs cljs.core.ExceptionInfo) error
+               (and (= :eacl/invalid-relationship-qualifier
+                       (:type (ex-data error)))
+                    (empty? @calls)))))]
+    (and
+     (rejected-without-dispatch?)
+     (false?
+      (with-redefs [relationship-mutations/normalize-public-updates identity]
         (rejected-without-dispatch?))))))
 
 (defn nil-public-object-delete-killed?
@@ -2291,10 +2531,22 @@ definition document {
    public-identity-representation-alias-killed?
    :unresolved-relationship-coalescing
    unresolved-relationship-coalescing-killed?
+   :false-public-identity-presence false-public-identity-presence-killed?
+   :numeric-public-id-native-eid-alias
+   numeric-public-id-native-eid-alias-killed?
+   :false-stable-edge-presence false-stable-edge-presence-killed?
+   :false-evaluation-control false-evaluation-control-killed?
+   :false-timeout-control false-timeout-control-killed?
+   :false-cancellation-control false-cancellation-control-killed?
+   :unsupported-subject-relation-downgrade
+   unsupported-subject-relation-downgrade-killed?
    :unknown-public-request-key unknown-public-request-key-killed?
+   :missing-required-read-field missing-required-read-field-killed?
    :fail-open-revocation-shape fail-open-revocation-shape-killed?
    :relationship-write-qualifier-typo
    relationship-write-qualifier-typo-killed?
+   :nested-relationship-update-validation
+   nested-relationship-update-validation-killed?
    :nil-public-object-delete nil-public-object-delete-killed?
    :snapshot-option-injection snapshot-option-injection-killed?
    :reserved-live-page-basis reserved-live-page-basis-killed?

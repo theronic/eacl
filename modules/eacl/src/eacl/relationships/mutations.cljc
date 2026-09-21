@@ -36,7 +36,9 @@
                    (or (nil? (:relation endpoint))
                        (keyword? (:relation endpoint))))
       (invalid-qualifier!
-       (keyword (str (name position) "-shape")))))
+       (keyword (str (name position) "-shape"))))
+    (when (some? (:relation endpoint))
+      (invalid-qualifier! :unsupported-subject-relation)))
   (when-not (keyword? (:relation relationship))
     (invalid-qualifier! :relation-shape))
   (when (and (some? caveat) (not (values/parameter-name? caveat)))

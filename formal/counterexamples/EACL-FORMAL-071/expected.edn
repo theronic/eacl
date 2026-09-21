@@ -1,0 +1,13 @@
+{:public-identity
+ {:false-is-present true
+  :permission-check :allowed
+  :subject-filtered-relationship-count 1
+  :cursor-resume-preserves-false-coordinate true
+  :authorization-result-cursor-preserves-false-boundary true}
+ :execution-controls
+ {:evaluation-false :typed-rejection
+  :timeout-false :typed-rejection
+  :cancellation-token-false :typed-rejection}
+ :dafny-obligations
+ [:public-identity-value-presence
+  :closed-execution-control-values]}

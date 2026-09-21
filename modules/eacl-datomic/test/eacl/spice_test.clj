@@ -80,8 +80,8 @@
          }")
       @(d/transact conn [{:eacl/id "alice"} {:eacl/id "bob"} {:eacl/id "acct-1"} {:eacl/id "acct-2"}])
       (eacl/create-relationships! client
-        [(->Relationship (spice-object :user "alice") :owner (spice-object :account "acct-1"))
-         (->Relationship (spice-object :user "bob") :owner (spice-object :account "acct-2"))])
+                                  [(->Relationship (spice-object :user "alice") :owner (spice-object :account "acct-1"))
+                                   (->Relationship (spice-object :user "bob") :owner (spice-object :account "acct-2"))])
 
       (testing "read-relationships with a nonexistent subject returns [], not ALL relationships (audit §4)"
         (is (= [] (:data (eacl/read-relationships client {:resource/type :account
@@ -106,7 +106,7 @@
       (testing "writes to unknown objects throw :eacl/unknown-object naming the object (audit §11)"
         (try
           (eacl/create-relationships! client
-            [(->Relationship (spice-object :user "ghost-user") :owner (spice-object :account "acct-1"))])
+                                      [(->Relationship (spice-object :user "ghost-user") :owner (spice-object :account "acct-1"))])
           (is false "should have thrown")
           (catch clojure.lang.ExceptionInfo e
             (is (= :eacl/unknown-object (:type (ex-data e))))
@@ -122,11 +122,11 @@
            }")
         @(d/transact conn [{:eacl/id "u1"} {:eacl/id "a1"}])
         (eacl/create-relationships! setup
-          [(->Relationship (spice-object :user "u1") :owner (spice-object :account "a1"))])
+                                    [(->Relationship (spice-object :user "u1") :owner (spice-object :account "a1"))])
 
         (testing "the README-documented :entid->object-id key is honored"
           (let [ext-client (spiceomic/make-client conn
-                             {:entid->object-id (fn [db eid] (str "EXT-" (:eacl/id (d/entity db eid))))})]
+                                                  {:entid->object-id (fn [db eid] (str "EXT-" (:eacl/id (d/entity db eid))))})]
             (is (= ["EXT-a1"]
                    (mapv :id (:data (eacl/lookup-resources ext-client {:subject (spice-object :user "u1")
                                                                        :permission :admin
@@ -143,7 +143,7 @@
         (testing "the removed v7 :entity->object-id alias is rejected"
           (try
             (spiceomic/make-client conn
-              {:entity->object-id (fn [ent] (:eacl/id ent))})
+                                   {:entity->object-id (fn [ent] (:eacl/id ent))})
             (is false "should have thrown")
             (catch clojure.lang.ExceptionInfo e
               (is (= :eacl/invalid-config (:type (ex-data e))))
@@ -151,7 +151,7 @@
                      (:unknown-keys (ex-data e)))))))))))
 
 (deftest spicedb-helper-tests
-  (testing "spice-object takes [type id ?relation] and yields a SpiceObject with support for subject_relation"
+  (testing "spice-object preserves an optional subject_relation for wire compatibility"
     (is (= #eacl.core.SpiceObject{:type :user, :id "my-user", :relation nil}
            (spice-object :user "my-user")))
     (is (= #eacl.core.SpiceObject{:type :team, :id "dev-team", :relation :member}
@@ -170,7 +170,7 @@
         (testing "in these fixtures IDs are strings, but you can tell EACL how resolve to/from internal ID in make-client opts"
           (is (= "ben" (:id my-user))))))
 
-    (testing "To define a SubjectReference with a :relation (subject_relation), pass another arg to spice-object"
+    (testing "The helper can represent subject_relation, although public operations reject it"
       (let [team-member (->team "my-team" :member)]
         (is (= :team (:type team-member)))
         (is (= "my-team" (:id team-member)))
@@ -480,96 +480,96 @@
                                                :resource/type :account
                                                :permission :view
                                                :subject (->user "super-user")})))
-	          (is (thrown? Throwable
-	                       (eacl/lookup-resources *client
-	                                              (assoc base-query :after (str page1-end-cursor "x"))))))))
+          (is (thrown? Throwable
+                       (eacl/lookup-resources *client
+                                              (assoc base-query :after (str page1-end-cursor "x"))))))))
 
-	    (testing "count-resources returns a full count and rejects list pagination keys"
-	      (let [{:keys [count limit]} (eacl/count-resources *client
-	                                                        {:subject       (->user "super-user")
-	                                                         :permission    :view
-	                                                         :resource/type :server})]
-	        (is (pos? count))
-	        (is (= -1 limit)))
-	      (is (thrown? Throwable
-	                   (eacl/count-resources *client
-	                                         {:subject       (->user "super-user")
-	                                          :permission    :view
-	                                          :resource/type :server
-	                                          :first         2}))))
+    (testing "count-resources returns a full count and rejects list pagination keys"
+      (let [{:keys [count limit]} (eacl/count-resources *client
+                                                        {:subject       (->user "super-user")
+                                                         :permission    :view
+                                                         :resource/type :server})]
+        (is (pos? count))
+        (is (= -1 limit)))
+      (is (thrown? Throwable
+                   (eacl/count-resources *client
+                                         {:subject       (->user "super-user")
+                                          :permission    :view
+                                          :resource/type :server
+                                          :first         2}))))
 
-	    (testing "non-exact page tokens use exact fallback after relevant changes"
-	      (let [base-query {:resource/type :server
-	                        :permission :view
-	                        :subject (->user "super-user")}
-	            page1 (eacl/lookup-resources *client (assoc base-query :first 2))
-	            page1-end-cursor (page-end-cursor page1)
-	            expected-page2 (eacl/lookup-resources
-	                            *client
-	                            (assoc base-query
-	                                   :first 100
-	                                   :after page1-end-cursor))
-	            new-server (->server "stable-new-server")]
-	        @(d/transact conn [{:eacl/id (:id new-server)}])
-	        (is (eacl/create-relationship! *client my-account :account new-server))
-	        (let [recovered
-	              (eacl/lookup-resources
-	               *client
-	               (assoc base-query
-	                      :first 100
-	                      :after page1-end-cursor))]
-	          (is (= (:data expected-page2)
-	                 (:data recovered)))
-	          (is (not-any? #(= new-server %) (:data recovered)))
-	          (is (nil? (get-in recovered
-	                            [:page-info :cursor-recovery])))))
-	      (let [base-query {:resource/type :server
-	                        :permission :view
-	                        :subject (->user "super-user")}
-	            page1 (eacl/lookup-resources *client (assoc base-query :first 2))
-	            page1-end-cursor (page-end-cursor page1)
-	            expected-page2 (eacl/lookup-resources *client
-	                                                  (assoc base-query
-	                                                         :first 2
-	                                                         :after page1-end-cursor))
-	            victim (first (:data expected-page2))]
+    (testing "non-exact page tokens use exact fallback after relevant changes"
+      (let [base-query {:resource/type :server
+                        :permission :view
+                        :subject (->user "super-user")}
+            page1 (eacl/lookup-resources *client (assoc base-query :first 2))
+            page1-end-cursor (page-end-cursor page1)
+            expected-page2 (eacl/lookup-resources
+                            *client
+                            (assoc base-query
+                                   :first 100
+                                   :after page1-end-cursor))
+            new-server (->server "stable-new-server")]
+        @(d/transact conn [{:eacl/id (:id new-server)}])
+        (is (eacl/create-relationship! *client my-account :account new-server))
+        (let [recovered
+              (eacl/lookup-resources
+               *client
+               (assoc base-query
+                      :first 100
+                      :after page1-end-cursor))]
+          (is (= (:data expected-page2)
+                 (:data recovered)))
+          (is (not-any? #(= new-server %) (:data recovered)))
+          (is (nil? (get-in recovered
+                            [:page-info :cursor-recovery])))))
+      (let [base-query {:resource/type :server
+                        :permission :view
+                        :subject (->user "super-user")}
+            page1 (eacl/lookup-resources *client (assoc base-query :first 2))
+            page1-end-cursor (page-end-cursor page1)
+            expected-page2 (eacl/lookup-resources *client
+                                                  (assoc base-query
+                                                         :first 2
+                                                         :after page1-end-cursor))
+            victim (first (:data expected-page2))]
 	        ;; Consumers must retract relationship halves through EACL before
 	        ;; retracting object identity.
-	        (eacl/delete-object! *client victim)
-	        @(d/transact
-	          conn
-	          [[:db/retract
-	            [:eacl/id (:id victim)]
-	            :eacl/id
-	            (:id victim)]])
-	        (let [recovered
-	              (eacl/lookup-resources
-	               *client
-	               (assoc base-query
-	                      :first 2
-	                      :after page1-end-cursor))]
-	          (is (some #(= victim %) (:data recovered)))
-	          (is (nil? (get-in recovered
-	                            [:page-info :cursor-recovery]))))))
+        (eacl/delete-object! *client victim)
+        @(d/transact
+          conn
+          [[:db/retract
+            [:eacl/id (:id victim)]
+            :eacl/id
+            (:id victim)]])
+        (let [recovered
+              (eacl/lookup-resources
+               *client
+               (assoc base-query
+                      :first 2
+                      :after page1-end-cursor))]
+          (is (some #(= victim %) (:data recovered)))
+          (is (nil? (get-in recovered
+                            [:page-info :cursor-recovery]))))))
 
-	    (testing "spice-read-relationships results are constrained by filters for resource type & ID"
-	      (testing "transact the test entities we are about to use"
-	        @(d/transact conn (for [object [(->account "test-account")
-	                                        (->account "other-account")
-	                                        (->vpc "my-vpc")
-	                                        (->vpc "other-vpc")]]
-	                            {:eacl/id (:id object)})))
+    (testing "spice-read-relationships results are constrained by filters for resource type & ID"
+      (testing "transact the test entities we are about to use"
+        @(d/transact conn (for [object [(->account "test-account")
+                                        (->account "other-account")
+                                        (->vpc "my-vpc")
+                                        (->vpc "other-vpc")]]
+                            {:eacl/id (:id object)})))
 
-	      (is (eacl/create-relationships! *client
-	                                      [(->Relationship (->account "test-account") :account (->vpc "my-vpc"))
-	                                       (->Relationship (->account "test-account") :account (->vpc "other-vpc"))
-	                                       (->Relationship (->account "other-account") :account (->vpc "other-vpc"))]))
-	      (is (= [(->Relationship (->account "test-account") :account (->vpc "my-vpc"))]
-	             (:data (eacl/read-relationships *client {:resource/type     :vpc
-	                                                      :resource/id       "my-vpc"
-	                                                      :resource/relation :account
-	                                                      :subject/type      :account
-	                                                      :subject/id        "test-account"})))))))
+      (is (eacl/create-relationships! *client
+                                      [(->Relationship (->account "test-account") :account (->vpc "my-vpc"))
+                                       (->Relationship (->account "test-account") :account (->vpc "other-vpc"))
+                                       (->Relationship (->account "other-account") :account (->vpc "other-vpc"))]))
+      (is (= [(->Relationship (->account "test-account") :account (->vpc "my-vpc"))]
+             (:data (eacl/read-relationships *client {:resource/type     :vpc
+                                                      :resource/id       "my-vpc"
+                                                      :resource/relation :account
+                                                      :subject/type      :account
+                                                      :subject/id        "test-account"})))))))
 
 ;; todo: test that shows behaviour of read-relationships when subject or resource is missing.
 
@@ -585,9 +585,9 @@
          }")
       @(d/transact conn [{:eacl/id "alice"} {:eacl/id "acct-1"} {:eacl/id "acct-2"} {:eacl/id "acct-3"}])
       (eacl/create-relationships! client
-        [(->Relationship (spice-object :user "alice") :owner (spice-object :account "acct-1"))
-         (->Relationship (spice-object :user "alice") :owner (spice-object :account "acct-2"))
-         (->Relationship (spice-object :user "alice") :owner (spice-object :account "acct-3"))])
+                                  [(->Relationship (spice-object :user "alice") :owner (spice-object :account "acct-1"))
+                                   (->Relationship (spice-object :user "alice") :owner (spice-object :account "acct-2"))
+                                   (->Relationship (spice-object :user "alice") :owner (spice-object :account "acct-3"))])
       (let [q {:subject (spice-object :user "alice") :permission :admin :resource/type :account :first 2}
             token (spiceomic/current-zed-token client)]
 

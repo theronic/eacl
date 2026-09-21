@@ -122,14 +122,14 @@
 (defn- ordered-generation-frame
   [snapshot relation-ids]
   (ddb/with-db
-   snapshot
-   (fn [db]
-     (mapv
-      (fn [relation-id]
-        [relation-id
-         (scalar-generation
-          db relation-id :eacl.datalevin/relation-generation)])
-      relation-ids))))
+    snapshot
+    (fn [db]
+      (mapv
+       (fn [relation-id]
+         [relation-id
+          (scalar-generation
+           db relation-id :eacl.datalevin/relation-generation)])
+       relation-ids))))
 
 (defn- snapshot-revision-info
   [snapshot]
@@ -188,9 +188,9 @@
        :schema-generation
        (fn []
          (ddb/with-db
-          snapshot
-          #(scalar-generation
-            % schema-eid :eacl.datalevin/schema-generation)))
+           snapshot
+           #(scalar-generation
+             % schema-eid :eacl.datalevin/schema-generation)))
 
        :exact-locator (constantly nil)
 
@@ -203,6 +203,14 @@
              (fn [db]
                (when-some [internal-id (object-id->entid db object-id)]
                  (exact-natural! :entity-id internal-id))))))
+
+       :public-object-id->internal
+       (fn [object-id]
+         (ddb/with-db
+           snapshot
+           (fn [db]
+             (when-some [internal-id (object-id->entid db object-id)]
+               (exact-natural! :entity-id internal-id)))))
 
        :internal-id->object
        (fn [internal-id]
@@ -234,10 +242,10 @@
        :permission-expression
        (fn [resource-type permission-name]
          (ddb/with-db
-          snapshot
-          #(expression-persistence/validated-expression-entity
-            (impl/find-permission-defs
-             % resource-type permission-name))))
+           snapshot
+           #(expression-persistence/validated-expression-entity
+             (impl/find-permission-defs
+              % resource-type permission-name))))
 
        ;; Argument-domain guards stay: the adapter contract test and the
        ;; EACL-FORMAL-027 ledger pin fail-closed rejection of non-natural

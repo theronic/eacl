@@ -5,10 +5,15 @@
   :uuid-dropped-low-half :uuid-number-truncation :uuid-noncanonical-alias
   :uuid-scope :uuid-lifecycle :uuid-detached
   :public-identity-representation-alias :unresolved-relationship-coalescing
-  :unknown-public-request-key :fail-open-revocation-shape
-  :relationship-write-qualifier-typo :nil-public-object-delete
+  :unknown-public-request-key :missing-required-read-field
+  :fail-open-revocation-shape
+  :relationship-write-qualifier-typo :nested-relationship-update-validation
+  :nil-public-object-delete
   :snapshot-option-injection :reserved-live-page-basis
-  :public-empty-schema-opt-in]
+  :public-empty-schema-opt-in :false-public-identity-presence
+  :numeric-public-id-native-eid-alias :false-stable-edge-presence
+  :false-evaluation-control :false-timeout-control
+  :false-cancellation-control :unsupported-subject-relation-downgrade]
  :historical-mutant-count 152
  :historical-clojure-mutant-count 138
  :historical-model-mutant-count 14
@@ -53,6 +58,22 @@
    :mutation :uuid-noncanonical-alias
    :target-symbol "uuid/canonical-text?"
    :detector "uuid-noncanonical-alias-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by {:test :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+
+  {:id :missing-required-read-field
+   :mechanism :executed-production
+   :mutation :missing-required-read-field
+   :target-symbol "eacl/validate-reader-request!"
+   :detector "missing-required-read-field-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by {:test :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+
+  {:id :nested-relationship-update-validation
+   :mechanism :executed-production
+   :mutation :nested-relationship-update-validation
+   :target-symbol "relationship-mutations/normalize-public-updates"
+   :detector "nested-relationship-update-validation-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by {:test :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
 
@@ -411,6 +432,76 @@
    :mutation :coalesce-host-equal-public-ids-before-endpoint-resolution
    :target-symbol "relationship-mutations/normalize-public-updates"
    :detector "unresolved-relationship-coalescing-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :false-public-identity-presence
+   :mechanism :executed-production
+   :mutation :treat-an-admitted-false-public-id-as-an-omitted-cursor-coordinate
+   :target-symbol "orchestration/public-id-present?"
+   :consumer-symbol "orchestration/default-spice-cursor->internal"
+   :detector "false-public-identity-presence-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :numeric-public-id-native-eid-alias
+   :mechanism :executed-production
+   :mutation :treat-a-numeric-public-cursor-id-as-an-already-resolved-native-eid
+   :target-symbol "backend/public-object-id->internal"
+   :consumer-symbol "relay/internalize-prepared-page-query"
+   :detector "numeric-public-id-native-eid-alias-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :false-stable-edge-presence
+   :mechanism :executed-production
+   :mutation :treat-a-false-public-stable-edge-id-as-an-absent-boundary
+   :target-symbol "relay/edge-id-present?"
+   :consumer-symbol "relay/internalize-prepared-page-query"
+   :detector "false-stable-edge-presence-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :false-evaluation-control
+   :mechanism :executed-production
+   :mutation :default-an-explicit-false-evaluation-mode
+   :target-symbol "execution/normalize-evaluation"
+   :consumer-symbol "execution/normalize"
+   :detector "false-evaluation-control-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :false-timeout-control
+   :mechanism :executed-production
+   :mutation :default-an-explicit-false-request-timeout
+   :target-symbol "execution/normalize-timeout-ms"
+   :consumer-symbol "execution/normalize"
+   :detector "false-timeout-control-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :false-cancellation-control
+   :mechanism :executed-production
+   :mutation :accept-false-as-an-absent-cancellation-token
+   :target-symbol "execution/cancellation-token?"
+   :consumer-symbol "execution/normalize"
+   :detector "false-cancellation-control-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :unsupported-subject-relation-downgrade
+   :mechanism :executed-production
+   :mutation :accept-an-unsupported-subject-set-and-authorize-the-base-object
+   :target-symbol "eacl/validate-reader-request!"
+   :consumer-symbol "eacl/check-permission"
+   :detector "unsupported-subject-relation-downgrade-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
    {:test

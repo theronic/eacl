@@ -108,7 +108,7 @@
    (fn [relation-id]
      [relation-id
       (some-> (first (ds/datoms db :eavt relation-id
-                                 :eacl/relation-version))
+                                :eacl/relation-version))
               :tx)])
    relation-ids))
 
@@ -128,101 +128,105 @@
        :as opts}]
   (backend/validate-adapter-config! :datascript adapter-config-keys opts)
   (backend/make-adapter
-     {:id :datascript
-      :traversal-execution backend/strict-sequential-traversal-execution
-      :fingerprint (:adapter-fingerprint opts)
-      :deterministic? (:adapter-deterministic? opts)
-      :identity-contract
-      (:identity-contract opts
-                          :selected-internal/current-external-injective-v2)
-      :capabilities adapter-capabilities
-      :state {:db db}
-      :operations
-      {:snapshot-id
-       (fn []
-         {:database-id :datascript
-          :basis-t (:max-tx db)})
+   {:id :datascript
+    :traversal-execution backend/strict-sequential-traversal-execution
+    :fingerprint (:adapter-fingerprint opts)
+    :deterministic? (:adapter-deterministic? opts)
+    :identity-contract
+    (:identity-contract opts
+                        :selected-internal/current-external-injective-v2)
+    :capabilities adapter-capabilities
+    :state {:db db}
+    :operations
+    {:snapshot-id
+     (fn []
+       {:database-id :datascript
+        :basis-t (:max-tx db)})
 
-       :basis-kind
-       (fn [] (basis-kind db))
+     :basis-kind
+     (fn [] (basis-kind db))
 
-       :native-revision
-       (fn []
-         {:revision (:max-tx db)
-          :exact-locator nil})
+     :native-revision
+     (fn []
+       {:revision (:max-tx db)
+        :exact-locator nil})
 
-       :order-hint (fn [] (:max-tx db))
+     :order-hint (fn [] (:max-tx db))
 
-       :schema-generation
-       (fn []
-         (certified-schema-generation db))
+     :schema-generation
+     (fn []
+       (certified-schema-generation db))
 
-       :exact-locator
-       (constantly nil)
+     :exact-locator
+     (constantly nil)
 
-       :object-id->internal
-       (fn [object-id]
-         (if (number? object-id)
-           object-id
-           (object-id->entid db object-id)))
+     :object-id->internal
+     (fn [object-id]
+       (if (number? object-id)
+         object-id
+         (object-id->entid db object-id)))
 
-       :internal-id->object
-       (fn [internal-id]
-         (entid->object-id db internal-id))
+     :public-object-id->internal
+     (fn [object-id]
+       (object-id->entid db object-id))
 
-       :relation-defs
-       (fn [resource-type relation-name]
-         (mapv (fn [{:keys [e v]}]
-                 {:relation-id e
-                  :resource-type resource-type
-                  :relation-name relation-name
-                  :subject-type (nth v 2)})
-               (impl/relation-datoms db resource-type relation-name)))
+     :internal-id->object
+     (fn [internal-id]
+       (entid->object-id db internal-id))
 
-       :permission-defs
-       (fn [resource-type permission-name]
-         (vec (mapcat expression-persistence/union-compatible-entity-definitions
-                      (impl/find-permission-defs
-                       db resource-type permission-name))))
+     :relation-defs
+     (fn [resource-type relation-name]
+       (mapv (fn [{:keys [e v]}]
+               {:relation-id e
+                :resource-type resource-type
+                :relation-name relation-name
+                :subject-type (nth v 2)})
+             (impl/relation-datoms db resource-type relation-name)))
 
-       :permission-expression
-       (fn [resource-type permission-name]
-         (expression-persistence/validated-expression-entity
-          (impl/find-permission-defs db resource-type permission-name)))
+     :permission-defs
+     (fn [resource-type permission-name]
+       (vec (mapcat expression-persistence/union-compatible-entity-definitions
+                    (impl/find-permission-defs
+                     db resource-type permission-name))))
 
-       :subject->resources
-       (fn [subject-type subject-id relation-id resource-type options]
-         (impl/subject->resources
-          db subject-type subject-id relation-id resource-type options))
+     :permission-expression
+     (fn [resource-type permission-name]
+       (expression-persistence/validated-expression-entity
+        (impl/find-permission-defs db resource-type permission-name)))
 
-       :resource->subjects
-       (fn [resource-type resource-id relation-id subject-type options]
-         (impl/resource->subjects
-          db resource-type resource-id relation-id subject-type options))
+     :subject->resources
+     (fn [subject-type subject-id relation-id resource-type options]
+       (impl/subject->resources
+        db subject-type subject-id relation-id resource-type options))
 
-       :direct-match?
-       (fn [subject-type subject-id relation-id resource-type resource-id]
-         (impl/direct-match?
-          db subject-type subject-id relation-id resource-type resource-id))
+     :resource->subjects
+     (fn [resource-type resource-id relation-id subject-type options]
+       (impl/resource->subjects
+        db resource-type resource-id relation-id subject-type options))
 
-       :direct-edge
-       (fn [subject-type subject-id relation-id resource-type resource-id]
-         (impl/direct-edge db subject-type subject-id relation-id resource-type resource-id))
+     :direct-match?
+     (fn [subject-type subject-id relation-id resource-type resource-id]
+       (impl/direct-match?
+        db subject-type subject-id relation-id resource-type resource-id))
 
-       :qualification-data
-       (fn [eid]
-         (qualification-data/collect eid (ds/datoms db :eavt eid) identity true))
+     :direct-edge
+     (fn [subject-type subject-id relation-id resource-type resource-id]
+       (impl/direct-edge db subject-type subject-id relation-id resource-type resource-id))
 
-       :all-permission-nodes
-       (fn []
-         (->> (ds/datoms
-               db :avet :eacl.permission/resource-type+permission-name)
-              (map :v)
-              set))
+     :qualification-data
+     (fn [eid]
+       (qualification-data/collect eid (ds/datoms db :eavt eid) identity true))
 
-       :proof-frame
-       (fn [relation-ids]
-         (ordered-generation-frame db relation-ids))}}))
+     :all-permission-nodes
+     (fn []
+       (->> (ds/datoms
+             db :avet :eacl.permission/resource-type+permission-name)
+            (map :v)
+            set))
+
+     :proof-frame
+     (fn [relation-ids]
+       (ordered-generation-frame db relation-ids))}}))
 
 (defn source
   "Builds the borrowed immutable-basis source for one DataScript conn."
