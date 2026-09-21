@@ -239,11 +239,14 @@
     (eacl/delete-relationship! acl relationship)
     (eacl/delete-relationship! acl subject :viewer resource)
     (eacl/delete-object! acl resource)
+    (eacl/delete-object-by-eid! acl 42)
     (is (= [:write-schema {:schema "definition user {}"}]
            (first @calls)))
     (is (= 10
            (count (filter #(= :write-relationships (first %)) @calls))))
     (is (= [:delete-object {:object resource}]
+           (nth @calls (- (count @calls) 2))))
+    (is (= [:delete-object {:native-eid 42}]
            (last @calls)))))
 
 (deftest snapshot-capability-and-lifecycle-test

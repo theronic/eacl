@@ -537,7 +537,6 @@
             (ds/db conn) {:sample-size 0})))
     (is (= 1
            (:retracted-datoms
-            (eacl/delete-object!
-             client (assoc account :id account-eid)))))
+            (eacl/delete-object-by-eid! client account-eid))))
     (is (:valid?
          (integrity/dangling-relationship-report (ds/db conn))))))

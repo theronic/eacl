@@ -1931,6 +1931,17 @@
    ledger-before (request-counters/snapshot ledger)
    output-units))
 
+(defn- batch-demand-memo-key
+  "Returns a request-local memo key only when public identity representation
+  is canonical and the selected adapter certifies immutable/injective public
+  identities. Noncanonical custom IDs are evaluated independently."
+  [adapter {:keys [subject permission resource]}]
+  (let [subject (canonical-public-object-identity subject)
+        resource (canonical-public-object-identity resource)]
+    (when (and subject resource (public-answer-key-eligible? adapter))
+      (batch/demand-key
+       {:subject subject :permission permission :resource resource}))))
+
 (defn check-permissions
   [api source opts request]
   (let [request (batch/validate-request! request (:aggregate-limits opts))
@@ -1966,6 +1977,7 @@
                      ledger-before (request-counters/snapshot ledger)
                      work-stats (atom {})
                      work-before @work-stats
+                     adapter (request-context/adapter request-context)
                      counters-fn
                      #(batch-counters
                        work-before work-stats ledger-before ledger %)
@@ -1994,11 +2006,16 @@
                                 #(counters-fn index))
                                (let [{:keys [subject permission resource]}
                                      demand]
-                                 (request-context/memoized!
-                                  request-context
-                                  :decisions
-                                  (batch/demand-key demand)
-                                  #(check-permission-in-context
+                                 (if-let [memo-key
+                                          (batch-demand-memo-key adapter demand)]
+                                   (request-context/memoized!
+                                    request-context
+                                    :decisions
+                                    memo-key
+                                    #(check-permission-in-context
+                                      api scalar-opts request-context
+                                      subject permission resource))
+                                   (check-permission-in-context
                                     api scalar-opts request-context
                                     subject permission resource)))
                                (catch #?(:clj Throwable :cljs :default) error
@@ -3408,13 +3425,11 @@
                                 (validate-relationship-write-schema!
                                  schema relationship))
                               internal-updates
-                              (S/transform
-                               [S/ALL :relationship]
-                               #(spice-relationship->internal db options %)
-                               updates)
-                              _
-                              (relationship-mutations/validate-batch!
-                               internal-updates)
+                              (relationship-mutations/coalesce-updates
+                               (S/transform
+                                [S/ALL :relationship]
+                                #(spice-relationship->internal db options %)
+                                updates))
                               raw-tx
                               (->> internal-updates
                                    (mapcat #(plan-update db %))
@@ -3519,7 +3534,7 @@
 
 (defn- writer-write-relationships!
   [writer {:keys [updates tx-data] :or {tx-data []}}]
-  (let [updates (relationship-mutations/normalize-updates (vec updates))
+  (let [updates (relationship-mutations/normalize-public-updates (vec updates))
         app-datoms (qualified-writes/application-datoms tx-data #{})]
     (when (and (not *qualified-authorization-enabled?*)
                (some #(seq (select-keys (:relationship %) relationship-mutations/qualifier-keys)) updates))
@@ -3613,7 +3628,7 @@
   "Removes every relationship touching object in final-transaction-bounded
   batches. Each contention retry reacquires and replans from a fresh basis.
   For `T:*` it removes every relationship whose subject is that wildcard."
-  [writer object]
+  [writer {:keys [object native-eid]}]
   (let [{:keys [api qualified-writer]} (backend-writer/state writer)
         native-writer (when *qualified-authorization-enabled?*
                         (or (some-> qualified-writer deref)
@@ -3641,14 +3656,9 @@
                               writer
                               (fn [{:keys [db selection]}]
                                 (let [object-eid
-                                      (or
-                                       (try
-                                         ((:object->entid options) db object)
-                                         (catch #?(:clj Throwable
-                                                   :cljs :default) _
-                                           nil))
-                                       (when (number? (:id object))
-                                         (:id object)))
+                                      (if (some? native-eid)
+                                        native-eid
+                                        ((:object->entid options) db object))
                                       fitted
                                       (largest-fitting-prepared-batch
                                        writer db
@@ -4023,7 +4033,7 @@
   [snapshot {:keys [updates tx-data] :or {tx-data []}}]
   (let [{:keys [basis api runtime]} snapshot
         _ (basis-open! basis)
-        updates (relationship-mutations/normalize-updates (vec updates))
+        updates (relationship-mutations/normalize-public-updates (vec updates))
         app-datoms (qualified-writes/application-datoms tx-data #{})]
     (if *qualified-authorization-enabled?*
       (let [plan (or (:qualified-plan api)
@@ -4226,8 +4236,18 @@
     (write-schema-through! (writable! writer) request))
   (-write-relationships! [_ request]
     (writer-write-relationships! (writable! writer) request))
-  (-delete-object! [_ {:keys [object]}]
-    (writer-delete-object! (writable! writer) object)))
+  (-delete-object! [_ {:keys [object native-eid] :as request}]
+    (when (and (contains? request :native-eid)
+               (not (and (integer? native-eid) (pos? native-eid))))
+      (throw
+       (ex-info
+        "A native entity ID must be a positive integer."
+        {:type :eacl/invalid-object-id
+         :eacl/error :eacl/invalid-object-id
+         :native-eid native-eid})))
+    (writer-delete-object!
+     (writable! writer)
+     {:object object :native-eid native-eid})))
 
 (defn client?
   "True when `client` is a shared-orchestration client for `backend-id`."

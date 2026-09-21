@@ -79,7 +79,7 @@
         (is (identical? before (ds/db conn)))
         (ds/transact! conn [[:db/retractEntity sid]])
         (is (= 1 (count (ds/datoms (ds/db conn) :aevt storage/reverse-attribute))))
-        (eacl/delete-object! client (eacl/spice-object :user sid))
+        (eacl/delete-object-by-eid! client sid)
         (is (empty? (ds/datoms (ds/db conn) :aevt storage/reverse-attribute)))
         (is (empty? (ds/datoms (ds/db conn) :eavt qid)))
         (is (not (contains? (cache-trace/outcome #(eacl/write-schema! client {:schema replacement})) :fault)))))))

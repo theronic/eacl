@@ -109,14 +109,25 @@
   (coalesce-updates updates)
   true)
 
-(defn normalize-updates
-  "Normalizes and coalesces public input before any inert qualifier allocation."
+(defn normalize-public-updates
+  "Normalizes public input without comparing unresolved external identities.
+
+  A custom ID codec may distinguish host values that Clojure equality treats
+  as equal (for example a list and vector with the same members). Coalescing
+  before endpoint resolution would therefore merge different Relationships.
+  Callers coalesce only after replacing external IDs with internal EIDs."
   [updates]
-  (coalesce-updates
-   (mapv (fn [{:keys [operation relationship] :as update}]
-           (validate-operation! operation)
-           (assoc update :relationship (normalize-relationship relationship)))
-         updates)))
+  (mapv (fn [{:keys [operation relationship] :as update}]
+          (validate-operation! operation)
+          (assoc update :relationship (normalize-relationship relationship)))
+        updates))
+
+(defn normalize-updates
+  "Normalizes and coalesces updates whose relationship identities are already
+  safe to compare. Public writer paths use `normalize-public-updates`, resolve
+  their endpoints, and only then call `coalesce-updates`."
+  [updates]
+  (coalesce-updates (normalize-public-updates updates)))
 
 (defn stamp-relation-generations
   "Adds one idempotent backend-native generation stamp per affected relation.

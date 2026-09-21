@@ -92,7 +92,6 @@
   "Atomic batch planning on one immutable snapshot."
   (-tx-relationships [this request]))
 
-
 (defprotocol ISnapshotSource
   "Selects one immutable authorization snapshot."
   (-snapshot [this consistency options]))
@@ -265,11 +264,31 @@
                         {:capability :discard-prepared-relationship :target (target-kind target)}))))
 
 (defn delete-object!
+  "Removes every Relationship touching one externally identified object.
+
+  Numeric values remain public IDs and are never interpreted as backend
+  entity IDs. Use `delete-object-by-eid!` for explicit ghost repair after an
+  entity's public identity has already been retracted."
   [target object]
   (-delete-object! (writer! target)
                    (if (and (map? object) (contains? object :object))
                      object
                      {:object object})))
+
+(defn delete-object-by-eid!
+  "Removes every Relationship touching one explicit native entity ID.
+
+  This is the ghost-repair counterpart to `delete-object!`: it is intended for
+  cleanup after native entity deletion has made the public object ID
+  unresolvable. It does not retract the entity itself."
+  [target native-eid]
+  (when-not (and (integer? native-eid) (pos? native-eid))
+    (throw
+     (typed-error
+      :eacl/invalid-object-id
+      "A native entity ID must be a positive integer."
+      {:native-eid native-eid})))
+  (-delete-object! (writer! target) {:native-eid native-eid}))
 
 (defn write-relationship!
   ([target operation subject relation resource]

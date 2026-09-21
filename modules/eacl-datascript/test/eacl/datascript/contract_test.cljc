@@ -504,8 +504,7 @@
         (datascript/expire-cache! client-b)
         (is (seq (ds/datoms (ds/db conn) :eavt document-eid
                             relationship-storage/reverse-attribute)))
-        (eacl/delete-object!
-         client-a (eacl/spice-object :user user-eid))
+        (eacl/delete-object-by-eid! client-a user-eid)
         (is (empty? (ds/datoms (ds/db conn) :eavt document-eid
                                relationship-storage/reverse-attribute)))))))
 
@@ -896,6 +895,84 @@
       (is (= [document-vector] (:data vector-page)))
       (is (= [document-vector] (:data vector-hit)))
       (is (true? (:cached? vector-hit))))))
+
+(deftest representation-sensitive-identities-do-not-alias-batch-decisions-or-writes-test
+  (let [conn (datascript/create-conn)
+        client
+        (datascript/make-client
+         conn
+         {:cache cache/no-cache
+          :security-key "01234567890123456789012345678901"
+          :object-id->lookup-ref
+          (fn [object-id]
+            [:eacl/id
+             (cond
+               (list? object-id) "stored-list-user"
+               (vector? object-id) "stored-vector-user"
+               :else object-id)])
+          :entid->object-id
+          (fn [db eid]
+            (:eacl/id (ds/entity db eid)))})
+        vector-user (eacl/spice-object :user ["same"])
+        list-user (eacl/spice-object :user '("same"))
+        allowed-document (eacl/spice-object :document "batch-allowed")
+        revoked-document (eacl/spice-object :document "batch-revoked")
+        vector-relationship
+        (eacl/->Relationship vector-user :reader revoked-document)
+        list-relationship
+        (eacl/->Relationship list-user :reader revoked-document)
+        delete-updates
+        [(eacl/->RelationshipUpdate :delete vector-relationship)
+         (eacl/->RelationshipUpdate :delete list-relationship)]]
+    (is (= vector-user list-user)
+        "the custom codec deliberately distinguishes host-equal IDs")
+    (eacl/write-schema! client custom-codec-cache-schema)
+    (ds/transact!
+     conn
+     [{:eacl/id "stored-list-user"}
+      {:eacl/id "stored-vector-user"}
+      {:eacl/id (:id allowed-document)}
+      {:eacl/id (:id revoked-document)}])
+    (eacl/create-relationship!
+     client
+     vector-user :reader allowed-document)
+
+    (testing "batch decisions do not reuse authority across codec identities"
+      (is (= [true false]
+             (mapv
+              :allowed?
+              (eacl/check-permissions
+               client
+               {:cache? false
+                :checks
+                [{:subject vector-user
+                  :permission :view
+                  :resource allowed-document}
+                 {:subject list-user
+                  :permission :view
+                  :resource allowed-document}]})))))
+
+    (doseq [relationship [vector-relationship list-relationship]]
+      (eacl/create-relationship! client relationship))
+    (testing "committed bulk revocation resolves identities before coalescing"
+      (eacl/write-relationships! client delete-updates)
+      (is (= [false false]
+             [(eacl/can? client vector-user :view revoked-document)
+              (eacl/can? client list-user :view revoked-document)])))
+
+    (doseq [relationship [vector-relationship list-relationship]]
+      (eacl/create-relationship! client relationship))
+    (testing "snapshot transaction planning has the same identity boundary"
+      (let [snapshot (eacl/snapshot client)]
+        (try
+          (ds/transact!
+           conn
+           (eacl/tx-relationships snapshot {:updates delete-updates}))
+          (finally
+            (eacl/release! snapshot))))
+      (is (= [false false]
+             [(eacl/can? client vector-user :view revoked-document)
+              (eacl/can? client list-user :view revoked-document)])))))
 
 (deftest rendered-keys-copy-caller-owned-query-containers-test
   #?(:clj
@@ -1455,6 +1532,61 @@
                             (contract/->user "super-user")
                             :reboot
                             (contract/->server "server-1")))))))
+
+(deftest delete-object-keeps-public-numeric-ids-separate-from-native-eids-test
+  (let [conn (datascript/create-conn)
+        client (datascript/make-client conn {:cache cache/no-cache})
+        victim (eacl/spice-object :user "numeric-eid-victim")
+        document (eacl/spice-object :document "numeric-eid-document")]
+    (eacl/write-schema! client custom-codec-cache-schema)
+    (ds/transact! conn [{:eacl/id (:id victim)}
+                        {:eacl/id (:id document)}])
+    (eacl/create-relationship! client victim :reader document)
+    (let [victim-eid (ds/entid (ds/db conn) [:eacl/id (:id victim)])]
+      (is (nil? (ds/entid (ds/db conn) [:eacl/id victim-eid])))
+      (is (zero?
+           (:retracted-datoms
+            (eacl/delete-object!
+             client (eacl/spice-object :user victim-eid)))))
+      (is (true? (eacl/can? client victim :view document))
+          "an absent numeric public ID must not address an unrelated EID")
+      (is (= 2
+             (:retracted-datoms
+              (eacl/delete-object-by-eid! client victim-eid))))
+      (is (false? (eacl/can? client victim :view document))))))
+
+(deftest delete-object-propagates-custom-identity-resolution-failures-test
+  (let [conn (datascript/create-conn)
+        fail-resolution? (atom false)
+        client
+        (datascript/make-client
+         conn
+         {:cache cache/no-cache
+          :object-id->lookup-ref
+          (fn [object-id]
+            (if @fail-resolution?
+              (throw
+               (ex-info "Identity service unavailable."
+                        {:type :test/identity-resolution-failure}))
+              [:eacl/id object-id]))})
+        user (eacl/spice-object :user "resolver-user")
+        document (eacl/spice-object :document "resolver-document")]
+    (eacl/write-schema! client custom-codec-cache-schema)
+    (ds/transact! conn [{:eacl/id (:id user)}
+                        {:eacl/id (:id document)}])
+    (eacl/create-relationship! client user :reader document)
+    (reset! fail-resolution? true)
+    (let [error
+          (try
+            (eacl/delete-object! client user)
+            nil
+            (catch #?(:clj clojure.lang.ExceptionInfo
+                      :cljs cljs.core.ExceptionInfo) thrown
+              (ex-data thrown)))]
+      (is (= :test/identity-resolution-failure (:type error))))
+    (reset! fail-resolution? false)
+    (is (true? (eacl/can? client user :view document))
+        "a failed revocation must not be reported as a successful no-op")))
 
 (deftest datascript-large-relationship-cursor-skips-item-proof-test
   ;; Pinned to the managed/mutation-proof regime: the assertion is that the
