@@ -1082,29 +1082,33 @@
             (swap! calls conj request)
             {:zed/token "mutation-control"})
           (-delete-object! [_ _] nil))
-        update
-        {:operation :touch
-         :relationship
-         {:subject {:type :user :id "u"}
-          :relation :viewer
-          :resource {:type :document :id "d"}
-          :valid-until-mss 0}}
+        updates
+        [{:operation :touch
+          :relationship
+          {:subject {:type :user :id "u"}
+           :relation :viewer
+           :resource {:type :document :id "d"}
+           :valid-until-mss 0}}
+         {:operation :touch
+          :relationship
+          {:subject {:type :user :id "u"}
+           :relation :viewer}}]
         rejected-without-dispatch?
-        #(do
-           (reset! calls [])
-           (try
-             (eacl/write-relationships! writer [update])
-             false
-             (catch #?(:clj clojure.lang.ExceptionInfo
-                       :cljs cljs.core.ExceptionInfo) error
-               (and (= :eacl/invalid-relationship-qualifier
-                       (:type (ex-data error)))
-                    (empty? @calls)))))]
+        (fn [update]
+          (reset! calls [])
+          (try
+            (eacl/write-relationships! writer [update])
+            false
+            (catch #?(:clj clojure.lang.ExceptionInfo
+                      :cljs cljs.core.ExceptionInfo) error
+              (and (= :eacl/invalid-relationship-qualifier
+                      (:type (ex-data error)))
+                   (empty? @calls)))))]
     (and
-     (rejected-without-dispatch?)
+     (every? rejected-without-dispatch? updates)
      (false?
       (with-redefs [relationship-mutations/normalize-public-updates identity]
-        (rejected-without-dispatch?))))))
+        (every? rejected-without-dispatch? updates))))))
 
 (defn nil-public-object-delete-killed?
   []

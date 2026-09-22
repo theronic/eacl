@@ -16,5 +16,6 @@
  :closing-evidence
  ["PublicRequestBoundary.OpenNestedMutationAcceptsMalformedUpdate"
   "PublicRequestBoundary.StrictMutationRejectsMalformedNestedUpdate"
+  "PublicRequestBoundary.ClosedRelationshipWriteRejectsMissingRequiredFields"
   "eacl.formal.executed-mutation-controls/nested-relationship-update-validation-killed?"
   "eacl.core-test/nested-relationship-mutations-fail-before-protocol-dispatch-test"]}

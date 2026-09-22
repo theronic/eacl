@@ -268,11 +268,11 @@ pre-audit results above:
 
 | Gate | Result |
 | --- | --- |
-| Dafny | 61 modules, 9,611 solver proof efforts, 0 errors |
-| JVM public/backend/build suite | 1,564 tests, 169,835 assertions, 0 failures/errors |
+| Dafny | 61 modules, 9,612 solver proof efforts, 0 errors |
+| JVM public/backend/build suite | 1,546 tests, 154,582 assertions, 0 failures/errors |
 | Generated Java differential boundary | 52 tests, 18,280 assertions, 0 failures/errors |
 | Portable CLJS formal/generated-oracle boundary | 47 tests, 11,972 assertions, 0 failures/errors |
-| Minimized counterexample replay | 79 tests, 18,676 assertions, 0 failures/errors |
+| Minimized counterexample replay | 79 tests, 18,680 assertions, 0 failures/errors |
 | Mutation control | 3 tests, 221 assertions, 0 failures/errors; all 102 registered mutants remain covered |
 | Public source closure | 133 roots and 3,090 reachable definitions, with 0 forbidden-policy matches |
 

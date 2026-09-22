@@ -167,10 +167,18 @@ module PublicRequestBoundary {
     key.WriteExpiry?
   }
 
+  predicate RequiredRelationshipWriteKeysPresent(
+    keys: set<RelationshipWriteKey>
+  ) {
+    WriteOperation in keys && WriteSubject in keys &&
+    WriteRelation in keys && WriteResource in keys
+  }
+
   function ClosedRelationshipWrite(
     keys: set<RelationshipWriteKey>
   ): Validation {
-    if forall key :: key in keys ==> KnownRelationshipWriteKey(key)
+    if (forall key :: key in keys ==> KnownRelationshipWriteKey(key)) &&
+       RequiredRelationshipWriteKeysPresent(keys)
     then Accepted
     else Rejected
   }
@@ -192,6 +200,19 @@ module PublicRequestBoundary {
     ensures ClosedRelationshipWrite(
               {WriteOperation, WriteSubject, WriteRelation, WriteResource,
                MisspelledWriteExpiry}) == Rejected
+  {
+  }
+
+  lemma ClosedRelationshipWriteRejectsMissingRequiredFields()
+    ensures ClosedRelationshipWrite(
+              {WriteOperation, WriteRelation, WriteResource}
+            ) == Rejected
+    ensures ClosedRelationshipWrite(
+              {WriteOperation, WriteSubject, WriteResource}
+            ) == Rejected
+    ensures ClosedRelationshipWrite(
+              {WriteOperation, WriteSubject, WriteRelation}
+            ) == Rejected
   {
   }
 

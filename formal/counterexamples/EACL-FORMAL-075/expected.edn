@@ -12,4 +12,5 @@
   :tx-relationship]
  :dafny-obligations
  [:open-nested-mutation-accepts-malformed-update
-  :strict-mutation-rejects-malformed-nested-update]}
+  :strict-mutation-rejects-malformed-nested-update
+  :closed-relationship-write-rejects-missing-required-fields]}

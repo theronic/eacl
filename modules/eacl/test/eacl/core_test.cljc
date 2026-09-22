@@ -359,14 +359,19 @@
   (let [calls (atom [])
         acl (->RecordingAcl calls nil)
         snapshot (->PlanningSnapshot calls (atom false))
-        malformed
-        {:operation :touch
-         :relationship
-         {:subject {:type :user :id "user-1"}
-          :relation :viewer
-          :resource {:type :document :id "document-1"}
-          :valid-until-mss 1000}}]
-    (doseq [operation [#(eacl/write-relationships! acl [malformed])
+        malformed-updates
+        [{:operation :touch
+          :relationship
+          {:subject {:type :user :id "user-1"}
+           :relation :viewer
+           :resource {:type :document :id "document-1"}
+           :valid-until-mss 1000}}
+         {:operation :touch
+          :relationship
+          {:subject {:type :user :id "user-1"}
+           :relation :viewer}}]]
+    (doseq [malformed malformed-updates
+            operation [#(eacl/write-relationships! acl [malformed])
                        #(eacl/tx-relationships snapshot [malformed])]]
       (let [data (error-data operation)]
         (is (= :eacl/invalid-relationship-qualifier (:type data)))
