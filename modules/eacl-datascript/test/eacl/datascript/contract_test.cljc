@@ -2519,7 +2519,7 @@
      [cache/lookup-rendered-page!
       (fn [& args]
         (swap! lookups inc)
-        (apply original args))
+        (apply original args))]
       (doseq [object-id [deep-id wide-id]]
         (let [page
               (eacl/lookup-resources
@@ -2529,7 +2529,7 @@
                 :resource/type :server
                 :first 1})]
           (is (empty? (:data page)))
-          (is (false? (:cached? page)))))])
+          (is (false? (:cached? page))))))
     (is (zero? @lookups)
         "oversized IDs are rejected before hashing a rendered cache key")))
 
