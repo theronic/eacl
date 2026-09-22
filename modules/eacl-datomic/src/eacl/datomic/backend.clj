@@ -350,16 +350,13 @@
        :schema-generation (fn [] (certified-schema-generation db))
        :object-id->internal
        (fn [object-id]
-         ;; Shared orchestration uses internal numeric eids in cache-normalized
-         ;; engine requests, while permission-tree expansion resolves a public
-         ;; id directly through this operation. Preserve Datomic's historical
-         ;; numeric-eid convention before invoking the configurable public-id
-         ;; resolver; otherwise an already-resolved eid is encoded a second
-         ;; time (for example as [:eacl/id 1759]) and every point/list read
-         ;; becomes a false negative.
-         (if (number? object-id)
-           (d/entid db object-id)
-           ((or object-id->entid ddb/object-eid) db object-id)))
+         (if object-id->entid
+           (object-id->entid db object-id)
+           ;; Raw compatibility adapters still resolve application IDs by the
+           ;; stored EACL identity attribute. Numeric values are data here,
+           ;; never an implicit request to use a native Datomic entity ID.
+           (when (d/entid db :eacl/id)
+             (d/entid db [:eacl/id object-id]))))
        :internal-id->object (fn [internal-id] (external-id db internal-id))
        :relation-defs
        (fn [resource-type relation-name]

@@ -138,7 +138,23 @@
     :EACL-FORMAL-066
     eacl.engine.stable-reducer-test/frozen-baseline-denotation-differential-test
     :EACL-FORMAL-067
-    eacl.datomic.recursive-cache-test/recursive-page-order-is-stable-across-scan-wave-boundaries-test})
+    eacl.datomic.recursive-cache-test/recursive-page-order-is-stable-across-scan-wave-boundaries-test
+    :EACL-FORMAL-068
+    eacl.datascript.contract-test/representation-sensitive-identities-do-not-alias-batch-decisions-or-writes-test
+    :EACL-FORMAL-069
+    eacl.datascript.contract-test/public-request-shapes-fail-closed-before-datascript-mutation-test
+    :EACL-FORMAL-070
+    eacl.datascript.contract-test/public-request-shapes-fail-closed-before-datascript-mutation-test
+    :EACL-FORMAL-071
+    eacl.datascript.contract-test/false-valued-public-identities-remain-present-across-inspection-test
+    :EACL-FORMAL-072
+    eacl.datascript.contract-test/numeric-public-identities-never-become-native-cursor-eids-test
+    :EACL-FORMAL-073
+    eacl.datascript.contract-test/unsupported-subject-relations-never-degrade-to-base-objects-test
+    :EACL-FORMAL-074
+    eacl.core-test/missing-public-read-keys-fail-before-dispatch-test
+    :EACL-FORMAL-075
+    eacl.core-test/nested-relationship-mutations-fail-before-protocol-dispatch-test})
 
 (defn- read-edn
   [path]

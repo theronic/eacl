@@ -194,18 +194,27 @@
     frontier
     (f frontier)))
 
+(defn ^:no-doc public-id-present?
+  "True for every admitted public ID, including boolean false.
+
+  Public object validation rejects nil, not false. Keeping this predicate
+  named prevents cursor and relationship-filter paths from drifting back to
+  Clojure truthiness and treating a valid external identity as omission."
+  [value]
+  (some? value))
+
 (defn default-internal-cursor->spice
   [db {:keys [entid->object-id]} cursor]
   (when cursor
     (cond
       (= 3 (:v cursor))
       (cond-> cursor
-        (:subject cursor) (update :subject #(entid->object-id db %))
-        (:resource cursor) (update :resource #(entid->object-id db %)))
+        (public-id-present? (:subject cursor)) (update :subject #(entid->object-id db %))
+        (public-id-present? (:resource cursor)) (update :resource #(entid->object-id db %)))
 
       (= 2 (:v cursor))
       (cond-> cursor
-        (:e cursor) (update :e #(entid->object-id db %))
+        (public-id-present? (:e cursor)) (update :e #(entid->object-id db %))
         (:p cursor) (update :p
                             (fn [p]
                               (into {}
@@ -225,12 +234,12 @@
     (cond
       (= 3 (:v cursor))
       (cond-> cursor
-        (:subject cursor) (update :subject #(object-id->entid db %))
-        (:resource cursor) (update :resource #(object-id->entid db %)))
+        (public-id-present? (:subject cursor)) (update :subject #(object-id->entid db %))
+        (public-id-present? (:resource cursor)) (update :resource #(object-id->entid db %)))
 
       (= 2 (:v cursor))
       (cond-> cursor
-        (:e cursor) (update :e #(object-id->entid db %))
+        (public-id-present? (:e cursor)) (update :e #(object-id->entid db %))
         (:p cursor) (update :p
                             (fn [p]
                               (into {}
@@ -466,62 +475,62 @@
 (defn- with-selected-context
   [api source opts consistency-value f]
   (let [ledger (or (:request-counter-ledger opts)
-                     request-counters/*ledger*
-                     (request-counters/make-ledger))
-          opts (assoc opts :request-counter-ledger ledger)]
-      (request-counters/call-with-ledger
-       ledger
-       (fn []
-         (request-counters/add! :public-entries)
-         (request-counters/add! :contract-normalizations)
-         (let [retained-basis (::retained-basis opts)
-               context
-               (if retained-basis
-                 (let [selected (:selected-snapshot retained-basis)
-                       _ (when selected
-                           (source/assert-open! selected))
-                       adapter (:adapter retained-basis)
-                       identity (:identity retained-basis)
-                       runtime
-                       (assoc opts
-                              ::selection
-                              (or (::retained-read-selection opts)
-                                  (:selection retained-basis))
-                              ::historical-basis?
-                              (:historical-basis? retained-basis)
-                              ::completed-cache?
-                              (:completed-cache-request? opts))]
+                   request-counters/*ledger*
+                   (request-counters/make-ledger))
+        opts (assoc opts :request-counter-ledger ledger)]
+    (request-counters/call-with-ledger
+     ledger
+     (fn []
+       (request-counters/add! :public-entries)
+       (request-counters/add! :contract-normalizations)
+       (let [retained-basis (::retained-basis opts)
+             context
+             (if retained-basis
+               (let [selected (:selected-snapshot retained-basis)
+                     _ (when selected
+                         (source/assert-open! selected))
+                     adapter (:adapter retained-basis)
+                     identity (:identity retained-basis)
+                     runtime
+                     (assoc opts
+                            ::selection
+                            (or (::retained-read-selection opts)
+                                (:selection retained-basis))
+                            ::historical-basis?
+                            (:historical-basis? retained-basis)
+                            ::completed-cache?
+                            (:completed-cache-request? opts))]
                    ;; A per-read context borrows the retained basis. Ownership
                    ;; remains with the public Snapshot until eacl/release!.
-                   (request-context/make-context
-                    {:runtime runtime
-                     :adapter adapter
-                     :selected-snapshot nil
-                     :basis-identity identity
-                     :contract (:execution-contract opts)
-                     :caveat-context (::caveat-context opts)
-                     :qualification-options (qualification-options opts)
-                     :derived-registry (:derived-schema-caches opts)
-                     :counter-ledger ledger
-                     :proof-diagnostic-fn
-                     (when (:completed-cache-request? opts)
-                       (fn [diagnostic]
-                         (cache/record-proof-diagnostic!
-                          (:basis-cache-store opts)
-                          diagnostic)))}))
-                 (selected-context api source opts consistency-value))]
-           (try
-             (request-context/call-with-context
-              context
-              (fn [request-context]
-                (binding [engine/*scan-cache*
-                          (scan-cache-context opts request-context)]
-                  (if-let [observer (:io-observer opts)]
-                    (observe-request observer opts ledger
-                                     #(f request-context))
-                    (f request-context)))))
-             (finally
-               (request-context/close! context))))))))
+                 (request-context/make-context
+                  {:runtime runtime
+                   :adapter adapter
+                   :selected-snapshot nil
+                   :basis-identity identity
+                   :contract (:execution-contract opts)
+                   :caveat-context (::caveat-context opts)
+                   :qualification-options (qualification-options opts)
+                   :derived-registry (:derived-schema-caches opts)
+                   :counter-ledger ledger
+                   :proof-diagnostic-fn
+                   (when (:completed-cache-request? opts)
+                     (fn [diagnostic]
+                       (cache/record-proof-diagnostic!
+                        (:basis-cache-store opts)
+                        diagnostic)))}))
+               (selected-context api source opts consistency-value))]
+         (try
+           (request-context/call-with-context
+            context
+            (fn [request-context]
+              (binding [engine/*scan-cache*
+                        (scan-cache-context opts request-context)]
+                (if-let [observer (:io-observer opts)]
+                  (observe-request observer opts ledger
+                                   #(f request-context))
+                  (f request-context)))))
+           (finally
+             (request-context/close! context))))))))
 
 (defn- context-runtime
   [context]
@@ -614,8 +623,7 @@
   (when (and (map? object)
              (keyword? (:type object))
              (some? (:id object))
-             (or (nil? (:relation object))
-                 (keyword? (:relation object)))
+             (nil? (:relation object))
              (cache/canonical-cursor-identity? (:id object)))
     {:type (:type object)
      :id (:id object)
@@ -940,21 +948,21 @@
   [opts operation query]
   (let [contract (:execution-contract opts)]
     (cond-> {:operation operation
-     :query query
-     :evaluation (:evaluation contract)
-     :demand (:demand contract)
+             :query query
+             :evaluation (:evaluation contract)
+             :demand (:demand contract)
      ;; Aggregate limits can affect returned page boundaries (for example
      ;; candidate-window exhaustion), not merely work cost.
-     :aggregate-limits (:aggregate-limits contract)
-     :engine-version engine/engine-version
-     :order-abi engine/stable-order-abi
-     :compiler-plan-compatibility engine/compiler-plan-compatibility
-     :cache-value-abi completed-cache-value-abi
-     :adapter-fingerprint (:adapter-fingerprint opts)
-     :identity-contract (:identity-contract opts)
-     :recursive-traversal-limits (:recursive-traversal-limits opts)
-     :expression-limits (:expression-limits opts)
-     :permission-tree-limits (:permission-tree-limits opts)}
+             :aggregate-limits (:aggregate-limits contract)
+             :engine-version engine/engine-version
+             :order-abi engine/stable-order-abi
+             :compiler-plan-compatibility engine/compiler-plan-compatibility
+             :cache-value-abi completed-cache-value-abi
+             :adapter-fingerprint (:adapter-fingerprint opts)
+             :identity-contract (:identity-contract opts)
+             :recursive-traversal-limits (:recursive-traversal-limits opts)
+             :expression-limits (:expression-limits opts)
+             :permission-tree-limits (:permission-tree-limits opts)}
       engine/*qualification*
       (assoc :qualification (qualification/exact-reuse-identity engine/*qualification*)))))
 
@@ -1572,7 +1580,7 @@
                               execution/*contract* contract
                               subproblem/*decision-kernel*
                               (:decision-kernel opts)]
-                      (engine/can?
+                      (engine/can-eids?
                        adapter internal-subject permission endpoint))))]
             (batch/check-aggregate-limits! limits (counters 0) nil)
             allowed?))]
@@ -1657,10 +1665,10 @@
                                               subject-id (:subject/id filters)
                                               resource-id (:resource/id filters)
                                               subject-eid
-                                              (when subject-id
+                                              (when (public-id-present? subject-id)
                                                 (object-id->entid page-db subject-id))
                                               resource-eid
-                                              (when resource-id
+                                              (when (public-id-present? resource-id)
                                                 (object-id->entid page-db resource-id))
                                               internal-query
                                               (-> page-query
@@ -1669,10 +1677,10 @@
                                                           :cancellation-token :aggregate-limits
                                                           :authorization :relationship-state)
                                                   (cond->
-                                                   subject-id (assoc :subject/id subject-eid)
-                                                   resource-id (assoc :resource/id resource-eid)))]
-                                          (if (or (and subject-id (nil? subject-eid))
-                                                  (and resource-id (nil? resource-eid)))
+                                                   (public-id-present? subject-id) (assoc :subject/id subject-eid)
+                                                   (public-id-present? resource-id) (assoc :resource/id resource-eid)))]
+                                          (if (or (and (public-id-present? subject-id) (nil? subject-eid))
+                                                  (and (public-id-present? resource-id) (nil? resource-eid)))
                                             (do
                                               (call-with-request-schema-cache cursor-opts validate!)
                                               (if (cursor-request? filters)
@@ -1850,7 +1858,9 @@
                    :evaluation (get-in opts [:execution-contract :evaluation])}
             engine/*qualification*
             (merge (authorization-result/check-result (evidence/decode (get-in answer [:value :value]))))))
-        check-point (if engine/*qualification* engine/check-evidence engine/can?)]
+        check-point (if engine/*qualification*
+                      engine/check-evidence-eids
+                      engine/can-eids?)]
     (if public-key?
       ;; Exact lookup precedes the compute closure, so a warm point decision
       ;; performs no Datomic/Dynamo identity lookup. Managed reuse is safe only
@@ -1917,6 +1927,17 @@
    ledger-before (request-counters/snapshot ledger)
    output-units))
 
+(defn- batch-demand-memo-key
+  "Returns a request-local memo key only when public identity representation
+  is canonical and the selected adapter certifies immutable/injective public
+  identities. Noncanonical custom IDs are evaluated independently."
+  [adapter {:keys [subject permission resource]}]
+  (let [subject (canonical-public-object-identity subject)
+        resource (canonical-public-object-identity resource)]
+    (when (and subject resource (public-answer-key-eligible? adapter))
+      (batch/demand-key
+       {:subject subject :permission permission :resource resource}))))
+
 (defn check-permissions
   [api source opts request]
   (let [request (batch/validate-request! request (:aggregate-limits opts))
@@ -1952,6 +1973,7 @@
                      ledger-before (request-counters/snapshot ledger)
                      work-stats (atom {})
                      work-before @work-stats
+                     adapter (request-context/adapter request-context)
                      counters-fn
                      #(batch-counters
                        work-before work-stats ledger-before ledger %)
@@ -1980,11 +2002,16 @@
                                 #(counters-fn index))
                                (let [{:keys [subject permission resource]}
                                      demand]
-                                 (request-context/memoized!
-                                  request-context
-                                  :decisions
-                                  (batch/demand-key demand)
-                                  #(check-permission-in-context
+                                 (if-let [memo-key
+                                          (batch-demand-memo-key adapter demand)]
+                                   (request-context/memoized!
+                                    request-context
+                                    :decisions
+                                    memo-key
+                                    #(check-permission-in-context
+                                      api scalar-opts request-context
+                                      subject permission resource))
+                                   (check-permission-in-context
                                     api scalar-opts request-context
                                     subject permission resource)))
                                (catch #?(:clj Throwable :cljs :default) error
@@ -2120,8 +2147,8 @@
                     execution/*contract* contract
                     subproblem/*decision-kernel* (:decision-kernel opts)]
             ((case operation
-               :lookup-resources engine/lookup-resources
-               :lookup-subjects engine/lookup-subjects)
+               :lookup-resources engine/lookup-resources-eids
+               :lookup-subjects engine/lookup-subjects-eids)
              adapter internal-query engine-options))
           _ (batch/check-aggregate-limits!
              limits (counters (count (:data internal-page))) nil)]
@@ -2142,100 +2169,100 @@
                   request-context opts :lookup-resources query)]
           rendered-hit
           (with-page-context
-          request-context opts :lookup-resources query
-          (:resource/type query) (:permission query)
-          (when-let [{:keys [relation subject]}
-                     (:resource/relationship query)]
-            {:resource-type (:resource/type query)
-             :relation relation
-             :subject-type (:type subject)})
-          (fn [{request-context :request-context
-                adapter :adapter selected-db :db cursor-opts :opts
-                page-query :query
-                deferred-boundary?
-                :deferred-cursor-edge-internalization?}]
-            (let [validate!
-                  (fn []
-                    (let [schema (request-schema api selected-db)]
-                      (schema-errors/validate-permission-request!
-                       schema
-                       :lookup-resources
-                       {:resource-type (:resource/type query)
-                        :subject-type (:type subject)
-                        :permission (:permission query)})
-                      (schema-errors/validate-lookup-relationship!
-                       schema :lookup-resources query)))
-                  rendered-cache
-                  (rendered-page-cache-context
-                   adapter cursor-opts :lookup-resources query)
-                  rendered-hit
-                  (lookup-rendered-page cursor-opts rendered-cache)]
-              (if rendered-hit
-                (public-page-from-rendered
-                 cursor-opts (:value rendered-hit) rendered-hit)
-                (let [page-query
-                      (if deferred-boundary?
-                        (relay/internalize-prepared-page-query
-                         adapter page-query)
-                        page-query)
-                      internal-subject
-                      (spice-object->internal selected-db subject)]
-                  (if (nil? (:id internal-subject))
-                    (do
-                      (call-with-request-schema-cache cursor-opts validate!)
-                      (if (cursor-request? query)
-                        (stale-cursor-anchor! :lookup-resources)
-                        (assoc relay/empty-page
-                               :cached? false :cache-basis nil)))
-                    (let [internal-query
-                          (-> page-query
-                              (dissoc :consistency :cache? :populate-cache?
-                                      :evaluation :timeout-ms
-                                      :cancellation-token :aggregate-limits
-                                      :resource/relationship)
-                              (assoc :subject internal-subject))
-                          answer-opts
-                          (cond-> cursor-opts
-                            rendered-cache
-                            (assoc ::populate-exact-answer? false))
-                          compute-query
-                          (fn [internal-query]
-                            (validate!)
-                            (engine/lookup-resources
-                             adapter
-                             internal-query
-                             {:continuation-cache-fn
-                              (fn []
-                                (continuation-context
-                                 adapter cursor-opts
-                                 :lookup-resources query))}))
-                          compute
-                          (if (:resource/relationship query)
-                            #(relationship-filtered-lookup-page
-                              api opts request-context adapter selected-db
-                              cursor-opts :lookup-resources query
-                              internal-query validate!)
-                            #(compute-query internal-query))
-                          answer-opts
-                          (if (:resource/relationship query)
+            request-context opts :lookup-resources query
+            (:resource/type query) (:permission query)
+            (when-let [{:keys [relation subject]}
+                       (:resource/relationship query)]
+              {:resource-type (:resource/type query)
+               :relation relation
+               :subject-type (:type subject)})
+            (fn [{request-context :request-context
+                  adapter :adapter selected-db :db cursor-opts :opts
+                  page-query :query
+                  deferred-boundary?
+                  :deferred-cursor-edge-internalization?}]
+              (let [validate!
+                    (fn []
+                      (let [schema (request-schema api selected-db)]
+                        (schema-errors/validate-permission-request!
+                         schema
+                         :lookup-resources
+                         {:resource-type (:resource/type query)
+                          :subject-type (:type subject)
+                          :permission (:permission query)})
+                        (schema-errors/validate-lookup-relationship!
+                         schema :lookup-resources query)))
+                    rendered-cache
+                    (rendered-page-cache-context
+                     adapter cursor-opts :lookup-resources query)
+                    rendered-hit
+                    (lookup-rendered-page cursor-opts rendered-cache)]
+                (if rendered-hit
+                  (public-page-from-rendered
+                   cursor-opts (:value rendered-hit) rendered-hit)
+                  (let [page-query
+                        (if deferred-boundary?
+                          (relay/internalize-prepared-page-query
+                           adapter page-query)
+                          page-query)
+                        internal-subject
+                        (spice-object->internal selected-db subject)]
+                    (if (nil? (:id internal-subject))
+                      (do
+                        (call-with-request-schema-cache cursor-opts validate!)
+                        (if (cursor-request? query)
+                          (stale-cursor-anchor! :lookup-resources)
+                          (assoc relay/empty-page
+                                 :cached? false :cache-basis nil)))
+                      (let [internal-query
+                            (-> page-query
+                                (dissoc :consistency :cache? :populate-cache?
+                                        :evaluation :timeout-ms
+                                        :cancellation-token :aggregate-limits
+                                        :resource/relationship)
+                                (assoc :subject internal-subject))
                             answer-opts
-                            (assoc answer-opts ::continuation-compute
-                                   (continuation-compute-fn
-                                    compute-query internal-query)))
-                          answer
-                          (cached-engine-result
-                           request-context adapter answer-opts
-                           :lookup-resources
-                           (cache/lookup-page-query-identity
-                            query internal-query)
-                           (:resource/type internal-query)
-                           (:permission internal-query)
-                           compute)]
-                      (binding [subproblem/*decision-kernel*
-                                (:decision-kernel cursor-opts)]
-                        (render-and-cache-page
-                         adapter cursor-opts :lookup-resources query
-                         rendered-cache answer))))))))))))))
+                            (cond-> cursor-opts
+                              rendered-cache
+                              (assoc ::populate-exact-answer? false))
+                            compute-query
+                            (fn [internal-query]
+                              (validate!)
+                              (engine/lookup-resources-eids
+                               adapter
+                               internal-query
+                               {:continuation-cache-fn
+                                (fn []
+                                  (continuation-context
+                                   adapter cursor-opts
+                                   :lookup-resources query))}))
+                            compute
+                            (if (:resource/relationship query)
+                              #(relationship-filtered-lookup-page
+                                api opts request-context adapter selected-db
+                                cursor-opts :lookup-resources query
+                                internal-query validate!)
+                              #(compute-query internal-query))
+                            answer-opts
+                            (if (:resource/relationship query)
+                              answer-opts
+                              (assoc answer-opts ::continuation-compute
+                                     (continuation-compute-fn
+                                      compute-query internal-query)))
+                            answer
+                            (cached-engine-result
+                             request-context adapter answer-opts
+                             :lookup-resources
+                             (cache/lookup-page-query-identity
+                              query internal-query)
+                             (:resource/type internal-query)
+                             (:permission internal-query)
+                             compute)]
+                        (binding [subproblem/*decision-kernel*
+                                  (:decision-kernel cursor-opts)]
+                          (render-and-cache-page
+                           adapter cursor-opts :lookup-resources query
+                           rendered-cache answer))))))))))))))
 
 (defn count-resources
   [api source
@@ -2273,7 +2300,7 @@
                             (dissoc :consistency :cache? :populate-cache?
                                     :evaluation :timeout-ms
                                     :cancellation-token))]
-                    (engine/count-resources adapter internal-query))
+                    (engine/count-resources-eids adapter internal-query))
                   (empty-answer)))]
           (if public-key?
             (let [public-query
@@ -2310,7 +2337,7 @@
                        (:permission internal-query)
                        #(do
                           (validate!)
-                          (engine/count-resources adapter internal-query)))]
+                          (engine/count-resources-eids adapter internal-query)))]
                   (with-cache-info (:value answer) answer))))))))))
 
 (defn lookup-subjects
@@ -2328,100 +2355,100 @@
                   request-context opts :lookup-subjects query)]
           rendered-hit
           (with-page-context
-          request-context opts :lookup-subjects query
-          (:type (:resource query)) (:permission query)
-          (when-let [{:keys [relation resource]}
-                     (:subject/relationship query)]
-            {:resource-type (:type resource)
-             :relation relation
-             :subject-type (:subject/type query)})
-          (fn [{request-context :request-context
-                adapter :adapter selected-db :db cursor-opts :opts
-                page-query :query
-                deferred-boundary?
-                :deferred-cursor-edge-internalization?}]
-            (let [validate!
-                  (fn []
-                    (let [schema (request-schema api selected-db)]
-                      (schema-errors/validate-permission-request!
-                       schema
-                       :lookup-subjects
-                       {:resource-type (:type (:resource query))
-                        :subject-type (:subject/type query)
-                        :permission (:permission query)})
-                      (schema-errors/validate-lookup-relationship!
-                       schema :lookup-subjects query)))
-                  rendered-cache
-                  (rendered-page-cache-context
-                   adapter cursor-opts :lookup-subjects query)
-                  rendered-hit
-                  (lookup-rendered-page cursor-opts rendered-cache)]
-              (if rendered-hit
-                (public-page-from-rendered
-                 cursor-opts (:value rendered-hit) rendered-hit)
-                (let [page-query
-                      (if deferred-boundary?
-                        (relay/internalize-prepared-page-query
-                         adapter page-query)
-                        page-query)
-                      internal-resource
-                      (spice-object->internal selected-db (:resource query))]
-                  (if-not (:id internal-resource)
-                    (do
-                      (call-with-request-schema-cache cursor-opts validate!)
-                      (if (cursor-request? query)
-                        (stale-cursor-anchor! :lookup-subjects)
-                        (assoc relay/empty-page
-                               :cached? false :cache-basis nil)))
-                    (let [internal-query
-                          (-> page-query
-                              (dissoc :consistency :cache? :populate-cache?
-                                      :evaluation :timeout-ms
-                                      :cancellation-token :aggregate-limits
-                                      :subject/relationship)
-                              (assoc :resource internal-resource))
-                          answer-opts
-                          (cond-> cursor-opts
-                            rendered-cache
-                            (assoc ::populate-exact-answer? false))
-                          compute-query
-                          (fn [internal-query]
-                            (validate!)
-                            (engine/lookup-subjects
-                             adapter
-                             internal-query
-                             {:continuation-cache-fn
-                              (fn []
-                                (continuation-context
-                                 adapter cursor-opts
-                                 :lookup-subjects query))}))
-                          compute
-                          (if (:subject/relationship query)
-                            #(relationship-filtered-lookup-page
-                              api opts request-context adapter selected-db
-                              cursor-opts :lookup-subjects query
-                              internal-query validate!)
-                            #(compute-query internal-query))
-                          answer-opts
-                          (if (:subject/relationship query)
+            request-context opts :lookup-subjects query
+            (:type (:resource query)) (:permission query)
+            (when-let [{:keys [relation resource]}
+                       (:subject/relationship query)]
+              {:resource-type (:type resource)
+               :relation relation
+               :subject-type (:subject/type query)})
+            (fn [{request-context :request-context
+                  adapter :adapter selected-db :db cursor-opts :opts
+                  page-query :query
+                  deferred-boundary?
+                  :deferred-cursor-edge-internalization?}]
+              (let [validate!
+                    (fn []
+                      (let [schema (request-schema api selected-db)]
+                        (schema-errors/validate-permission-request!
+                         schema
+                         :lookup-subjects
+                         {:resource-type (:type (:resource query))
+                          :subject-type (:subject/type query)
+                          :permission (:permission query)})
+                        (schema-errors/validate-lookup-relationship!
+                         schema :lookup-subjects query)))
+                    rendered-cache
+                    (rendered-page-cache-context
+                     adapter cursor-opts :lookup-subjects query)
+                    rendered-hit
+                    (lookup-rendered-page cursor-opts rendered-cache)]
+                (if rendered-hit
+                  (public-page-from-rendered
+                   cursor-opts (:value rendered-hit) rendered-hit)
+                  (let [page-query
+                        (if deferred-boundary?
+                          (relay/internalize-prepared-page-query
+                           adapter page-query)
+                          page-query)
+                        internal-resource
+                        (spice-object->internal selected-db (:resource query))]
+                    (if-not (:id internal-resource)
+                      (do
+                        (call-with-request-schema-cache cursor-opts validate!)
+                        (if (cursor-request? query)
+                          (stale-cursor-anchor! :lookup-subjects)
+                          (assoc relay/empty-page
+                                 :cached? false :cache-basis nil)))
+                      (let [internal-query
+                            (-> page-query
+                                (dissoc :consistency :cache? :populate-cache?
+                                        :evaluation :timeout-ms
+                                        :cancellation-token :aggregate-limits
+                                        :subject/relationship)
+                                (assoc :resource internal-resource))
                             answer-opts
-                            (assoc answer-opts ::continuation-compute
-                                   (continuation-compute-fn
-                                    compute-query internal-query)))
-                          answer
-                          (cached-engine-result
-                           request-context adapter answer-opts
-                           :lookup-subjects
-                           (cache/lookup-page-query-identity
-                            query internal-query)
-                           (:type (:resource internal-query))
-                           (:permission internal-query)
-                           compute)]
-                      (binding [subproblem/*decision-kernel*
-                                (:decision-kernel cursor-opts)]
-                        (render-and-cache-page
-                         adapter cursor-opts :lookup-subjects query
-                         rendered-cache answer))))))))))))))
+                            (cond-> cursor-opts
+                              rendered-cache
+                              (assoc ::populate-exact-answer? false))
+                            compute-query
+                            (fn [internal-query]
+                              (validate!)
+                              (engine/lookup-subjects-eids
+                               adapter
+                               internal-query
+                               {:continuation-cache-fn
+                                (fn []
+                                  (continuation-context
+                                   adapter cursor-opts
+                                   :lookup-subjects query))}))
+                            compute
+                            (if (:subject/relationship query)
+                              #(relationship-filtered-lookup-page
+                                api opts request-context adapter selected-db
+                                cursor-opts :lookup-subjects query
+                                internal-query validate!)
+                              #(compute-query internal-query))
+                            answer-opts
+                            (if (:subject/relationship query)
+                              answer-opts
+                              (assoc answer-opts ::continuation-compute
+                                     (continuation-compute-fn
+                                      compute-query internal-query)))
+                            answer
+                            (cached-engine-result
+                             request-context adapter answer-opts
+                             :lookup-subjects
+                             (cache/lookup-page-query-identity
+                              query internal-query)
+                             (:type (:resource internal-query))
+                             (:permission internal-query)
+                             compute)]
+                        (binding [subproblem/*decision-kernel*
+                                  (:decision-kernel cursor-opts)]
+                          (render-and-cache-page
+                           adapter cursor-opts :lookup-subjects query
+                           rendered-cache answer))))))))))))))
 
 (defn count-subjects
   [api source
@@ -2460,7 +2487,7 @@
                             (dissoc :consistency :cache? :populate-cache?
                                     :evaluation :timeout-ms
                                     :cancellation-token))]
-                    (engine/count-subjects adapter internal-query))
+                    (engine/count-subjects-eids adapter internal-query))
                   (empty-answer)))]
           (if public-key?
             (let [public-query
@@ -2497,7 +2524,7 @@
                        (:permission internal-query)
                        #(do
                           (validate!)
-                          (engine/count-subjects adapter internal-query)))]
+                          (engine/count-subjects-eids adapter internal-query)))]
                   (with-cache-info (:value answer) answer))))))))))
 
 (defn expand-permission-tree
@@ -3145,6 +3172,7 @@
   IAuthorizationReader
   (-check-permission [_ {:keys [subject permission resource consistency]
                          :as request}]
+    (eacl/validate-reader-request! :check-permission request)
     (let [read-opts (snapshot-read-opts runtime basis request)
           {:keys [cache-enabled? populate-cache?]}
           (request-cache-controls request)]
@@ -3159,10 +3187,12 @@
        subject permission resource
        (or consistency consistency/minimize-latency))))
   (-read-schema [_ request]
+    (eacl/validate-reader-request! :read-schema request)
     (read-current-schema api nil
                          (snapshot-read-opts runtime basis request)
                          request))
   (-read-relationships [_ request]
+    (eacl/validate-reader-request! :read-relationships request)
     (let [read-opts (snapshot-read-opts runtime basis request)
           {:keys [cache-enabled? populate-cache?]}
           (request-cache-controls request)]
@@ -3174,6 +3204,7 @@
               (snapshot-populate-cache? basis populate-cache?))
        (dissoc request :cache? :populate-cache?))))
   (-lookup-resources [_ request]
+    (eacl/validate-reader-request! :lookup-resources request)
     (let [read-opts (snapshot-read-opts runtime basis request)
           {:keys [cache-enabled? populate-cache?]}
           (request-cache-controls request)]
@@ -3186,6 +3217,7 @@
               :continuation-cache-request? cache-enabled?)
        (dissoc request :cache? :populate-cache?))))
   (-lookup-subjects [_ request]
+    (eacl/validate-reader-request! :lookup-subjects request)
     (let [read-opts (snapshot-read-opts runtime basis request)
           {:keys [cache-enabled? populate-cache?]}
           (request-cache-controls request)]
@@ -3198,6 +3230,7 @@
               :continuation-cache-request? cache-enabled?)
        (dissoc request :cache? :populate-cache?))))
   (-count-resources [_ request]
+    (eacl/validate-reader-request! :count-resources request)
     (let [read-opts (snapshot-read-opts runtime basis request)
           {:keys [cache-enabled? populate-cache?]}
           (request-cache-controls request)]
@@ -3209,6 +3242,7 @@
               (snapshot-populate-cache? basis populate-cache?))
        (dissoc request :cache? :populate-cache?))))
   (-count-subjects [_ request]
+    (eacl/validate-reader-request! :count-subjects request)
     (let [read-opts (snapshot-read-opts runtime basis request)
           {:keys [cache-enabled? populate-cache?]}
           (request-cache-controls request)]
@@ -3220,6 +3254,7 @@
               (snapshot-populate-cache? basis populate-cache?))
        (dissoc request :cache? :populate-cache?))))
   (-expand-permission-tree [_ request]
+    (eacl/validate-reader-request! :expand-permission-tree request)
     (let [read-opts (snapshot-read-opts runtime basis request)
           {:keys [cache-enabled? populate-cache?]}
           (request-cache-controls request)]
@@ -3324,6 +3359,91 @@
      :actual actual
      :maximum (backend-writer/max-transaction-size writer)})))
 
+(defn- invalid-public-request!
+  [operation message data]
+  (throw
+   (ex-info
+    message
+    (merge {:type :eacl/invalid-request
+            :eacl/error :eacl/invalid-request
+            :operation operation}
+           data))))
+
+(defn- validate-closed-request!
+  [operation request required-keys known-keys]
+  (when-not (map? request)
+    (invalid-public-request!
+     operation "A public operation requires a request map."
+     {:reason :invalid-request-shape :value request}))
+  (when-let [unknown-keys (seq (remove known-keys (keys request)))]
+    (invalid-public-request!
+     operation "A public operation received unknown request keys."
+     {:reason :unknown-request-key
+      :unknown-keys (vec unknown-keys)
+      :known-keys known-keys}))
+  (when-let [missing-keys
+             (seq (remove #(contains? request %) required-keys))]
+    (invalid-public-request!
+     operation "A public operation is missing required request keys."
+     {:reason :missing-request-key
+      :missing-keys (vec missing-keys)}))
+  request)
+
+(defn- validate-update-request!
+  [operation request]
+  (validate-closed-request!
+   operation request #{:updates} #{:updates :tx-data})
+  (when-not (sequential? (:updates request))
+    (invalid-public-request!
+     operation ":updates must be a sequential collection."
+     {:reason :invalid-request-shape
+      :position :updates
+      :value (:updates request)}))
+  request)
+
+(defn- validate-delete-object-request!
+  [request]
+  (validate-closed-request!
+   :delete-object! request #{} #{:object :native-eid})
+  (when (= (contains? request :object)
+           (contains? request :native-eid))
+    (invalid-public-request!
+     :delete-object!
+     "Object deletion requires exactly one public object or native entity ID."
+     {:reason :ambiguous-object-identity
+      :present-keys (vec (filter #(contains? request %)
+                                 [:object :native-eid]))}))
+  (when (contains? request :object)
+    (let [object (:object request)]
+      (when-not (and (map? object)
+                     (every? #{:type :id :relation} (keys object))
+                     (keyword? (:type object))
+                     (contains? object :id)
+                     (some? (:id object)))
+        (invalid-public-request!
+         :delete-object!
+         "Object deletion requires a typed public object with a non-nil ID."
+         {:reason :invalid-object-shape
+          :position :object
+          :value object}))
+      (when (some? (:relation object))
+        (invalid-public-request!
+         :delete-object!
+         "EACL does not support subject#relation object identities."
+         {:reason :unsupported-subject-relation
+          :position :object
+          :relation (:relation object)}))))
+  request)
+
+(defn ^:no-doc validate-public-snapshot-options!
+  "Rejects protocol-level attempts to replace trusted client dependencies.
+
+  The public snapshot API has no options map. The protocol retains its legacy
+  arity for implementers, but the shared client accepts only the empty map."
+  [options]
+  (validate-closed-request! :snapshot options #{} #{})
+  options)
+
 (defn- call-with-writer-basis
   [writer f]
   (let [{:keys [source api]} (backend-writer/state writer)
@@ -3375,13 +3495,11 @@
                                   (:type (:subject relationship))
                                   :relation (:relation relationship)}))
                               internal-updates
-                              (S/transform
-                               [S/ALL :relationship]
-                               #(spice-relationship->internal db options %)
-                               updates)
-                              _
-                              (relationship-mutations/validate-batch!
-                               internal-updates)
+                              (relationship-mutations/coalesce-updates
+                               (S/transform
+                                [S/ALL :relationship]
+                                #(spice-relationship->internal db options %)
+                                updates))
                               raw-tx
                               (->> internal-updates
                                    (mapcat #(plan-update db %))
@@ -3488,8 +3606,10 @@
           (:value outcome))))))
 
 (defn- writer-write-relationships!
-  [writer {:keys [updates tx-data] :or {tx-data []}}]
-  (let [updates (relationship-mutations/normalize-updates (vec updates))
+  [writer request]
+  (validate-update-request! :write-relationships! request)
+  (let [{:keys [updates tx-data] :or {tx-data []}} request
+        updates (relationship-mutations/normalize-public-updates (vec updates))
         app-datoms (qualified-writes/application-datoms tx-data #{})]
     (when (and (not *qualified-authorization-enabled?*)
                (some #(seq (select-keys (:relationship %) relationship-mutations/qualifier-keys)) updates))
@@ -3565,8 +3685,10 @@
 (defn- writer-delete-object!
   "Removes every relationship touching object in final-transaction-bounded
   batches. Each contention retry reacquires and replans from a fresh basis."
-  [writer object]
-  (let [{:keys [api qualified-writer]} (backend-writer/state writer)
+  [writer request]
+  (validate-delete-object-request! request)
+  (let [{:keys [object native-eid]} request
+        {:keys [api qualified-writer]} (backend-writer/state writer)
         native-writer (when *qualified-authorization-enabled?*
                         (or (some-> qualified-writer deref)
                             (typed-capability-error! :qualified-relationship-publication (:backend-id api))))
@@ -3589,14 +3711,9 @@
                               writer
                               (fn [{:keys [db selection]}]
                                 (let [object-eid
-                                      (or
-                                       (try
-                                         ((:object->entid options) db object)
-                                         (catch #?(:clj Throwable
-                                                   :cljs :default) _
-                                           nil))
-                                       (when (number? (:id object))
-                                         (:id object)))
+                                      (if (some? native-eid)
+                                        native-eid
+                                        ((:object->entid options) db object))
                                       fitted
                                       (largest-fitting-prepared-batch
                                        writer db
@@ -3649,6 +3766,9 @@
 
 (defn- write-schema-through!
   [writer {:keys [schema] :as request}]
+  (validate-closed-request!
+   :write-schema! request #{:schema}
+   #{:schema :orphan-policy})
   (when (= :retain-inert (:orphan-policy request))
     (throw
      (ex-info
@@ -3680,7 +3800,7 @@
                          (select-keys options
                                       [:token-ttl-seconds :expression-limits])
                          (select-keys request
-                                      [:allow-empty-schema? :orphan-policy]) admission)
+                                      [:orphan-policy]) admission)
                         expected-generation)})
                     (catch #?(:clj Throwable :cljs :default) error
                       {:error error}))]
@@ -3889,6 +4009,12 @@
 
 (defn speculative-with-snapshot
   [snapshot tx-data]
+  (when-not (sequential? tx-data)
+    (invalid-public-request!
+     :with ":tx-data must be a sequential collection."
+     {:reason :invalid-request-shape
+      :position :tx-data
+      :value tx-data}))
   (let [{:keys [basis api]} snapshot
         _ (basis-open! basis)
         native-with (:native-with api)]
@@ -3904,6 +4030,8 @@
 
 (defn speculative-with-schema-snapshot
   [snapshot schema options]
+  (validate-closed-request!
+   :with-schema options #{} #{:orphan-policy})
   (let [{:keys [runtime basis api]} snapshot
         _ (basis-open! basis)
         native-with (:native-with api)
@@ -3971,10 +4099,12 @@
       (if (seq raw) (vec (prepare db raw)) []))))
 
 (defn snapshot-tx-relationships
-  [snapshot {:keys [updates tx-data] :or {tx-data []}}]
-  (let [{:keys [basis api runtime]} snapshot
+  [snapshot request]
+  (validate-update-request! :tx-relationships request)
+  (let [{:keys [updates tx-data] :or {tx-data []}} request
+        {:keys [basis api runtime]} snapshot
         _ (basis-open! basis)
-        updates (relationship-mutations/normalize-updates (vec updates))
+        updates (relationship-mutations/normalize-public-updates (vec updates))
         app-datoms (qualified-writes/application-datoms tx-data #{})]
     (if *qualified-authorization-enabled?*
       (let [plan (or (:qualified-plan api)
@@ -4060,14 +4190,17 @@
 (defrecord Acl [runtime source writer api]
   IAuthorizationReader
   (-check-permission [_ request]
+    (eacl/validate-reader-request! :check-permission request)
     (call-with-transient-snapshot
      runtime source api :check-permission request
      #(eacl/-check-permission % request)))
   (-read-schema [_ request]
+    (eacl/validate-reader-request! :read-schema request)
     (call-with-transient-snapshot
      runtime source api :read-schema request
      #(eacl/-read-schema % request)))
   (-read-relationships [this request]
+    (eacl/validate-reader-request! :read-relationships request)
     (relationship-filters/validate! request)
     (authorization-filters/validate-scan-authorization! request)
     (with-page-lookahead
@@ -4078,6 +4211,7 @@
           runtime source api :read-relationships request
           (fn [snapshot] (eacl/-read-relationships snapshot request))))))
   (-lookup-resources [this request]
+    (eacl/validate-reader-request! :lookup-resources request)
     (authorization-filters/validate-lookup! :lookup-resources request)
     (with-page-lookahead
       this runtime :lookup-resources request
@@ -4086,6 +4220,7 @@
           runtime source api :lookup-resources request
           (fn [snapshot] (eacl/-lookup-resources snapshot request))))))
   (-lookup-subjects [this request]
+    (eacl/validate-reader-request! :lookup-subjects request)
     (authorization-filters/validate-lookup! :lookup-subjects request)
     (with-page-lookahead
       this runtime :lookup-subjects request
@@ -4094,14 +4229,17 @@
           runtime source api :lookup-subjects request
           (fn [snapshot] (eacl/-lookup-subjects snapshot request))))))
   (-count-resources [_ request]
+    (eacl/validate-reader-request! :count-resources request)
     (call-with-transient-snapshot
      runtime source api :count-resources request
      #(eacl/-count-resources % request)))
   (-count-subjects [_ request]
+    (eacl/validate-reader-request! :count-subjects request)
     (call-with-transient-snapshot
      runtime source api :count-subjects request
      #(eacl/-count-subjects % request)))
   (-expand-permission-tree [_ request]
+    (eacl/validate-reader-request! :expand-permission-tree request)
     (permission-tree/validate-request! request)
     (call-with-transient-snapshot
      runtime source api :expand-permission-tree request
@@ -4128,6 +4266,7 @@
 
   ISnapshotSource
   (-snapshot [_ consistency-value options]
+    (validate-public-snapshot-options! options)
     (let [opts
           (ensure-execution-contract
            (merge (runtime-options runtime) options)
@@ -4177,8 +4316,17 @@
     (write-schema-through! (writable! writer) request))
   (-write-relationships! [_ request]
     (writer-write-relationships! (writable! writer) request))
-  (-delete-object! [_ {:keys [object]}]
-    (writer-delete-object! (writable! writer) object)))
+  (-delete-object! [_ {:keys [object native-eid] :as request}]
+    (validate-delete-object-request! request)
+    (when (and (contains? request :native-eid)
+               (not (and (integer? native-eid) (pos? native-eid))))
+      (throw
+       (ex-info
+        "A native entity ID must be a positive integer."
+        {:type :eacl/invalid-object-id
+         :eacl/error :eacl/invalid-object-id
+         :native-eid native-eid})))
+    (writer-delete-object! (writable! writer) request)))
 
 (defn client?
   "True when `client` is a shared-orchestration client for `backend-id`."
@@ -4331,7 +4479,7 @@
              (if basis-store
                (cache/basis-cache-stats basis-store)
                {:disabled? true})
-            (or (some-> (::runtime-cache-lifecycle-metrics
+             (or (some-> (::runtime-cache-lifecycle-metrics
                           (:runtime client))
                          deref)
                  {}))
@@ -4428,7 +4576,7 @@
   (restore-cache-with!
    client (fn [store opts]
             (cache/restore-authenticated-basis-snapshot! store token bounds (:format-options opts)
-                                                          (cache-restore-lineage opts)))))
+                                                         (cache-restore-lineage opts)))))
 
 (defn cache-content-revision
   "Returns a conservative process-local dirty revision for authorization content.

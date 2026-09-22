@@ -189,8 +189,8 @@
           alice (spice-object :user "alice")
           account (spice-object :account "acct")
           calls (atom 0)
-          original engine/check-evidence]
-      (with-redefs [engine/check-evidence
+          original engine/check-evidence-eids]
+      (with-redefs [engine/check-evidence-eids
                     (fn [db subject permission resource]
                       (swap! calls inc)
                       (original db subject permission resource))]
@@ -207,8 +207,8 @@
           relationship (->Relationship alice :owner account)
           {created-token :zed/token} (seed! conn client)
           calls (atom 0)
-          original engine/check-evidence]
-      (with-redefs [engine/check-evidence
+          original engine/check-evidence-eids]
+      (with-redefs [engine/check-evidence-eids
                     (fn [db subject permission resource]
                       (swap! calls inc)
                       (original db subject permission resource))]
@@ -254,8 +254,8 @@
     (let [client (cached-client conn)
           _ (seed! conn client)
           calls (atom 0)
-          original engine/check-evidence]
-      (with-redefs [engine/check-evidence
+          original engine/check-evidence-eids]
+      (with-redefs [engine/check-evidence-eids
                     (fn [db subject permission resource]
                       (swap! calls inc)
                       (original db subject permission resource))]
@@ -278,8 +278,8 @@
                   :permission :admin
                   :resource (spice-object :account "acct")}
           calls (atom 0)
-          original engine/check-evidence]
-      (with-redefs [engine/check-evidence
+          original engine/check-evidence-eids]
+      (with-redefs [engine/check-evidence-eids
                     (fn [db subject permission resource]
                       (swap! calls inc)
                       (original db subject permission resource))]
@@ -606,7 +606,7 @@
           (core/make-client conn
                             {:source-lifecycle source-lifecycle
                              :security-keyring {:old old-key
-                                                 :new new-key}
+                                                :new new-key}
                              :security-kid :new})
           new-token (core/current-zed-token overlap-client)
           new-only-client

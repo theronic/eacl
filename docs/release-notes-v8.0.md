@@ -469,6 +469,89 @@ as replayed counterexamples against the stable engine.
 
 ## Correctness findings closed
 
+- **Representation-sensitive public identity aliasing.** Ordered batch checks
+  memoize unresolved public demands only when both IDs have canonical
+  representations and the adapter certifies immutable/injective identities.
+  Relationship writes and speculative transaction planning now resolve
+  endpoints before coalescing. Public numeric object deletion cannot fall back
+  to a native EID; explicit ghost repair uses `delete-object-by-eid!`, and
+  resolver failures propagate. EACL-FORMAL-068 records the model, mutants, and
+  cross-runtime regressions.
+- **Fail-open public request shapes.** Point/count/schema reads now reject
+  unknown keys before consistency selection. Relationship mutation helpers
+  reject nil, bare-record, missing-update, and unknown-field batch shapes
+  instead of reporting an empty success. Singleton collections such as
+  `[relationship]` remain valid; only passing `relationship` itself to the
+  plural helper is rejected. A misspelled expiry can no longer be discarded to
+  create a permanent relationship. `delete-object!` accepts only a public
+  object with a non-nil ID; its envelope cannot carry `:native-eid`, and the
+  client protocol also rejects malformed or mixed identities. Reserved
+  `:page/basis` modes are rejected rather than ignored, and the backend-only
+  `:allow-empty-schema?` safety escape hatch no longer crosses the public
+  writer boundary. EACL-FORMAL-069
+  records the request-boundary model,
+  mutants, and real-backend regressions.
+- **Snapshot option injection.** The shared snapshot protocol now rejects all
+  caller-supplied runtime options. Previously, direct protocol invocation could
+  replace trusted dependencies such as public-ID resolution and turn a denied
+  check into another user's grant. EACL-FORMAL-070 records the dedicated model,
+  mutant, and real-backend regression.
+- **False-valued public IDs and execution controls.** Public validation admits
+  any non-nil ID for custom codecs, including boolean `false`. Permission
+  checks honored such an identity, but relationship filters and cursor resume
+  could mistake it for an omitted value and hide a live relationship. Stable
+  authorization-result cursors had a second copy of the same mistake. The
+  truthiness error also defaulted explicit `false` evaluation, timeout, and
+  cancellation controls. Identity paths now test non-nil presence, and invalid
+  controls fail with typed errors. EACL-FORMAL-071 records the models, five
+  mutants, and authorization, inspection, and both cursor regressions.
+- **Numeric public IDs cannot become native database IDs.** Applications may
+  deliberately map a public numeric ID such as user `0` through a custom
+  codec. Cursor resume and permission-tree expansion previously sent that
+  public value through an adapter operation whose numeric branch meant
+  “already-resolved database entity ID.” In a real paginated relationship
+  audit, pages could repeat forever and never reach grants after user `0`.
+  The existing `:object-id->internal` operation now performs only the
+  configured application-ID conversion. EACL calls it once at ingress and
+  gives the resolved EID directly to the engine; no new adapter option or
+  client configuration is required. This is exploitable through otherwise
+  valid library usage when an attacker can choose a numeric account ID;
+  applications restricted to string/UUID public IDs are not affected.
+  EACL-FORMAL-072 records the model, mutant, multi-page regression, and numeric
+  permission-tree regression.
+- **Unsupported SpiceDB subject sets now fail closed.** EACL does not implement
+  `subject#relation` usersets, but public object maps previously accepted a
+  non-nil `:relation` and then ignored it. For example, an application could
+  forward `user:grandmother-caregiver#member`; if the base object
+  `user:grandmother-caregiver` had access, EACL returned that grant without
+  evaluating `#member`. Ordinary documented EACL usage is not affected because
+  its objects do not carry a subject relation. The security risk applies when
+  an API, migration, or integration forwards attacker-controlled SpiceDB-shaped
+  references. Scalar and batch checks, lookups and scan filters, permission
+  trees, relationship writes, and object deletion now reject this input before
+  backend dispatch. EACL-FORMAL-073 records the model, mutant, and real-backend
+  regression.
+- **Incomplete authorization requests now fail before reader dispatch.** A
+  request such as `{:permission :view :resource document}` used to reach an
+  `IAuthorizationReader` without a `:subject`. The bundled backends normally
+  denied or rejected that request later, but a remote or third-party reader
+  could interpret the missing subject as a default user or wildcard and grant
+  it. This is exploitable when an application constructs EACL request maps from
+  attacker-controlled optional fields; it is also incorrect library usage,
+  because the documented fields are required. Scalar checks, lookups, counts,
+  permission-tree expansion, relationship scans, and batch checks now reject
+  incomplete shapes at the shared public boundary, including malformed nested
+  clauses. EACL-FORMAL-074 records the corrected model, mutant, and regressions.
+- **Nested relationship mutations now fail before writer dispatch.** The
+  generic plural write and transaction-planning wrappers used to validate only
+  the outer collection. For example, a nested `:valid-until-mss` typo could
+  reach a remote writer; if that writer ignored the field, an intended
+  temporary grant became permanent. Bundled backends already rejected this
+  later, so ordinary use of those backends was not exploitable. The risk
+  applies to remote or third-party writer extensions when an application
+  forwards attacker-controlled mutation payloads. The shared wrapper now
+  validates every nested operation, endpoint, relation, and qualifier first.
+  EACL-FORMAL-075 records the model, mutant, and regression.
 - **Datomic raw writer stamp mismatch.** Managed Datomic validation now uses
   only the physical `:eacl/relation-version` assertion written by the public
   and documented low-level helpers. Every relation is initialized on schema

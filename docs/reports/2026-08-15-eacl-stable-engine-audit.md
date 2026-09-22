@@ -167,7 +167,7 @@ future external cache store would serve pre-stable pages under the same key.
 Fix applied: the answer-cache semantic keys of the Datomic client and the
 shared client carry `:order-abi engine/stable-order-abi`.
 
-### 2.7 S4 — `Datahike :object-id->internal` and Datomic `object-eid` accept raw numbers as external ids — **Left as designed**
+### 2.7 S4 — `Datahike :object-id->internal` and Datomic `object-eid` accept raw numbers as external ids — **Superseded and fixed by EACL-FORMAL-072**
 
 `(if (number? object-id) object-id …)` / `(d/entid db object-id)`: a numeric
 external id is taken as an internal entity id without checking that the
@@ -175,8 +175,12 @@ entity exists or carries `:eacl/id`. This is the documented v7 behaviour
 ("EACL ID Configuration") and the engine tolerates unknown eids (empty
 scans), so it is not a wrong answer; it is listed because a caller that
 mistakes a database id for an object id gets an empty answer instead of the
-schema-name error the other id shapes receive. Left as designed (the README
-documents numeric ids as internal ids).
+schema-name error the other id shapes receive. That earlier conclusion was
+unsafe once authenticated cursors and permission-tree roots could carry a
+numeric application ID. The current fix keeps `:object-id->internal` as the
+single configured codec boundary, removes numeric-shape pass-through from all
+bundled adapters, and sends already-resolved EIDs directly to `-eids` engine
+entry points.
 
 ### 2.8 S4 — Datomic `impl.indexed/evict-permission-paths-cache!` resets caches that no longer exist — **Fixed (dead-code sweep)**
 
@@ -210,9 +214,9 @@ With a custom codec the root resolves to nothing (an "absent resource"
 topology with no subjects) or to a different entity whose `:eacl/id` happens
 to equal the id. DataScript/Datahike pass the client codec into the adapter
 and are unaffected. No test exercises expansion with a custom codec.
-Fix applied: `make-client` passes `:object-eid-fn` to the adapter (numbers
-pass through as internal ids; everything else resolves through the client's
-`object-id->entid`). Note the `:db/ident` codec used by the existing config
+Fix applied: `make-client` passes the configured ID converter to the adapter;
+all application IDs, including numbers, resolve through the client's
+`object-id->entid`. Note the `:db/ident` codec used by the existing config
 test happens to work by accident because `d/entid` accepts idents, which is
 why nothing caught this; `config_test/expand-permission-tree-uses-the-client-id-codec-test`
 uses a lookup-ref codec whose external ids differ from `:eacl/id` and

@@ -38,12 +38,21 @@
       (is (:allowed? (eacl/check-permission client check)))
       (is (= [90] @samples))
       (is (= [100] @times))
-      (doseq [read [#(eacl/check-permission client (assoc check :evaluation-time-ms 0))
-                   #(eacl/lookup-resources client {:subject user :resource/type :doc :permission :view :first 10})
-                   #(eacl/lookup-subjects client {:resource doc :subject/type :user :permission :view :first 10})
-                   #(eacl/count-resources client {:subject user :resource/type :doc :permission :view})
-                   #(eacl/count-subjects client {:resource doc :subject/type :user :permission :view})
-                   #(eacl/read-relationships client {:subject/type :user :first 10})]]
+      (reset! samples []) (reset! times [])
+      (let [data (try
+                   (eacl/check-permission client (assoc check :evaluation-time-ms 0))
+                   nil
+                   (catch #?(:clj Throwable :cljs :default) error
+                     (ex-data error)))]
+        (is (= :eacl/invalid-request (:type data)))
+        (is (= :unknown-request-key (:reason data)))
+        (is (= [] @samples))
+        (is (= [] @times)))
+      (doseq [read [#(eacl/lookup-resources client {:subject user :resource/type :doc :permission :view :first 10})
+                    #(eacl/lookup-subjects client {:resource doc :subject/type :user :permission :view :first 10})
+                    #(eacl/count-resources client {:subject user :resource/type :doc :permission :view})
+                    #(eacl/count-subjects client {:resource doc :subject/type :user :permission :view})
+                    #(eacl/read-relationships client {:subject/type :user :first 10})]]
         (reset! now 105) (reset! samples []) (reset! times [])
         (read)
         (is (= [105] @samples))

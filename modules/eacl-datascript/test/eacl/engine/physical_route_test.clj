@@ -140,13 +140,13 @@
     (let [admission (physical/make-service-admission {:max-concurrent 1})]
       (is (= :done
              (physical/with-admission
-              admission
-              (fn []
-                (is (= :eacl.service/admission-rejected
-                       (error-key
-                        #(physical/with-admission admission
-                           (constantly :second)))))
-                :done))))
+               admission
+               (fn []
+                 (is (= :eacl.service/admission-rejected
+                        (error-key
+                         #(physical/with-admission admission
+                            (constantly :second)))))
+                 :done))))
       (is (= :again (physical/with-admission admission
                       (constantly :again)))
           "the slot is released after the work returns")))
@@ -155,15 +155,15 @@
                      {:max-replays-per-key 1})]
       (is (= :done
              (physical/with-replay-admission
-              admission "k"
-              (fn []
-                (is (= :eacl.service/replay-rejected
-                       (error-key
-                        #(physical/with-replay-admission admission "k"
-                           (constantly :nested)))))
-                (is (= :other (physical/with-replay-admission
-                               admission "other" (constantly :other))))
-                :done)))))))
+               admission "k"
+               (fn []
+                 (is (= :eacl.service/replay-rejected
+                        (error-key
+                         #(physical/with-replay-admission admission "k"
+                            (constantly :nested)))))
+                 (is (= :other (physical/with-replay-admission
+                                 admission "other" (constantly :other))))
+                 :done)))))))
 
 (deftest cancellation-through-the-page-path-test
   (let [env (seeded :explorer-acyclic)
@@ -480,7 +480,7 @@
   (let [principal (val (first (:principals (:fixture env))))
         db (:db env)]
     (mapv :id
-          (:data (engine/lookup-resources
+          (:data (engine/lookup-resources-eids
                   adapter
                   {:subject {:type :user
                              :id (ds/entid db [:eacl/id (:id principal)])}
@@ -603,15 +603,15 @@
         query {:resource {:type :document :id (:doc-eid env)}
                :permission :view
                :subject/type :user}
-        reference-page (mapv :id (:data (engine/lookup-subjects
+        reference-page (mapv :id (:data (engine/lookup-subjects-eids
                                          (:adapter env) (assoc query :first 20))))
-        reference-count (:count (engine/count-subjects (:adapter env) query))]
+        reference-count (:count (engine/count-subjects-eids (:adapter env) query))]
     (is (= 20 (count reference-page)))
     (is (= n reference-count))
     (testing "a first page over a wide endpoint realizes one chunk, not the endpoint"
       (let [ledger (atom [])
             counting (adapter-with-realization-ledger (:adapter env) ledger)
-            page (mapv :id (:data (engine/lookup-subjects
+            page (mapv :id (:data (engine/lookup-subjects-eids
                                    counting (assoc query :first 20))))]
         (is (= reference-page page) "results are unchanged")
         (is (= 1 (count @ledger)) "one physical command for a 20-result page")
@@ -620,7 +620,7 @@
     (testing "an exhaustive count realizes each value once, not the quadratic remainder"
       (let [ledger (atom [])
             counting (adapter-with-realization-ledger (:adapter env) ledger)
-            counted (:count (engine/count-subjects counting query))]
+            counted (:count (engine/count-subjects-eids counting query))]
         (is (= reference-count counted) "results are unchanged")
         (is (every? #(<= % chunk) @ledger)
             (str "every command realizes at most one chunk: " @ledger))
@@ -688,9 +688,9 @@
         (is (seq (:eids (continue))) "a replay within the quota runs")
         (is (= :eacl.service/replay-rejected
                (physical/with-replay-admission
-                ledger [:other :key]
-                #(try (continue) nil
-                      (catch clojure.lang.ExceptionInfo e (:eacl/error (ex-data e))))))
+                 ledger [:other :key]
+                 #(try (continue) nil
+                       (catch clojure.lang.ExceptionInfo e (:eacl/error (ex-data e))))))
             "a replay beyond the total quota is rejected typed")))))
 
 (deftest topology-qualification-test

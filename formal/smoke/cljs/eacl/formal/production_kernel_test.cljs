@@ -196,8 +196,8 @@
     :basis-ownership :borrowed
     :operations
     {:source-scope
-      (constantly {:source-id "generated-plan" :branch nil})
-      :source-lifecycle (constantly "generated-plan-lifecycle")
+     (constantly {:source-id "generated-plan" :branch nil})
+     :source-lifecycle (constantly "generated-plan-lifecycle")
      :acquire-current! (fn [& _] nil)
      :acquire-authoritative! (fn [& _] nil)
      :acquire-at-least! (fn [& _] nil)
@@ -865,8 +865,7 @@
            :current-proof "new"
            :cursor-proof "old"
            :cursor-graph 0
-           :exact nil})))
-  )
+           :exact nil}))))
 
 (deftest generated-javascript-materialized-queue-limit-is-instantaneous
   (let [result

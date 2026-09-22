@@ -1,0 +1,17 @@
+{:cursor
+ {:boundary-resolution :custom-codec
+  :resolved-internal-eid 101
+  :observed-pages ["first-user" 0 "later-user"]
+  :each-relationship-once true
+  :terminates true}
+ :permission-tree
+ {:numeric-root-uses-public-codec true}
+ :adapter-contract
+ {:existing-converter-kept true
+  :application-id-converted-once true
+  :resolved-eid-bypasses-converter true}
+ :dafny-obligations
+ [:application-id-resolves-once-at-ingress
+  :resolved-eid-bypasses-codec
+  :numeric-public-native-alias-counterexample
+  :public-resolution-never-selects-native-identity]}

@@ -10,7 +10,7 @@
             :wrong-page-flags :mixed-snapshot :stale-reuse :scope-confusion
             :fail-open :availability :performance :other}
   :affected-versions [:vector :string]
-  :affected-backends [:vector #{:shared :datomic :datascript :datahike
+  :affected-backends [:vector #{:shared :datomic :datascript :datahike :datalevin
                                 :third-party}]
   :root-cause :string
   :fix :string

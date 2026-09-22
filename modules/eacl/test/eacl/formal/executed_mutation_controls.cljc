@@ -6,20 +6,25 @@
             [eacl.backend.direct-membership :as direct]
             [eacl.authorization.batch :as batch]
             [eacl.cache :as cache]
+            [eacl.core :as eacl]
             [eacl.uuid :as uuid]
             [eacl.secure-format :as secure]
             [eacl.causal-token :as causal-token]
             [eacl.engine.portable-decisions :as portable]
+            [eacl.client.orchestration :as orchestration]
             [eacl.client.range-reuse :as range-reuse]
             [eacl.engine.scan-cache :as scan-cache]
             [eacl.engine.sealed-plan :as sealed-plan]
             [eacl.engine.stable-reducer :as stable-reducer]
             [eacl.engine.v8 :as engine]
+            [eacl.execution :as execution]
             [eacl.operator.evaluator :as operator-evaluator]
             [eacl.operator.lookup :as operator-lookup]
             [eacl.operator.plan :as operator-plan]
             [eacl.operator.recursive :as operator-recursive]
             [eacl.proof-frame :as proof-frame]
+            [eacl.relay :as relay]
+            [eacl.relationships.mutations :as relationship-mutations]
             [eacl.request.context :as request-context]
             [eacl.request.counters :as request-counters]
             [eacl.schema.expression :as expression]
@@ -716,6 +721,506 @@
                       (assoc (original demand)
                              :subject (:subject alice)))]
         (gate))))))
+
+(defn public-identity-representation-alias-killed?
+  []
+  (let [gate #(and (cache/canonical-cursor-identity? [1])
+                   (not (cache/canonical-cursor-identity? (list 1))))]
+    (and
+     (gate)
+     (false?
+      (with-redefs [cache/canonical-cursor-identity? sequential?]
+        (gate))))))
+
+(defn unresolved-relationship-coalescing-killed?
+  []
+  (let [updates [{:operation :touch
+                  :relationship
+                  {:subject {:type :user :id (list 1)}
+                   :relation :viewer
+                   :resource {:type :document :id "one"}}}
+                 {:operation :touch
+                  :relationship
+                  {:subject {:type :user :id [1]}
+                   :relation :viewer
+                   :resource {:type :document :id "one"}}}]
+        gate #(= 2 (count
+                    (relationship-mutations/normalize-public-updates updates)))
+        original relationship-mutations/normalize-public-updates]
+    (and
+     (gate)
+     (false?
+      (with-redefs [relationship-mutations/normalize-public-updates
+                    (fn [candidate]
+                      (relationship-mutations/coalesce-updates
+                       (original candidate)))]
+        (gate))))))
+
+(defn false-public-identity-presence-killed?
+  []
+  (let [cursor {:v 3 :subject false :resource "document"}
+        opts {:object-id->entid
+              (fn [_ public-id]
+                ({false 101 "document" 202} public-id))}
+        expected {:v 3 :subject 101 :resource 202}
+        gate #(= expected
+                 (orchestration/default-spice-cursor->internal
+                  :db opts cursor))]
+    (and
+     (gate)
+     (false?
+      (with-redefs [orchestration/public-id-present? boolean]
+        (gate))))))
+
+(defn- public-identity-domain-adapter
+  []
+  (backend/make-adapter
+   {:id :public-identity-domain-control
+    :capabilities backend/empty-capabilities
+    :operations
+    (merge
+     (operation-map)
+     {:object-id->internal
+      (fn [public-id]
+        ({0 101 false 102} public-id))})}))
+
+(defn numeric-public-id-native-eid-alias-killed?
+  []
+  (let [adapter (public-identity-domain-adapter)
+        query {:after {:kind :stable-edge :result-eid 0}}
+        gate
+        #(= 101
+            (get-in
+             (relay/internalize-prepared-page-query adapter query)
+             [:after :result-eid]))]
+    (and
+     (gate)
+     (false?
+      (with-redefs [backend/object-id->internal
+                    (fn [candidate public-id]
+                      (if (number? public-id)
+                        public-id
+                        (backend/invoke
+                         candidate :object-id->internal public-id)))]
+        (gate))))))
+
+(defn false-stable-edge-presence-killed?
+  []
+  (let [adapter (public-identity-domain-adapter)
+        query {:after {:kind :stable-edge :result-eid false}}
+        gate
+        #(= 102
+            (get-in
+             (relay/internalize-prepared-page-query adapter query)
+             [:after :result-eid]))]
+    (and
+     (gate)
+     (false?
+      (with-redefs [relay/edge-id-present? boolean]
+        (gate))))))
+
+(defn- invalid-execution-control?
+  [request key]
+  (try
+    (execution/normalize {:execution-timeout-ms 100} :can? request)
+    false
+    (catch #?(:clj clojure.lang.ExceptionInfo
+              :cljs cljs.core.ExceptionInfo) error
+      (let [data (ex-data error)]
+        (and (= :eacl.execution/invalid-contract (:eacl/error data))
+             (= key (:key data)))))))
+
+(defn false-evaluation-control-killed?
+  []
+  (let [gate #(invalid-execution-control? {:evaluation false} :evaluation)
+        original execution/normalize-evaluation]
+    (and
+     (gate)
+     (false?
+      (with-redefs [execution/normalize-evaluation
+                    (fn [value]
+                      (if (false? value) :demand (original value)))]
+        (gate))))))
+
+(defn false-timeout-control-killed?
+  []
+  (let [gate #(invalid-execution-control? {:timeout-ms false} :timeout-ms)
+        original execution/normalize-timeout-ms]
+    (and
+     (gate)
+     (false?
+      (with-redefs [execution/normalize-timeout-ms
+                    (fn [value]
+                      (if (false? value) 100 (original value)))]
+        (gate))))))
+
+(defn false-cancellation-control-killed?
+  []
+  (let [gate #(invalid-execution-control?
+               {:cancellation-token false} :cancellation-token)
+        original execution/cancellation-token?]
+    (and
+     (gate)
+     (false?
+      (with-redefs [execution/cancellation-token?
+                    (fn [value]
+                      (or (false? value) (original value)))]
+        (gate))))))
+
+(defn unsupported-subject-relation-downgrade-killed?
+  []
+  (let [dispatches (atom 0)
+        reader
+        (reify eacl/IAuthorizationReader
+          (-check-permission [_ _]
+            (swap! dispatches inc)
+            {:allowed? true})
+          (-read-schema [_ _] nil)
+          (-read-relationships [_ _] nil)
+          (-lookup-resources [_ _] nil)
+          (-lookup-subjects [_ _] nil)
+          (-count-resources [_ _] nil)
+          (-count-subjects [_ _] nil)
+          (-expand-permission-tree [_ _] nil))
+        request {:subject {:type :user :id "u" :relation :member}
+                 :permission :view
+                 :resource {:type :document :id "d"}}
+        rejected-without-dispatch?
+        #(do
+           (reset! dispatches 0)
+           (try
+             (eacl/check-permission reader request)
+             false
+             (catch #?(:clj clojure.lang.ExceptionInfo
+                       :cljs cljs.core.ExceptionInfo) error
+               (and (= :eacl/unsupported-subject-relation
+                       (:type (ex-data error)))
+                    (= :unsupported-subject-relation
+                       (:reason (ex-data error)))
+                    (zero? @dispatches)))))
+        mutant-invoked? (atom false)]
+    (and
+     (rejected-without-dispatch?)
+     (false?
+      (with-redefs [eacl/validate-reader-request!
+                    (fn [_ candidate]
+                      (reset! mutant-invoked? true)
+                      candidate)]
+        (rejected-without-dispatch?)))
+     @mutant-invoked?)))
+
+(defn unknown-public-request-key-killed?
+  []
+  (let [original-check-permission eacl/check-permission
+        reader
+        (reify eacl/IAuthorizationReader
+          (-check-permission [_ _] {:allowed? true})
+          (-read-schema [_ _] nil)
+          (-read-relationships [_ _] nil)
+          (-lookup-resources [_ _] nil)
+          (-lookup-subjects [_ _] nil)
+          (-count-resources [_ _] nil)
+          (-count-subjects [_ _] nil)
+          (-expand-permission-tree [_ _] nil))
+        request {:subject {:type :user :id "u"}
+                 :permission :view
+                 :resource {:type :document :id "d"}
+                 :consistncy :fully-consistent}
+        rejected?
+        #(try
+           (eacl/check-permission reader request)
+           false
+           (catch #?(:clj clojure.lang.ExceptionInfo
+                     :cljs cljs.core.ExceptionInfo) error
+             (= :unknown-request-key (:reason (ex-data error)))))]
+    (and
+     (rejected?)
+     (false?
+      (with-redefs [eacl/check-permission
+                    (fn
+                      ([target candidate]
+                       (eacl/-check-permission target candidate))
+                      ([target subject permission resource]
+                       (original-check-permission
+                        target subject permission resource))
+                      ([target subject permission resource consistency]
+                       (original-check-permission
+                        target subject permission resource consistency)))]
+        (rejected?))))))
+
+(defn missing-required-read-field-killed?
+  []
+  (let [dispatches (atom 0)
+        reader
+        (reify eacl/IAuthorizationReader
+          (-check-permission [_ _]
+            (swap! dispatches inc)
+            {:allowed? true})
+          (-read-schema [_ _] nil)
+          (-read-relationships [_ _] nil)
+          (-lookup-resources [_ _] nil)
+          (-lookup-subjects [_ _] nil)
+          (-count-resources [_ _] nil)
+          (-count-subjects [_ _] nil)
+          (-expand-permission-tree [_ _] nil))
+        request {:permission :view
+                 :resource {:type :document :id "d"}}
+        rejected-without-dispatch?
+        #(do
+           (reset! dispatches 0)
+           (try
+             (eacl/check-permission reader request)
+             false
+             (catch #?(:clj clojure.lang.ExceptionInfo
+                       :cljs cljs.core.ExceptionInfo) error
+               (and (= :missing-request-key
+                       (:reason (ex-data error)))
+                    (zero? @dispatches)))))
+        mutant-invoked? (atom false)]
+    (and
+     (rejected-without-dispatch?)
+     (false?
+      (with-redefs [eacl/validate-reader-request!
+                    (fn [_ candidate]
+                      (reset! mutant-invoked? true)
+                      candidate)]
+        (rejected-without-dispatch?)))
+     @mutant-invoked?)))
+
+(defn fail-open-revocation-shape-killed?
+  []
+  (let [calls (atom [])
+        writer
+        (reify eacl/IAuthorizationWriter
+          (-write-schema! [_ _] nil)
+          (-write-relationships! [_ request]
+            (swap! calls conj request)
+            {:zed/token "mutation-control"})
+          (-delete-object! [_ _] nil))
+        relationship
+        (eacl/->Relationship
+         {:type :user :id "u"}
+         :viewer
+         {:type :document :id "d"})
+        rejected-without-dispatch?
+        #(do
+           (reset! calls [])
+           (try
+             (eacl/delete-relationships! writer relationship)
+             false
+             (catch #?(:clj clojure.lang.ExceptionInfo
+                       :cljs cljs.core.ExceptionInfo) error
+               (and (= :invalid-request-shape
+                       (:reason (ex-data error)))
+                    (empty? @calls)))))]
+    (and
+     (rejected-without-dispatch?)
+     (false?
+      (with-redefs [eacl/delete-relationships!
+                    (fn [target relationships]
+                      (eacl/write-relationships!
+                       target
+                       (mapv #(eacl/->RelationshipUpdate :delete %)
+                             (:data relationships))))]
+        (rejected-without-dispatch?))))))
+
+(defn relationship-write-qualifier-typo-killed?
+  []
+  (let [original-write-relationship! eacl/write-relationship!
+        calls (atom [])
+        writer
+        (reify eacl/IAuthorizationWriter
+          (-write-schema! [_ _] nil)
+          (-write-relationships! [_ request]
+            (swap! calls conj request)
+            {:zed/token "mutation-control"})
+          (-delete-object! [_ _] nil))
+        update
+        {:operation :touch
+         :subject {:type :user :id "u"}
+         :relation :viewer
+         :resource {:type :document :id "d"}
+         :valid-until-mss 0}
+        rejected-without-dispatch?
+        #(do
+           (reset! calls [])
+           (try
+             (eacl/write-relationship! writer update)
+             false
+             (catch #?(:clj clojure.lang.ExceptionInfo
+                       :cljs cljs.core.ExceptionInfo) error
+               (and (= :unknown-request-key
+                       (:reason (ex-data error)))
+                    (empty? @calls)))))]
+    (and
+     (rejected-without-dispatch?)
+     (false?
+      (with-redefs
+       [eacl/write-relationship!
+        (fn
+          ([target candidate]
+           (let [{:keys [operation subject relation resource]} candidate]
+             (eacl/write-relationships!
+              target
+              [(eacl/->RelationshipUpdate
+                operation
+                (merge
+                 (eacl/->Relationship subject relation resource)
+                 (select-keys
+                  candidate [:caveat :caveat-context :valid-until-ms])))])))
+          ([target operation subject relation resource]
+           (original-write-relationship!
+            target operation subject relation resource)))]
+        (rejected-without-dispatch?))))))
+
+(defn nested-relationship-update-validation-killed?
+  []
+  (let [calls (atom [])
+        writer
+        (reify eacl/IAuthorizationWriter
+          (-write-schema! [_ _] nil)
+          (-write-relationships! [_ request]
+            (swap! calls conj request)
+            {:zed/token "mutation-control"})
+          (-delete-object! [_ _] nil))
+        updates
+        [{:operation :touch
+          :relationship
+          {:subject {:type :user :id "u"}
+           :relation :viewer
+           :resource {:type :document :id "d"}
+           :valid-until-mss 0}}
+         {:operation :touch
+          :relationship
+          {:subject {:type :user :id "u"}
+           :relation :viewer}}]
+        rejected-without-dispatch?
+        (fn [update]
+          (reset! calls [])
+          (try
+            (eacl/write-relationships! writer [update])
+            false
+            (catch #?(:clj clojure.lang.ExceptionInfo
+                      :cljs cljs.core.ExceptionInfo) error
+              (and (= :eacl/invalid-relationship-qualifier
+                      (:type (ex-data error)))
+                   (empty? @calls)))))]
+    (and
+     (every? rejected-without-dispatch? updates)
+     (false?
+      (with-redefs [relationship-mutations/normalize-public-updates identity]
+        (every? rejected-without-dispatch? updates))))))
+
+(defn nil-public-object-delete-killed?
+  []
+  (let [calls (atom [])
+        writer
+        (reify eacl/IAuthorizationWriter
+          (-write-schema! [_ _] nil)
+          (-write-relationships! [_ _] nil)
+          (-delete-object! [_ request]
+            (swap! calls conj request)
+            {:retracted-datoms 0}))
+        object {:type :user :id nil}
+        rejected-without-dispatch?
+        #(do
+           (reset! calls [])
+           (try
+             (eacl/delete-object! writer object)
+             false
+             (catch #?(:clj clojure.lang.ExceptionInfo
+                       :cljs cljs.core.ExceptionInfo) error
+               (and (= :invalid-object-shape
+                       (:reason (ex-data error)))
+                    (empty? @calls)))))]
+    (and
+     (rejected-without-dispatch?)
+     (false?
+      (with-redefs [eacl/delete-object!
+                    (fn [target candidate]
+                      (eacl/-delete-object! target {:object candidate}))]
+        (rejected-without-dispatch?))))))
+
+(defn snapshot-option-injection-killed?
+  []
+  (let [injected
+        {:spice-object->internal
+         (fn [_ object] (assoc object :id :attacker-selected))}
+        rejected?
+        #(try
+           (orchestration/validate-public-snapshot-options! injected)
+           false
+           (catch #?(:clj clojure.lang.ExceptionInfo
+                     :cljs cljs.core.ExceptionInfo) error
+             (= :unknown-request-key (:reason (ex-data error)))))]
+    (and
+     (= {} (orchestration/validate-public-snapshot-options! {}))
+     (rejected?)
+     (false?
+      (with-redefs [orchestration/validate-public-snapshot-options! identity]
+        (rejected?))))))
+
+(defn reserved-live-page-basis-killed?
+  []
+  (let [reader
+        (reify eacl/IAuthorizationReader
+          (-check-permission [_ _] nil)
+          (-read-schema [_ _] nil)
+          (-read-relationships [_ _] nil)
+          (-lookup-resources [_ _] {:data []})
+          (-lookup-subjects [_ _] nil)
+          (-count-resources [_ _] nil)
+          (-count-subjects [_ _] nil)
+          (-expand-permission-tree [_ _] nil))
+        request {:subject {:type :user :id "u"}
+                 :permission :view
+                 :resource/type :document
+                 :first 1
+                 :page/basis :live}
+        rejected?
+        #(try
+           (eacl/lookup-resources reader request)
+           false
+           (catch #?(:clj clojure.lang.ExceptionInfo
+                     :cljs cljs.core.ExceptionInfo) error
+             (= :unsupported-page-basis (:reason (ex-data error)))))]
+    (and
+     (rejected?)
+     (false?
+      (with-redefs [eacl/lookup-resources
+                    (fn [target candidate]
+                      (eacl/-lookup-resources target candidate))]
+        (rejected?))))))
+
+(defn public-empty-schema-opt-in-killed?
+  []
+  (let [calls (atom [])
+        writer
+        (reify eacl/IAuthorizationWriter
+          (-write-schema! [_ request]
+            (swap! calls conj request)
+            {:zed/token "mutation-control"})
+          (-write-relationships! [_ _] nil)
+          (-delete-object! [_ _] nil))
+        request {:schema "definition user {}"
+                 :allow-empty-schema? true}
+        rejected-without-dispatch?
+        #(do
+           (reset! calls [])
+           (try
+             (eacl/write-schema! writer request)
+             false
+             (catch #?(:clj clojure.lang.ExceptionInfo
+                       :cljs cljs.core.ExceptionInfo) error
+               (and (= :unknown-request-key (:reason (ex-data error)))
+                    (empty? @calls)))))]
+    (and
+     (rejected-without-dispatch?)
+     (false?
+      (with-redefs [eacl/write-schema!
+                    (fn [target candidate]
+                      (eacl/-write-schema! target candidate))]
+        (rejected-without-dispatch?))))))
 
 (defn aggregate-deadline-renewal-killed?
   []
@@ -1924,8 +2429,8 @@ definition document {
         original uuid/capture invoked (atom false)]
     (and (gate)
          (false? (with-redefs [uuid/capture (fn [value]
-                                            (reset! invoked true)
-                                            (some-> (original value) uuid/text))]
+                                              (reset! invoked true)
+                                              (some-> (original value) uuid/text))]
                    (gate)))
          @invoked)))
 
@@ -1944,8 +2449,8 @@ definition document {
         invoked (atom false)]
     (and (gate)
          (false? (with-redefs [uuid/text (fn [value]
-                                         (reset! invoked true)
-                                         (transform (original value)))]
+                                           (reset! invoked true)
+                                           (transform (original value)))]
                    (gate)))
          @invoked)))
 
@@ -1983,8 +2488,8 @@ definition document {
         original uuid/canonical-text? invoked (atom false)]
     (and (gate)
          (false? (with-redefs [uuid/canonical-text?
-                              (fn [text] (reset! invoked true)
-                                (and (string? text) (original (str/lower-case text))))]
+                               (fn [text] (reset! invoked true)
+                                 (and (string? text) (original (str/lower-case text))))]
                    (gate)))
          @invoked)))
 
@@ -2027,6 +2532,30 @@ definition document {
    checkpoint-admissions-counter-drop-killed?
    :aggregate-counter-reset aggregate-counter-reset-killed?
    :batch-cross-demand-contamination batch-cross-demand-contamination-killed?
+   :public-identity-representation-alias
+   public-identity-representation-alias-killed?
+   :unresolved-relationship-coalescing
+   unresolved-relationship-coalescing-killed?
+   :false-public-identity-presence false-public-identity-presence-killed?
+   :numeric-public-id-native-eid-alias
+   numeric-public-id-native-eid-alias-killed?
+   :false-stable-edge-presence false-stable-edge-presence-killed?
+   :false-evaluation-control false-evaluation-control-killed?
+   :false-timeout-control false-timeout-control-killed?
+   :false-cancellation-control false-cancellation-control-killed?
+   :unsupported-subject-relation-downgrade
+   unsupported-subject-relation-downgrade-killed?
+   :unknown-public-request-key unknown-public-request-key-killed?
+   :missing-required-read-field missing-required-read-field-killed?
+   :fail-open-revocation-shape fail-open-revocation-shape-killed?
+   :relationship-write-qualifier-typo
+   relationship-write-qualifier-typo-killed?
+   :nested-relationship-update-validation
+   nested-relationship-update-validation-killed?
+   :nil-public-object-delete nil-public-object-delete-killed?
+   :snapshot-option-injection snapshot-option-injection-killed?
+   :reserved-live-page-basis reserved-live-page-basis-killed?
+   :public-empty-schema-opt-in public-empty-schema-opt-in-killed?
    :aggregate-deadline-renewal aggregate-deadline-renewal-killed?
    :operator-wrong-precedence operator-wrong-precedence-killed?
    :operator-swapped-exclusion operator-swapped-exclusion-killed?

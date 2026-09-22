@@ -175,7 +175,7 @@
 
 (defn- internal-id
   [db value]
-  (when value
+  (when (some? value)
     (ds/entid db value)))
 
 (defn- existing-internal-id
@@ -327,9 +327,9 @@
 (defn- retract-relationship-txes
   [db resolved]
   (let [forward (ddb/all-relationship-identity-datoms db (:subject-id resolved)
-                                                    relationship-storage/forward-attribute (relationship-tuple resolved))
+                                                      relationship-storage/forward-attribute (relationship-tuple resolved))
         reverse (ddb/all-relationship-identity-datoms db (:resource-id resolved)
-                                                    relationship-storage/reverse-attribute (reverse-relationship-tuple resolved))
+                                                      relationship-storage/reverse-attribute (reverse-relationship-tuple resolved))
         operations
         (into (mapv #(vector :db/retract (:subject-id resolved)
                              relationship-storage/forward-attribute (:v %)) forward)
@@ -350,19 +350,19 @@
   (boolean
    (seq
     (endpoint-pair/checked-datoms
-    (ddb/relationship-identity-datoms
-     db subject-id relationship-storage/forward-attribute
-     (endpoint-pair/forward-value
-      subject-type relation-id resource-type resource-id))))))
+     (ddb/relationship-identity-datoms
+      db subject-id relationship-storage/forward-attribute
+      (endpoint-pair/forward-value
+       subject-type relation-id resource-type resource-id))))))
 
 (defn direct-edge
   "Stored compact edge or nil, prior to request qualification."
   [db subject-type subject-id relation-id resource-type resource-id]
   (some-> (first (endpoint-pair/checked-datoms
-                 (ddb/relationship-identity-datoms
-                  db subject-id relationship-storage/forward-attribute
-                  (endpoint-pair/forward-value subject-type relation-id resource-type resource-id))
-                 true))
+                  (ddb/relationship-identity-datoms
+                   db subject-id relationship-storage/forward-attribute
+                   (endpoint-pair/forward-value subject-type relation-id resource-type resource-id))
+                  true))
           edge/from-datom))
 
 (defn- reverse-match?
@@ -370,10 +370,10 @@
   (boolean
    (seq
     (endpoint-pair/checked-datoms
-    (ddb/relationship-identity-datoms
-     db resource-id relationship-storage/reverse-attribute
-     (endpoint-pair/reverse-value
-      resource-type relation-id subject-type subject-id))))))
+     (ddb/relationship-identity-datoms
+      db resource-id relationship-storage/reverse-attribute
+      (endpoint-pair/reverse-value
+       resource-type relation-id subject-type subject-id))))))
 
 (defn validate-relationship-operation!
   [operation]

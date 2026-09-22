@@ -1,0 +1,13 @@
+{:operation :check-permission
+ :attacker-controlled-request
+ {:permission :view
+  :resource {:type :document :id "grandmother-record"}}
+ :missing-key :subject
+ :before
+ {:public-validation :accepted
+  :reader-dispatched true
+  :unsafe-third-party-interpretation :default-or-wildcard-subject
+  :possible-decision :allowed}
+ :bundled-backend-behavior
+ {:decision :deny-or-error
+  :timing :after-reader-dispatch}}

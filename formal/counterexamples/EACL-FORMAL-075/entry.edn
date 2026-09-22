@@ -1,0 +1,21 @@
+{:id :EACL-FORMAL-075
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "sequential-update-envelope/nested-expiry-typo-dispatched"
+ :minimized-fixture "fixture.edn"
+ :impact :fail-open
+ :affected-versions
+ ["v8.0 pre-release before shared nested mutation validation"]
+ :affected-backends
+ [:shared :third-party]
+ :root-cause
+ "The generic plural relationship write and transaction-planning wrappers validated only that :updates was sequential. Backend-neutral nested operation, endpoint, relation, and qualifier validation ran later only in bundled shared clients, so remote or third-party protocol implementations received malformed updates."
+ :fix
+ "Run normalize-public-updates as validation before generic writer and planning dispatch, and validate single relationship preparation and speculative planning inputs at the shared wrapper; distinguish malformed nested batches in the Dafny request model and bind the rule with an executed mutant and protocol-level regression."
+ :closing-evidence
+ ["PublicRequestBoundary.OpenNestedMutationAcceptsMalformedUpdate"
+  "PublicRequestBoundary.StrictMutationRejectsMalformedNestedUpdate"
+  "PublicRequestBoundary.ClosedRelationshipWriteRejectsMissingRequiredFields"
+  "eacl.formal.executed-mutation-controls/nested-relationship-update-validation-killed?"
+  "eacl.core-test/nested-relationship-mutations-fail-before-protocol-dispatch-test"]}

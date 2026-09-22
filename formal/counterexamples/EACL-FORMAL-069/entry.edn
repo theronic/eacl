@@ -1,0 +1,33 @@
+{:id :EACL-FORMAL-069
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "public-request/open-map-and-plural-delete-bare-record"
+ :minimized-fixture "fixture.edn"
+ :impact :fail-open
+ :affected-versions
+ ["v8.0 pre-release before closed public request validation"]
+ :affected-backends
+ [:shared :datomic :datahike :datascript :third-party]
+ :root-cause
+ "Several public request maps were destructured without rejecting unknown fields, unsupported control values, or malformed object values. A misspelled consistency key therefore selected the default consistency, the reserved :page/basis :live control was accepted but ignored, the backend-only :allow-empty-schema? escape hatch crossed the public schema boundary, a misspelled relationship expiry was silently discarded and produced a permanent write, a bare Relationship record passed to delete-relationships! instead of the valid singleton collection [relationship] was mistaken for a page and became an empty successful write, tx-relationships accepted malformed envelopes as empty plans, a nil-ID object cleanup returned success without doing work, and delete-object! allowed a public envelope to carry the internal native-eid selector that the writer preferred over the public object."
+ :fix
+ "Validate closed request and endpoint shapes before dispatch, including the single-relationship convenience writer; require explicit sequential mutation batches; accept singleton collections while rejecting missing, nil, bare-record, and unknown-field envelopes; keep public-object and explicit native-EID deletion mutually exclusive; repeat mutation validation inside shared client protocol methods; and add a dedicated Dafny request-boundary model plus executed mutants and real-backend regressions."
+ :closing-evidence
+ ["PublicRequestBoundary.ClosedRequestRejectsMisspelledConsistency"
+  "PublicRequestBoundary.ReservedLivePageBasisIsRejected"
+  "PublicRequestBoundary.BackendOnlyEmptySchemaEscapeHatchIsRejected"
+  "PublicRequestBoundary.ClosedRelationshipWriteRejectsMisspelledExpiry"
+  "PublicRequestBoundary.InvalidRelationshipBatchesNeverSucceed"
+  "PublicRequestBoundary.PublicDeleteCannotSelectNativeIdentity"
+  "PublicRequestBoundary.AmbiguousDeleteIdentityIsAlwaysRejected"
+  "PublicRequestBoundary.MalformedPublicObjectDeleteIsAlwaysRejected"
+  "eacl.formal.executed-mutation-controls/unknown-public-request-key-killed?"
+  "eacl.formal.executed-mutation-controls/reserved-live-page-basis-killed?"
+  "eacl.formal.executed-mutation-controls/public-empty-schema-opt-in-killed?"
+  "eacl.formal.executed-mutation-controls/fail-open-revocation-shape-killed?"
+  "eacl.formal.executed-mutation-controls/relationship-write-qualifier-typo-killed?"
+  "eacl.formal.executed-mutation-controls/nil-public-object-delete-killed?"
+  "eacl.core-test/malformed-public-mutations-fail-before-dispatch-test"
+  "eacl.core-test/relationship-planning-rejects-single-update-and-open-envelopes-test"
+  "eacl.datascript.contract-test/public-request-shapes-fail-closed-before-datascript-mutation-test"]}

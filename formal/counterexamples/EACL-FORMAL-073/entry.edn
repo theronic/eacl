@@ -1,0 +1,20 @@
+{:id :EACL-FORMAL-073
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "unsupported-spicedb-subject-relation/silently-authorized-as-base-object"
+ :minimized-fixture "fixture.edn"
+ :impact :false-grant
+ :affected-versions
+ ["v8.0 pre-release before unsupported subject-relation validation"]
+ :affected-backends
+ [:shared :datomic :datahike :datalevin :datascript :third-party]
+ :root-cause
+ "Public endpoint validation admitted a non-nil :relation field even though EACL does not implement SpiceDB subject#relation usersets. Identity resolution then used only :type and :id, silently changing the caller's object into the base object and potentially authorizing that different identity."
+ :fix
+ "Reject every non-nil endpoint :relation before dispatch across scalar and batch checks, lookup and scan filters, permission-tree expansion, relationship mutation, and object deletion; bind the rule with a Dafny request-boundary model, an executed mutation, and a real DataScript regression."
+ :closing-evidence
+ ["PublicRequestBoundary.OpenEndpointAcceptedUnsupportedSubjectRelation"
+  "PublicRequestBoundary.StrictEndpointRejectsUnsupportedSubjectRelation"
+  "eacl.formal.executed-mutation-controls/unsupported-subject-relation-downgrade-killed?"
+  "eacl.datascript.contract-test/unsupported-subject-relations-never-degrade-to-base-objects-test"]}

@@ -40,6 +40,14 @@
 (defn- demand [subject permission resource]
   {:subject subject :permission permission :resource resource})
 
+(defn- failing-carol-lookup-ref
+  [object-id]
+  (if (= "carol" object-id)
+    (throw
+     (ex-info "injected backend failure"
+              {:type :test/backend-failure}))
+    [:eacl/id object-id]))
+
 (defn- fixture
   ([] (fixture {}))
   ([client-options]
@@ -285,14 +293,14 @@
          (demand alice :view document)]
         result
         (eacl/with-snapshot [snapshot (eacl/snapshot client)]
-            (let [oracle
-                  (mapv #(eacl/check-permission
-                          snapshot (assoc % :cache? false))
-                        checks)
-                  actual
-                  (eacl/check-permissions
-                   snapshot {:checks checks :cache? false})]
-              {:oracle oracle :actual actual}))]
+          (let [oracle
+                (mapv #(eacl/check-permission
+                        snapshot (assoc % :cache? false))
+                      checks)
+                actual
+                (eacl/check-permissions
+                 snapshot {:checks checks :cache? false})]
+            {:oracle oracle :actual actual}))]
     (is (= (:oracle result) (:actual result)))
     (is (= [true true false false false true true]
            (mapv :allowed? (:actual result))))
@@ -323,10 +331,10 @@
             (observed-call
              conn
              #(eacl/with-snapshot [snapshot (eacl/snapshot client)]
-                  (eacl/check-permissions
-                   snapshot
-                   {:checks [(demand alice :view document)]
-                    :cache? false}))))
+                (eacl/check-permissions
+                 snapshot
+                 {:checks [(demand alice :view document)]
+                  :cache? false}))))
           counts (request-counters/snapshot ledger)]
       (is (true? (get-in observation [:value 0 :allowed?])))
       (is (= 1 (:acquire-current! (:provider-calls observation) 0)))
@@ -517,7 +525,8 @@
         "batch sharing never tightens an independently successful scalar limit")))
 
 (deftest schema-and-backend-failures-are-whole-and-balanced-test
-  (let [{:keys [conn client alice carol document]} (fixture)
+  (let [{:keys [conn client alice carol document]}
+        (fixture {:object-id->lookup-ref failing-carol-lookup-ref})
         valid (demand alice :view document)
         invalid (demand alice :missing-permission document)
         schema-ledger (request-counters/make-ledger)
@@ -535,18 +544,9 @@
     (is (= 1 (:acquire-current! (:provider-calls schema-observation) 0)))
     (is (= 1 (:release! (:provider-calls schema-observation) 0)))
 
-    (let [calls (atom 0)
-          backend-ledger (request-counters/make-ledger)
+    (let [backend-ledger (request-counters/make-ledger)
           backend-observation
-          (binding [request-counters/*ledger* backend-ledger
-                    backend/*invoke-observer*
-                    (fn [{:keys [phase operation]}]
-                      (when (and (= :before phase)
-                                 (= :object-id->internal operation)
-                                 (= 3 (swap! calls inc)))
-                        (throw
-                         (ex-info "injected backend failure"
-                                  {:type :test/backend-failure}))))]
+          (binding [request-counters/*ledger* backend-ledger]
             (observed-call
              conn
              #(caught
@@ -564,23 +564,14 @@
                        [:aggregate-counters :output-units]))))))
 
 (deftest completed-artifacts-before-later-backend-failure-remain-independent-test
-  (let [{:keys [client alice carol document]} (fixture)
+  (let [{:keys [client alice carol document]}
+        (fixture {:object-id->lookup-ref failing-carol-lookup-ref})
         first-demand (demand alice :view document)
         second-demand (demand carol :view document)
-        backend-calls (atom 0)
         error
-        (binding
-         [backend/*invoke-observer*
-          (fn [{:keys [phase operation]}]
-            (when (and (= :before phase)
-                       (= :object-id->internal operation)
-                       (= 3 (swap! backend-calls inc)))
-              (throw
-               (ex-info "injected backend failure"
-                        {:type :test/backend-failure}))))]
-         (caught
-          #(eacl/check-permissions
-            client {:checks [first-demand second-demand]})))]
+        (caught
+         #(eacl/check-permissions
+           client {:checks [first-demand second-demand]}))]
     (is (= :test/backend-failure (:type (ex-data error))))
     (is (= 1 (:demand-index (ex-data error))))
     (is (true? (:cached?

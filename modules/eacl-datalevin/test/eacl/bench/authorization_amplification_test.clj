@@ -181,7 +181,7 @@
         request-frame proof-frame/request-frame
         resolve-proof proof-frame/resolve!
         cached-engine-result @#'orchestration/cached-engine-result
-        can? engine/can?
+        can? engine/can-eids?
         read-relationships datalevin-impl/read-relationships
         externalize-relationship-page relay/externalize-relationship-page
         externalize-page-cursors @#'relay/externalize-page-cursors
@@ -197,7 +197,7 @@
        (phase-wrapper :proof-frame resolve-proof)
        #'orchestration/cached-engine-result
        (phase-wrapper :cache-key-and-lookup cached-engine-result)
-       #'engine/can?
+       #'engine/can-eids?
        (phase-wrapper :evaluation can?)
        #'datalevin-impl/read-relationships
        (phase-wrapper :evaluation read-relationships)

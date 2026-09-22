@@ -509,10 +509,8 @@
   [{:keys [adapter subject-id resource-id] :as options}]
   (check-eids
    (assoc options
-          :subject-eid (backend/invoke adapter :object-id->internal
-                                       subject-id)
-          :resource-eid (backend/invoke adapter :object-id->internal
-                                        resource-id))))
+          :subject-eid (backend/object-id->internal adapter subject-id)
+          :resource-eid (backend/object-id->internal adapter resource-id))))
 
 (defn discovery-options
   "Completes conditional first-discovery candidates with the existing point
@@ -562,17 +560,31 @@
                  :conditional-count (- (:conditional-count finished)
                                        (if (and truncated? (:last-conditional? finished)) 1 0))))))))
 
+(defn count-resources-eids
+  "Exact count from an already-resolved subject EID."
+  [{:keys [subject-eid] :as options}]
+  (exhaustive-count reducer/run-forward :subject-eid
+                    subject-eid
+                    options))
+
 (defn count-resources
   "Exact count by exhausting the reducer; :count-limit truncates with an
   explicit marker exactly like the current public contract."
   [{:keys [adapter subject-id] :as options}]
-  (exhaustive-count reducer/run-forward :subject-eid
-                    (backend/invoke adapter :object-id->internal subject-id)
+  (count-resources-eids
+   (assoc options
+          :subject-eid (backend/object-id->internal adapter subject-id))))
+
+(defn count-subjects-eids
+  "Exact reverse count from an already-resolved resource EID."
+  [{:keys [resource-eid] :as options}]
+  (exhaustive-count reducer/run-reverse :resource-eid
+                    resource-eid
                     options))
 
 (defn count-subjects
   "Exact reverse count by exhaustion, mirroring count-resources."
   [{:keys [adapter resource-id] :as options}]
-  (exhaustive-count reducer/run-reverse :resource-eid
-                    (backend/invoke adapter :object-id->internal resource-id)
-                    options))
+  (count-subjects-eids
+   (assoc options
+          :resource-eid (backend/object-id->internal adapter resource-id))))

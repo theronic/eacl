@@ -182,12 +182,42 @@ The decisions above flow into these externally observable families:
 - relationship pagination and cursor continuation;
 - authorization-filtered relationship scans and relationship-filtered resource/subject enumeration;
 - ordered batch permission checks under one selected snapshot and aggregate budget;
+- relationship mutation normalization, endpoint resolution, and coalescing;
+- public object cleanup and the separate explicit native-EID cleanup path;
 - cache-enabled variants of checks, lookup, and count.
 
 No production decision may be omitted from the assurance matrix when it can
 alter allow/deny, membership, the stable per-query pagination sequence, page
 flags, typed errors, selected snapshot, or cache provenance. “Ordering” here
 does not imply a global, lexical, domain, or cross-backend order.
+
+Public object identity is a decision boundary before the semantic engine.
+Clojure host equality can equate representation-distinct values (including a
+list and vector with the same members, or different integer representations)
+that a deterministic injective custom codec may resolve to different internal
+objects. Public values may therefore be compared or memoized before resolution
+only when their representation passes the canonical identity predicate.
+Relationship mutations normalize but do not coalesce unresolved public
+updates; endpoint resolution precedes coalescing. Public deletion never treats
+a numeric external ID as a native EID, and resolution failure remains distinct
+from not-found. `delete-object-by-eid!` is the sole public native-EID path.
+
+Public request shape is also a decision boundary before consistency selection
+or mutation dispatch. Unknown top-level or endpoint fields are rejected;
+the single-relationship writer cannot silently discard a misspelled qualifier;
+plural mutation and planning APIs require explicit sequential collections;
+and public-object and native-EID deletion selectors are mutually exclusive.
+Public object deletion additionally requires a typed object with a non-nil ID.
+Reserved page-basis values and the backend-only empty-schema escape hatch are
+also rejected at this boundary rather than ignored or forwarded.
+The shared client repeats mutation-envelope checks at its protocol boundary so
+direct protocol invocation cannot bypass the public wrapper.
+
+Snapshot capture has a separate trust boundary. Callers choose only the
+documented consistency descriptor. The shared `ISnapshotSource` implementation
+rejects every protocol options key before basis selection, so identity codecs,
+clocks, cache stores, and security configuration cannot be replaced after
+`make-client` validation.
 
 ## Machine-enforced source closure
 

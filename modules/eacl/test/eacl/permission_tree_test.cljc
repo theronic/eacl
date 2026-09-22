@@ -303,9 +303,9 @@
   (let [realized (atom 0)
         events (atom [])
         values (letfn [(items [value]
-                        (lazy-seq
-                         (swap! realized inc)
-                         (cons value (items (inc value)))))]
+                         (lazy-seq
+                          (swap! realized inc)
+                          (cons value (items (inc value)))))]
                  (items 10))
         adapter
         (fake-adapter

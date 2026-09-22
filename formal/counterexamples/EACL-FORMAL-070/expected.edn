@@ -1,0 +1,6 @@
+{:snapshot-protocol
+ {:public-wrapper-supplies-empty-options true
+  :empty-options-capture-trusted-runtime true
+  :caller-options-rejected true
+  :identity-resolver-not-overridable true}
+ :dafny-obligation :trusted-snapshot-option-boundary}

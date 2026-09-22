@@ -812,6 +812,9 @@ where `updates` is a collection of `RelationshipUpdate` records:
   - or, maps `{:operation op :relationship rel}`, and
   - `operation` is one of `:create`, `:touch` or `:delete`.
   - A bare `[operation relationship]` vector is rejected as an unsupported update.
+  - Mutation envelopes are closed: unknown keys, nil/non-sequential updates,
+    and a single update map passed to a plural API are rejected rather than
+    treated as an empty successful write.
 
 - Schema names are validated: unknown definitions, relations or bad subject types will fail with `:eacl/unknown-definition` / `:eacl/unknown-relation-or-permission`.
 
@@ -823,8 +826,29 @@ Relationship Conflicts?
   - A Datahike remote writer cannot transport a transaction function and keeps the plan-time check only
   - `:touch` is idempotent. Repeating one operation for the same relationship inside a batch has the same outcome as submitting it once (`:create` still conflicts when the relationship existed before the batch); mixing different operations for the same resolved relationship throws `:eacl/invalid-relationship-update-batch` before submission.
 - `(eacl/create-relationships! acl relationships)` simply calls `write-relationships!` with `:create` operation.
+- The map form of `write-relationship!` is closed too: a misspelled qualifier
+  such as `:valid-until-mss` is rejected instead of creating a relationship
+  without the intended expiry.
 - `(eacl/delete-relationships! acl relationships)` simply calls `write-relationships!` with `:delete` operation.
+- `delete-relationships!` also accepts a `read-relationships` page containing
+  sequential `:data`; one bare `Relationship` map/record is rejected so a
+  revocation cannot silently become a no-op.
 - `(eacl/delete-object! acl object) => {:zed/token "eacl_z4_...", :retracted-datoms n}` is a convenience helper that removes every relationship touching `object`, in both directions. `n` counts relationship datoms actually retracted by the committed transactions. On Datomic the retractions are committed in batches of 1,000 (a concurrent reader can observe a partially deleted object between batches); on DataScript and Datahike they are one atomic transaction. Consumers are expected to delete relationships before retracting a secured entity — see [Deleting a Secured Entity](#deleting-a-secured-entity).
+- `delete-object!` rejects malformed objects, including a missing or nil ID,
+  rather than returning a successful zero-retraction cleanup response.
+- `(eacl/delete-object-by-eid! acl native-eid)` is the explicit ghost-repair form for an entity whose public identity has already been retracted. Numeric IDs passed to `delete-object!` remain public IDs and are never reinterpreted as backend entity IDs.
+- Public request maps are closed. Unknown fields—including misspelled
+  consistency controls—raise `:eacl/invalid-request` before snapshot selection
+  or writer dispatch.
+- Pagination is stable-basis only. `:page/basis :stable` is accepted;
+  reserved or malformed alternatives such as `:live` are rejected instead of
+  being silently ignored.
+- The public schema writer does not expose the lower-level
+  `:allow-empty-schema?` escape hatch. Intentional low-level schema wipes must
+  use a backend schema API and its cache-recovery obligations.
+- Snapshot callers may choose a documented consistency mode, but cannot
+  supply protocol-level runtime options. Trusted identity codecs, clocks,
+  caches, and security configuration always come from `make-client`.
 
 All list APIs use the v8 Relay pagination contract:
 
@@ -1606,7 +1630,12 @@ release's limitation for new entities and tempids.
   replacement require quiescing affected traffic, completing the operation,
   rotating the shared source lifecycle and affected clients/caches, and then
   resuming with deliberate token/cursor key-version policy.
-- SpiceDB `subject#relation` subject sets are not supported. Model group membership with explicit group Relationships and arrow permissions when that expresses the required semantics.
+- SpiceDB `subject#relation` subject sets are not supported. Public operations
+  reject any object with a non-nil `:relation` as
+  `:eacl/unsupported-subject-relation`; EACL never silently treats it as the
+  base `type:id` object. Model group membership with explicit group
+  Relationships and arrow permissions when that expresses the required
+  semantics.
 - *Expansion is structural, not a membership proof:* permission trees preserve
   relation, permission, union, intersection, directed exclusion, and arrow
   boundaries. Use `can?` for an authorization decision.

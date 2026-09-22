@@ -939,8 +939,7 @@
        (unqualified-keyword? (:type value))
        (some? (:id value))
        (canonical-cursor-identity? (:id value))
-       (or (nil? (:relation value))
-           (unqualified-keyword? (:relation value)))))
+       (nil? (:relation value))))
 
 (defn- rendered-relationship-shape?
   [value]

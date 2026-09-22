@@ -1,0 +1,25 @@
+{:id :EACL-FORMAL-068
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "public-id/list-vector-host-equality-before-custom-codec-resolution"
+ :minimized-fixture "fixture.edn"
+ :impact :false-grant
+ :affected-versions
+ ["v8.0 pre-release before public identity boundary hardening"]
+ :affected-backends [:shared :datomic :datahike :datascript :third-party]
+ :root-cause
+ "The assurance matrix modeled typed semantic object identity but omitted the unresolved public host-value boundary. Clojure equality can equate representation-distinct IDs that a deterministic injective custom codec resolves differently, allowing request-local batch memoization to reuse another object's decision and relationship mutation coalescing to discard an update. Public numeric deletion also shared an implicit native-EID fallback, and resolver failures could be treated as absence."
+ :fix
+ "Admit public batch memo keys only for canonical identity representations under the immutable/injective adapter contract; resolve relationship endpoints before coalescing; separate public object deletion from explicit native-EID deletion; propagate resolver failures; and add an authored Dafny identity-boundary model, public operation contracts, mutation controls, and cross-backend regressions."
+ :closing-evidence
+ ["PublicIdentityBoundary.HostEqualityHasRepresentationSensitiveCounterexamples"
+  "PublicIdentityBoundary.CanonicalHostEqualityIsResolverCongruent"
+  "PublicIdentityBoundary.ResolveBeforeCoalescingPreservesDistinctRelationships"
+  "PublicIdentityBoundary.MissingNumericPublicIdNeverFallsBackToNativeEid"
+  "PublicIdentityBoundary.PublicResolutionFailureIsNotNotFound"
+  "eacl.formal.executed-mutation-controls/public-identity-representation-alias-killed?"
+  "eacl.formal.executed-mutation-controls/unresolved-relationship-coalescing-killed?"
+  "eacl.datascript.contract-test/representation-sensitive-identities-do-not-alias-batch-decisions-or-writes-test"
+  "eacl.datascript.contract-test/delete-object-keeps-public-numeric-ids-separate-from-native-eids-test"
+  "eacl.datascript.contract-test/delete-object-propagates-custom-identity-resolution-failures-test"]}

@@ -6,6 +6,10 @@
 
 (def qualifier-keys #{:caveat :caveat-context :valid-until-ms})
 (def ^:private relationship-keys (into #{:subject :relation :resource} qualifier-keys))
+(def ^:private required-relationship-keys #{:subject :relation :resource})
+(def ^:private endpoint-keys #{:type :id :relation})
+(def ^:private public-update-keys
+  #{:operation :relationship :prepared-qualifier})
 
 (defn- invalid-qualifier! [reason]
   (throw (ex-info "Invalid Relationship qualifier input."
@@ -17,8 +21,26 @@
    resolve at the selected writer basis; declared parameter validation remains
    at that boundary. Empty optional data canonicalizes to the ordinary shape."
   [{:keys [caveat caveat-context valid-until-ms] :as relationship}]
-  (when-not (and (map? relationship) (every? relationship-keys (keys relationship)))
+  (when-not (and (map? relationship)
+                 (every? relationship-keys (keys relationship))
+                 (every? #(contains? relationship %)
+                         required-relationship-keys))
     (invalid-qualifier! :relationship-shape))
+  (doseq [[position endpoint] [[:subject (:subject relationship)]
+                               [:resource (:resource relationship)]]]
+    (when-not (and (map? endpoint)
+                   (every? endpoint-keys (keys endpoint))
+                   (keyword? (:type endpoint))
+                   (contains? endpoint :id)
+                   (some? (:id endpoint))
+                   (or (nil? (:relation endpoint))
+                       (keyword? (:relation endpoint))))
+      (invalid-qualifier!
+       (keyword (str (name position) "-shape"))))
+    (when (some? (:relation endpoint))
+      (invalid-qualifier! :unsupported-subject-relation)))
+  (when-not (keyword? (:relation relationship))
+    (invalid-qualifier! :relation-shape))
   (when (and (some? caveat) (not (values/parameter-name? caveat)))
     (invalid-qualifier! :caveat-name))
   (when (and (contains? relationship :caveat-context) (nil? caveat))
@@ -109,14 +131,39 @@
   (coalesce-updates updates)
   true)
 
-(defn normalize-updates
-  "Normalizes and coalesces public input before any inert qualifier allocation."
+(defn normalize-public-updates
+  "Normalizes public input without comparing unresolved external identities.
+
+  A custom ID codec may distinguish host values that Clojure equality treats
+  as equal (for example a list and vector with the same members). Coalescing
+  before endpoint resolution would therefore merge different Relationships.
+  Callers coalesce only after replacing external IDs with internal EIDs."
   [updates]
-  (coalesce-updates
-   (mapv (fn [{:keys [operation relationship] :as update}]
-           (validate-operation! operation)
-           (assoc update :relationship (normalize-relationship relationship)))
-         updates)))
+  (mapv (fn [{:keys [operation relationship] :as update}]
+          (when-not (and (map? update)
+                         (every? public-update-keys (keys update))
+                         (contains? update :operation)
+                         (contains? update :relationship))
+            (throw
+             (ex-info
+              "A relationship mutation contains unknown or missing fields."
+              {:type :eacl/invalid-relationship-update-batch
+               :eacl/error :eacl/invalid-relationship-update-batch
+               :reason :update-shape
+               :unknown-keys
+               (if (map? update)
+                 (vec (remove public-update-keys (keys update)))
+                 [])})))
+          (validate-operation! operation)
+          (assoc update :relationship (normalize-relationship relationship)))
+        updates))
+
+(defn normalize-updates
+  "Normalizes and coalesces updates whose relationship identities are already
+  safe to compare. Public writer paths use `normalize-public-updates`, resolve
+  their endpoints, and only then call `coalesce-updates`."
+  [updates]
+  (coalesce-updates (normalize-public-updates updates)))
 
 (defn stamp-relation-generations
   "Adds one idempotent backend-native generation stamp per affected relation.
