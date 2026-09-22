@@ -53,7 +53,6 @@
        :order-hint (fn [] 1)
        :exact-locator (fn [] 1)
        :object-id->internal (fn [id] id)
-       :public-object-id->internal (fn [id] id)
        :internal-id->object (fn [id] id)
        :relation-defs
        (fn [resource-type relation-name]

@@ -599,8 +599,6 @@
       :exact-locator (constantly 1)
       :object-id->internal
       #(case % "document-1" 1 "document-2" 2 nil)
-      :public-object-id->internal
-      #(case % "document-1" 1 "document-2" 2 nil)
       :internal-id->object
       #(case % 1 "document-1" 2 "document-2" nil)
       :proof-frame
@@ -726,7 +724,6 @@
      (merge
       (::backend/operations base)
       {:object-id->internal identity
-       :public-object-id->internal identity
        :internal-id->object identity
        :relation-populated?
        (fn [_subject-type relation-id _resource-type]

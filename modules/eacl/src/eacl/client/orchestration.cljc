@@ -1581,7 +1581,7 @@
                               execution/*contract* contract
                               subproblem/*decision-kernel*
                               (:decision-kernel opts)]
-                      (engine/can?
+                      (engine/can-eids?
                        adapter internal-subject permission endpoint))))]
             (batch/check-aggregate-limits! limits (counters 0) nil)
             allowed?))]
@@ -1872,7 +1872,9 @@
                    :evaluation (get-in opts [:execution-contract :evaluation])}
             engine/*qualification*
             (merge (authorization-result/check-result (evidence/decode (get-in answer [:value :value]))))))
-        check-point (if engine/*qualification* engine/check-evidence engine/can?)]
+        check-point (if engine/*qualification*
+                      engine/check-evidence-eids
+                      engine/can-eids?)]
     (if public-key?
       ;; Exact lookup precedes the compute closure, so a warm point decision
       ;; performs no Datomic/Dynamo identity lookup. Managed reuse is safe only
@@ -2159,8 +2161,8 @@
                     execution/*contract* contract
                     subproblem/*decision-kernel* (:decision-kernel opts)]
             ((case operation
-               :lookup-resources engine/lookup-resources
-               :lookup-subjects engine/lookup-subjects)
+               :lookup-resources engine/lookup-resources-eids
+               :lookup-subjects engine/lookup-subjects-eids)
              adapter internal-query engine-options))
           _ (batch/check-aggregate-limits!
              limits (counters (count (:data internal-page))) nil)]
@@ -2241,7 +2243,7 @@
                             compute-query
                             (fn [internal-query]
                               (validate!)
-                              (engine/lookup-resources
+                              (engine/lookup-resources-eids
                                adapter
                                internal-query
                                {:continuation-cache-fn
@@ -2314,7 +2316,7 @@
                             (dissoc :consistency :cache? :populate-cache?
                                     :evaluation :timeout-ms
                                     :cancellation-token))]
-                    (engine/count-resources adapter internal-query))
+                    (engine/count-resources-eids adapter internal-query))
                   (empty-answer)))]
           (if public-key?
             (let [public-query
@@ -2351,7 +2353,7 @@
                        (:permission internal-query)
                        #(do
                           (validate!)
-                          (engine/count-resources adapter internal-query)))]
+                          (engine/count-resources-eids adapter internal-query)))]
                   (with-cache-info (:value answer) answer))))))))))
 
 (defn lookup-subjects
@@ -2431,7 +2433,7 @@
                             compute-query
                             (fn [internal-query]
                               (validate!)
-                              (engine/lookup-subjects
+                              (engine/lookup-subjects-eids
                                adapter
                                internal-query
                                {:continuation-cache-fn
@@ -2505,7 +2507,7 @@
                             (dissoc :consistency :cache? :populate-cache?
                                     :evaluation :timeout-ms
                                     :cancellation-token))]
-                    (engine/count-subjects adapter internal-query))
+                    (engine/count-subjects-eids adapter internal-query))
                   (empty-answer)))]
           (if public-key?
             (let [public-query
@@ -2542,7 +2544,7 @@
                        (:permission internal-query)
                        #(do
                           (validate!)
-                          (engine/count-subjects adapter internal-query)))]
+                          (engine/count-subjects-eids adapter internal-query)))]
                   (with-cache-info (:value answer) answer))))))))))
 
 (defn expand-permission-tree

@@ -225,8 +225,8 @@
                  :permission :admin
                  :resource/type :account}
           calls (atom 0)
-          lookup-resources engine/lookup-resources]
-      (with-redefs [engine/lookup-resources
+          lookup-resources engine/lookup-resources-eids]
+      (with-redefs [engine/lookup-resources-eids
                     (fn [db internal-query continuation-context]
                       (swap! calls inc)
                       (lookup-resources db
@@ -278,8 +278,8 @@
           before-version (idx/schema-version (d/db conn))
           entered (promise)
           release-read (promise)
-          original-check engine/check-evidence]
-      (with-redefs [engine/check-evidence
+          original-check engine/check-evidence-eids]
+      (with-redefs [engine/check-evidence-eids
                     (fn [& args]
                       (deliver entered true)
                       @release-read

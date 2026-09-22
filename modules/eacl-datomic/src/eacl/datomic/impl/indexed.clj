@@ -1,6 +1,7 @@
 (ns eacl.datomic.impl.indexed
-  "Compatibility façade over Datomic storage primitives and the shared v8
-  authorization engine. No authorization traversal is implemented here."
+  "Native-EID compatibility façade over Datomic storage primitives and the
+  shared v8 authorization engine. No authorization traversal is implemented
+  here. Application-ID callers should use `eacl.datomic.impl` or a client."
   (:require [eacl.datomic.backend :as backend]
             [eacl.datomic.db :as ddb]
             [eacl.engine.v8 :as engine]))
@@ -15,6 +16,10 @@
 (defn object-eid
   [db object-id]
   (ddb/object-eid db object-id))
+
+(defn- internal-object
+  [db object]
+  (update object :id #(object-eid db %)))
 
 (defn relation-datoms
   [db resource-type relation-name]
@@ -60,8 +65,11 @@
 (defn can?
   ([db subject permission resource]
    (with-engine-bindings
-     (engine/can?
-      (basis-adapter db) subject permission resource)))
+     (engine/can-eids?
+      (basis-adapter db)
+      (internal-object db subject)
+      permission
+      (internal-object db resource))))
   ([db {:keys [subject permission resource]}]
    (can? db subject permission resource)))
 
@@ -70,23 +78,31 @@
    (lookup-resources db query nil))
   ([db query opts]
    (with-engine-bindings
-     (engine/lookup-resources
-      (basis-adapter db) query opts))))
+     (engine/lookup-resources-eids
+      (basis-adapter db)
+      (update query :subject #(internal-object db %))
+      opts))))
 
 (defn lookup-subjects
   ([db query]
    (lookup-subjects db query nil))
   ([db query opts]
    (with-engine-bindings
-     (engine/lookup-subjects
-      (basis-adapter db) query opts))))
+     (engine/lookup-subjects-eids
+      (basis-adapter db)
+      (update query :resource #(internal-object db %))
+      opts))))
 
 (defn count-resources
   [db query]
   (with-engine-bindings
-    (engine/count-resources (basis-adapter db) query)))
+    (engine/count-resources-eids
+     (basis-adapter db)
+     (update query :subject #(internal-object db %)))))
 
 (defn count-subjects
   [db query]
   (with-engine-bindings
-    (engine/count-subjects (basis-adapter db) query)))
+    (engine/count-subjects-eids
+     (basis-adapter db)
+     (update query :resource #(internal-object db %)))))

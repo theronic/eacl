@@ -369,8 +369,7 @@ loops should call `eacl.execution/check!` at bounded internal checkpoints.
 ## Backend extension boundary
 
 The adapter operation map validates snapshot/source identity, consistency,
-public identity resolution separately from resolved native-ID pass-through,
-object externalization, schema definitions, adjacency, direct matches,
+application-ID conversion, object externalization, schema definitions, adjacency, direct matches,
 recursive nodes, transaction behavior, cursor identity, the independent
 `:schema-generation` operation, and optional ordered-generation proof
 capability. A third-party adapter without certified proof support remains a
@@ -378,12 +377,12 @@ correct exact-basis adapter. Returning nil for schema generation also
 disables cross-request derived-state reuse while preserving request-local
 reuse.
 
-Every v8 adapter must implement both `:public-object-id->internal` and
-`:object-id->internal`. The public operation must always invoke the configured
-identity codec and must not treat a numeric public ID as a native entity ID;
-the engine-side operation may preserve an already-resolved native ID. Reusing
-one numeric-pass-through callback for both operations is a security defect for
-applications that admit numeric public IDs.
+Every v8 adapter continues to implement `:object-id->internal`. It must always
+invoke the configured identity codec and must not treat a numeric application
+ID as a native entity ID. Resolved IDs do not need another adapter operation:
+the shared engine receives them through its explicit `-eids` entry points.
+Third-party adapters therefore need no new operation or configuration key;
+they must remove any numeric-shape pass-through from the existing converter.
 
 Backend authors should follow the [adapter boundary
 inventory](v8-backend-adapter-boundary.md) and run the shared public API,
@@ -401,7 +400,7 @@ and rejected candidate deterministically.
 The separate `eacl-spicedb` repository must be recut against this core before
 it can claim v8 compatibility. Its reader boundary must implement or explicitly
 reject the new `:schema-generation` and certified `:direct-match?` obligations,
-implement the separate `:public-object-id->internal` trust boundary,
+make `:object-id->internal` a codec-only conversion boundary,
 wire `check-permissions` and both authorized pagination query shapes through
 the shared contracts where its topology permits, adopt the current encrypted
 cursor ABI, and pass the aggregate conformance suite. An older published

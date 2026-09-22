@@ -591,10 +591,9 @@
         key (checkpoint-key binding)
         payload (when-let [token (or after before)]
                   (decode-token options binding token))
-        anchor-eid (backend/public-object-id->internal adapter
-                                                       (second anchor))
+        anchor-eid (backend/object-id->internal adapter (second anchor))
         boundary-eid (when payload
-                       (backend/public-object-id->internal
+                       (backend/object-id->internal
                         (:adapter options) (:boundary payload)))
         _ (when (and payload (nil? boundary-eid))
             (page-error! :eacl.page/invalid-cursor

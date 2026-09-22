@@ -36,8 +36,6 @@
            :exact-locator (constantly nil)
            :object-id->internal (fn [external-id]
                                   (get objects external-id))
-           :public-object-id->internal (fn [external-id]
-                                         (get objects external-id))
            :internal-id->object (fn [internal-id]
                                   (when codec-counts
                                     (swap! codec-counts

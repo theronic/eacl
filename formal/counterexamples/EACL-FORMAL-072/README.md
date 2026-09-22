@@ -13,9 +13,11 @@ to `0`, then rewound to the first page forever and never reached a later grant.
 The same ambiguity could resolve a numeric permission-tree root as the wrong
 object.
 
-The adapter contract now has a distinct `:public-object-id->internal`
-operation. Relay cursors, standalone public pagination, permission-tree roots,
-and adapter certification use that operation; cache-normalized engine requests
-retain the separate native-EID pass-through. Every bundled backend implements
-the split. A Dafny counterexample, portable mutation control, and real
-DataScript pagination/tree regression prevent the domains from being merged.
+The adapter contract keeps the existing `:object-id->internal` operation and
+gives it one unambiguous job: apply the configured application-ID codec.
+Application IDs cross that boundary exactly once. The authorization engine's
+resolved-EID entry points then consume the result directly, without calling a
+resolver or guessing from the value's numeric shape. This requires no new
+adapter option and no client configuration change. A Dafny type boundary,
+portable mutation control, and real DataScript pagination/tree regression
+prevent conversion and engine execution from being merged again.

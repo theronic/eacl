@@ -271,7 +271,7 @@
    {:operation :expand-permission-tree
     :entry-points ['eacl.core/expand-permission-tree
                    'eacl.permission-tree/expand
-                   'eacl.backend.v8/public-object-id->internal]
+                   'eacl.backend.v8/object-id->internal]
     :theorems
     [:tree-node-oneof-and-annotation-well-formedness
      :direct-leaf-exactness
@@ -282,6 +282,8 @@
      :successful-limit-preservation
      :failure-carries-no-partial-tree
      :typed-object-identity
+     :application-ids-resolve-exactly-once-at-ingress
+     :resolved-engine-identities-bypass-the-codec
      :public-cursor-resolution-never-selects-native-identity
      :sum-typed-relation-declaration-exactness
      :every-emitted-child-consumes-depth]
@@ -633,7 +635,7 @@
     :entry-points
     ['eacl.core/read-relationships
      'eacl.client.orchestration/default-spice-cursor->internal
-     'eacl.backend.v8/public-object-id->internal
+     'eacl.backend.v8/object-id->internal
      'eacl.relay/internalize-prepared-page-query
      'eacl.engine.relationships/execute-page
      'eacl.engine.relationships/execute-filtered-window
@@ -646,6 +648,8 @@
      :relationship-page-scope-mismatch-cannot-hit
      :truthiness-drops-an-admitted-false-identity
      :presence-preserves-every-admitted-identity
+     :application-ids-resolve-exactly-once-at-ingress
+     :resolved-engine-identities-bypass-the-codec
      :numeric-public-cursor-has-a-native-alias-counterexample
      :public-cursor-resolution-never-selects-native-identity
      :arbitrary-window-concatenation-is-exact

@@ -511,12 +511,14 @@ as replayed counterexamples against the stable engine.
   public value through an adapter operation whose numeric branch meant
   “already-resolved database entity ID.” In a real paginated relationship
   audit, pages could repeat forever and never reach grants after user `0`.
-  Public identity resolution is now a distinct required adapter operation on
-  Datomic, Datahike, Datalevin, DataScript, and third-party adapters. This is
-  exploitable through otherwise valid library usage when an attacker can
-  choose a numeric account ID; applications restricted to string/UUID public
-  IDs are not affected. EACL-FORMAL-072 records the model, mutant, multi-page
-  regression, and numeric permission-tree regression.
+  The existing `:object-id->internal` operation now performs only the
+  configured application-ID conversion. EACL calls it once at ingress and
+  gives the resolved EID directly to the engine; no new adapter option or
+  client configuration is required. This is exploitable through otherwise
+  valid library usage when an attacker can choose a numeric account ID;
+  applications restricted to string/UUID public IDs are not affected.
+  EACL-FORMAL-072 records the model, mutant, multi-page regression, and numeric
+  permission-tree regression.
 - **Unsupported SpiceDB subject sets now fail closed.** EACL does not implement
   `subject#relation` usersets, but public object maps previously accepted a
   non-nil `:relation` and then ignored it. For example, an application could

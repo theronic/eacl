@@ -13,7 +13,7 @@ database, datom, attribute-ID, or tuple implementation types.
 | Public request normalization, errors, traversal, recursion, de-duplication, batches, authorized candidate windows, Relay windowing, counts | Shared engine |
 | Consistency capability validation | Shared selection code |
 | Current, authoritative, causal-floor, and exact basis selection | Source |
-| Public object ID internalization, resolved native-ID pass-through, and externalization | Adapter, under separate declared trust-domain contracts |
+| Application-ID conversion and internal-ID externalization | Adapter; resolved IDs stay inside explicit engine-only paths |
 | Relation and permission definition reads | Adapter returns normalized definitions |
 | Forward/reverse ordered adjacency scans, direct match | Adapter |
 | Dependency extraction, sealed plan compilation and rank certification | Shared engine |
@@ -30,8 +30,7 @@ configuration. It contains no connection, source, writer, or selection
 callback. It provides:
 
 - snapshot ID, basis kind, native revision, order, and exact-locator identity;
-- separate public-ID internalization, already-resolved native-ID pass-through,
-  and internal/external object conversion;
+- application-ID internalization and internal/external object conversion;
 - normalized relation and permission definitions;
 - ordered forward/reverse adjacency, direct match, and permission-node
   operations;
@@ -48,14 +47,13 @@ its implementation may perform at most one index probe. A backend advertising
 adapter without that capability is still a correct exact-basis adapter and
 may still certify schema generation for derived-plan reuse.
 
-`:public-object-id->internal` receives only untrusted public IDs. It must apply
-the backend's configured public identity codec and must never interpret a
-numeric public value as an already-resolved entity ID. `:object-id->internal`
-is the distinct engine-side operation for values that have already crossed the
-public identity boundary; it may preserve a validated native ID. Backends must
-not implement both operations with a numeric pass-through. This separation is
-required even when an application's current codec emits only strings, because
-the adapter contract must remain safe when a codec admits numeric IDs.
+`:object-id->internal` has one job: convert an application object ID through
+the configured identity codec. It must never interpret a numeric value as an
+already-resolved entity ID merely because it is numeric. The shared client
+invokes this conversion once at ingress; after that, explicit engine functions
+whose names end in `-eids` consume the resolved IDs directly and never call the
+codec again. This keeps the established adapter operation and client options
+unchanged while making the two stages unambiguous.
 
 `:direct-match?` is a certified semantic operation, not an optimization hint.
 For every schema-valid triple it must return exactly whether that one direct

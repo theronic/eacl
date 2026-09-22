@@ -7,7 +7,11 @@
  :permission-tree
  {:numeric-root-uses-public-codec true}
  :adapter-contract
- {:public-resolution-distinct-from-native-pass-through true}
+ {:existing-converter-kept true
+  :application-id-converted-once true
+  :resolved-eid-bypasses-converter true}
  :dafny-obligations
- [:numeric-public-native-alias-counterexample
+ [:application-id-resolves-once-at-ingress
+  :resolved-eid-bypasses-codec
+  :numeric-public-native-alias-counterexample
   :public-resolution-never-selects-native-identity]}

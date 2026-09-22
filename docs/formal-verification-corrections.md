@@ -324,12 +324,14 @@ no verified-release claim existed.
   already-resolved native entity IDs. Its numeric fast path had no way to know
   which trust domain supplied the value, and the formal identity model did not
   represent that distinction.
-- **Correction:** the v8 adapter contract now requires a separate public-only
-  resolver, implemented by every bundled backend and used by Relay cursors,
-  standalone public pagination, permission-tree roots, and certification.
-  `PublicIdentityBoundary.dfy` proves the old counterexample and the corrected
-  domain-separation law; an executed mutant and a real DataScript three-page
-  regression bind the model to production.
+- **Correction:** the existing `:object-id->internal` operation now has one
+  meaning: apply the configured application-ID codec. EACL invokes it once at
+  request or cursor ingress, then sends the resolved EID through explicit
+  internal engine entry points without another conversion. No new adapter or
+  client option is required. `PublicIdentityBoundary.dfy` types the two stages
+  separately and proves both the old counterexample and the conversion-once
+  law; an executed mutant and a real DataScript three-page regression bind the
+  model to production.
 
 ### EACL-FORMAL-073 — unsupported `subject#relation` input became a base object
 

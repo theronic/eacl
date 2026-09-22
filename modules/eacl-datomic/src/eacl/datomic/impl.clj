@@ -52,10 +52,17 @@
                impl.indexed/*recursive-traversal-stats*]
        ~@body)))
 
+(defn- internal-object
+  [database object]
+  (update object :id #(db/object-eid database %)))
+
 (defn can?
   ([db subject permission resource]
    (with-request-engine [adapter db]
-     (engine/can? adapter subject permission resource)))
+     (engine/can-eids? adapter
+                       (internal-object db subject)
+                       permission
+                       (internal-object db resource))))
   ([db {:keys [subject permission resource]}]
    (can? db subject permission resource)))
 
@@ -64,24 +71,32 @@
    (lookup-subjects db query nil))
   ([db query lookup-opts]
    (with-request-engine [adapter db]
-     (engine/lookup-subjects adapter query lookup-opts))))
+     (engine/lookup-subjects-eids
+      adapter
+      (update query :resource #(internal-object db %))
+      lookup-opts))))
 
 (defn lookup-resources
   ([db query]
    (lookup-resources db query nil))
   ([db query lookup-opts]
    (with-request-engine [adapter db]
-     (engine/lookup-resources adapter query lookup-opts))))
+     (engine/lookup-resources-eids
+      adapter
+      (update query :subject #(internal-object db %))
+      lookup-opts))))
 
 (defn count-resources
   [db query]
   (with-request-engine [adapter db]
-    (engine/count-resources adapter query)))
+    (engine/count-resources-eids
+     adapter (update query :subject #(internal-object db %)))))
 
 (defn count-subjects
   [db query]
   (with-request-engine [adapter db]
-    (engine/count-subjects adapter query)))
+    (engine/count-subjects-eids
+     adapter (update query :resource #(internal-object db %)))))
 
 (def ^:private relation-version-attr :eacl/relation-version)
 (def ^:private schema-version-attr :eacl/schema-version)
