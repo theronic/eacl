@@ -3,7 +3,7 @@
   :misspelled-consistency-rejected true
   :reserved-live-page-basis-rejected true}
  :relationship-mutations
- {:single-record-delete-rejected true
+ {:bare-record-delete-rejected true
   :misspelled-expiry-rejected true
   :missing-or-nil-updates-rejected true
   :unknown-envelope-fields-rejected true

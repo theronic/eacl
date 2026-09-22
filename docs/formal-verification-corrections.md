@@ -258,10 +258,11 @@ no verified-release claim existed.
 - **Impact:** a consistency typo could silently use the default consistency; a
   reserved live-page request could be accepted but ignored; the backend-only
   empty-schema escape hatch crossed the public boundary; a
-  misspelled expiry could create a permanent relationship; a single-record
-  revocation or malformed plan could report success with no updates; and a
-  nil-ID cleanup could report success with no work while a mixed public/native
-  object envelope could delete another entity's relationships.
+  misspelled expiry could create a permanent relationship; passing a bare
+  relationship record rather than the valid singleton collection
+  `[relationship]`, or passing a malformed plan, could report success with no
+  updates; and a nil-ID cleanup could report success with no work while a mixed
+  public/native object envelope could delete another entity's relationships.
 - **Root cause:** the formal abstraction began after open Clojure maps had
   already been destructured. Unknown keys, collection shape, and mutually
   exclusive identity selectors were therefore outside the model.

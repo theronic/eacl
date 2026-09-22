@@ -6,8 +6,9 @@ fields, ambiguous identity selectors, and malformed collection shapes must be
 rejected before consistency selection or mutation dispatch.
 
 The minimized witnesses are misspelled `:consistncy` and `:valid-until-mss`
-keys, one Relationship record passed to the plural deletion helper, one update
-map passed where a batch envelope was required, and a deletion envelope
+keys, one bare Relationship record passed to the plural deletion helper instead
+of the valid singleton collection `[relationship]`, one update map passed where
+a batch envelope was required, and a deletion envelope
 containing both the public object and an internal native entity ID. A public
 object with a nil ID also returned a successful cleanup response that removed
 nothing. Before the fix, these could weaken consistency, silently turn an
