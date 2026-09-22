@@ -479,9 +479,11 @@ as replayed counterexamples against the stable engine.
   cross-runtime regressions.
 - **Fail-open public request shapes.** Point/count/schema reads now reject
   unknown keys before consistency selection. Relationship mutation helpers
-  reject nil, single-record, missing-update, and unknown-field batch shapes
-  instead of reporting an empty success; a misspelled expiry can no longer be
-  discarded to create a permanent relationship. `delete-object!` accepts only a public
+  reject nil, bare-record, missing-update, and unknown-field batch shapes
+  instead of reporting an empty success. Singleton collections such as
+  `[relationship]` remain valid; only passing `relationship` itself to the
+  plural helper is rejected. A misspelled expiry can no longer be discarded to
+  create a permanent relationship. `delete-object!` accepts only a public
   object with a non-nil ID; its envelope cannot carry `:native-eid`, and the
   client protocol also rejects malformed or mixed identities. Reserved
   `:page/basis` modes are rejected rather than ignored, and the backend-only
