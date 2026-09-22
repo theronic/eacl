@@ -1051,6 +1051,7 @@
 
 (deftest numeric-public-identities-never-become-native-cursor-eids-test
   (let [conn (datascript/create-conn)
+        codec-calls (atom [])
         external->stored
         {"first-user" "stored-first-user"
          0 "stored-zero-user"
@@ -1068,6 +1069,7 @@
           :identity-immutable? true
           :object-id->lookup-ref
           (fn [object-id]
+            (swap! codec-calls conj object-id)
             [:eacl/id (get external->stored object-id object-id)])
           :entid->object-id
           (fn [db eid]
@@ -1091,6 +1093,12 @@
             "stored-later-user"
             "stored-numeric-document"]))
     (eacl/create-relationships! client relationships)
+
+    (reset! codec-calls [])
+    (is (true? (eacl/can? client (nth users 1) :view document))
+        "resolved EIDs must reach the engine directly instead of entering the application-ID codec twice")
+    (is (= [0 7] @codec-calls)
+        "each application ID crosses the configured codec exactly once")
 
     (let [first-page (eacl/read-relationships client query)
           second-page

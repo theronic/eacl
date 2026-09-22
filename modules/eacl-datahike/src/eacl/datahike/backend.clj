@@ -278,13 +278,9 @@
 
        :object-id->internal
        (fn [object-id]
-         (if (number? object-id)
-           object-id
-           (object-id->entid db object-id)))
-
-       :public-object-id->internal
-       (fn [object-id]
-         (object-id->entid db object-id))
+         (if object-id->entid
+           (object-id->entid db object-id)
+           (some-> (d/entity db [:eacl/id object-id]) :db/id)))
 
        :internal-id->object
        (fn [internal-id]

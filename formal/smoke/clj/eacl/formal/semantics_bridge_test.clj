@@ -447,10 +447,6 @@
          (fn [object-id]
            (some-> (get id->object object-id)
                    external->internal))
-         :public-object-id->internal
-         (fn [object-id]
-           (some-> (get id->object object-id)
-                   external->internal))
          :internal-id->object
          (fn [internal-id]
            (:id (get internal->object internal-id)))

@@ -947,7 +947,7 @@
         (transform-edge-ids
          (fn [object-id]
            (let [internal-id
-                 (backend/public-object-id->internal adapter object-id)]
+                 (backend/object-id->internal adapter object-id)]
              (when (nil? internal-id)
                (vreset! missing? true))
              internal-id))

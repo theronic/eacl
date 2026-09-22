@@ -55,7 +55,6 @@
     :order-hint
     :exact-locator
     :object-id->internal
-    :public-object-id->internal
     :internal-id->object
     :relation-defs
     :permission-defs
@@ -93,10 +92,8 @@
    :exact-locator
    #{:stable-for-immutable-snapshot}
    :object-id->internal
-   #{:resolved-object-pass-through :nonnegative :snapshot-bound}
-   :public-object-id->internal
    #{:visible-object-total :injective :nonnegative :snapshot-bound
-     :never-native-id-pass-through}
+     :configured-conversion-only}
    :internal-id->object
    #{:visible-object-round-trip :snapshot-bound}
    :relation-defs
@@ -671,11 +668,11 @@
 
 (declare invoke)
 
-(defn public-object-id->internal
-  "Resolves an untrusted public object ID without applying the native numeric
-  entity-ID pass-through used by already-normalized engine requests."
-  [adapter public-id]
-  (invoke adapter :public-object-id->internal public-id))
+(defn object-id->internal
+  "Converts one application object ID through the adapter's configured ID
+  codec. Resolved backend IDs do not pass through this boundary again."
+  [adapter object-id]
+  (invoke adapter :object-id->internal object-id))
 
 (defn basis-kind
   "Returns the certified database-view classification for one adapter."
@@ -748,7 +745,7 @@
       (:subject->resources :resource->subjects)
       (guard-scan! adapter operation-key (or options {}) value)
 
-      (:object-id->internal :public-object-id->internal)
+      :object-id->internal
       (do
         (when (and (some? value)
                    (not (entity-id/valid? value)))

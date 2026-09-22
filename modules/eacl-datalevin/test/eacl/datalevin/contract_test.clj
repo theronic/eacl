@@ -272,18 +272,18 @@
   {:relations
    (into #{}
          (map #(select-keys %
-                           [:eacl.relation/resource-type
-                            :eacl.relation/relation-name
-                            :eacl.relation/subject-type]))
+                            [:eacl.relation/resource-type
+                             :eacl.relation/relation-name
+                             :eacl.relation/subject-type]))
          (:relations value))
    :permissions
    (into #{}
          (map #(select-keys %
-                           [:eacl.permission/resource-type
-                            :eacl.permission/permission-name
-                            :eacl.permission/source-relation-name
-                            :eacl.permission/target-type
-                            :eacl.permission/target-name]))
+                            [:eacl.permission/resource-type
+                             :eacl.permission/permission-name
+                             :eacl.permission/source-relation-name
+                             :eacl.permission/target-type
+                             :eacl.permission/target-name]))
          (:permissions value))})
 
 (defn- with-observation-system
@@ -430,7 +430,7 @@
           (let [before-revision (:max-tx (d/db conn))
                 error
                 (with-redefs
-                  [datalevin-fork/write-policy-capabilities (constantly nil)]
+                 [datalevin-fork/write-policy-capabilities (constantly nil)]
                   (error-data
                    #(datalevin/make-client conn (client-config))))]
             (is (= :eacl/unsupported-capability (:type error)))
@@ -773,8 +773,7 @@
           (let [adapter
                 (datalevin-backend/basis-adapter snapshot adapter-opts)]
             (doseq [[operation args]
-                    [[:object-id->internal [too-large]]
-                     [:internal-id->object [too-large]]
+                    [[:internal-id->object [too-large]]
                      [:subject->resources
                       [:user too-large 1 :document {:direction :asc}]]
                      [:subject->resources
@@ -999,11 +998,11 @@
       (let [alice (eacl/spice-object :user "alice")
             document (eacl/spice-object :document "document-1")]
         (eacl/with-snapshot
-         [snapshot (eacl/snapshot client consistency/fully-consistent)]
-           (is (false? (eacl/can? snapshot alice :view document)))
-           @(future
-              (eacl/create-relationship! client alice :viewer document))
-           (is (false? (eacl/can? snapshot alice :view document))))
+          [snapshot (eacl/snapshot client consistency/fully-consistent)]
+          (is (false? (eacl/can? snapshot alice :view document)))
+          @(future
+             (eacl/create-relationship! client alice :viewer document))
+          (is (false? (eacl/can? snapshot alice :view document))))
         (is (true? (eacl/can? client alice :view document)))
         (is (= {:active 0 :oldest-age-ms nil}
                (d/active-read-snapshot-info)))))))
@@ -1152,184 +1151,184 @@
     (fn [{:keys [conn client]}]
       (eacl/write-schema! client scan-schema)
       (let [large-safe-id 2147483659]
-      (d/transact!
-       conn
-       (conj
-        (mapv (fn [id] {:eacl/id id})
-              (into
-               ["alice" "bob" "carol" "dave" "eve" "group-one"
-                "document-1" "document-2" "document-3"
-                "document-4" "document-5" "folder-1"]
-               (map #(str "adjacent-document-" %) (range 40))))
-        {:db/id large-safe-id :eacl/id "document-large"}))
-      (let [users (mapv #(eacl/spice-object :user %)
-                        ["alice" "bob" "carol" "dave" "eve"])
-            alice (first users)
-            document-1 (eacl/spice-object :document "document-1")
-            documents
-            (conj
-             (mapv #(eacl/spice-object :document (str "document-" %))
-                   (range 1 6))
-             (eacl/spice-object :document "document-large"))]
-        (eacl/create-relationships!
-         client
-         (into
-          (mapv #(eacl/->Relationship alice :viewer %) documents)
-          (concat
-           (map #(eacl/->Relationship % :viewer document-1)
-                (rest users))
+        (d/transact!
+         conn
+         (conj
+          (mapv (fn [id] {:eacl/id id})
+                (into
+                 ["alice" "bob" "carol" "dave" "eve" "group-one"
+                  "document-1" "document-2" "document-3"
+                  "document-4" "document-5" "folder-1"]
+                 (map #(str "adjacent-document-" %) (range 40))))
+          {:db/id large-safe-id :eacl/id "document-large"}))
+        (let [users (mapv #(eacl/spice-object :user %)
+                          ["alice" "bob" "carol" "dave" "eve"])
+              alice (first users)
+              document-1 (eacl/spice-object :document "document-1")
+              documents
+              (conj
+               (mapv #(eacl/spice-object :document (str "document-" %))
+                     (range 1 6))
+               (eacl/spice-object :document "document-large"))]
+          (eacl/create-relationships!
+           client
+           (into
+            (mapv #(eacl/->Relationship alice :viewer %) documents)
+            (concat
+             (map #(eacl/->Relationship % :viewer document-1)
+                  (rest users))
            ;; Adjacent prefixes that must never escape into viewer/user/document
            ;; scans in either direction.
-           [(eacl/->Relationship
-             alice :editor (eacl/spice-object :document "document-2"))
-            (eacl/->Relationship
-             alice :viewer (eacl/spice-object :folder "folder-1"))
-            (eacl/->Relationship
-             (eacl/spice-object :group "group-one")
-             :reviewer document-1)]
+             [(eacl/->Relationship
+               alice :editor (eacl/spice-object :document "document-2"))
+              (eacl/->Relationship
+               alice :viewer (eacl/spice-object :folder "folder-1"))
+              (eacl/->Relationship
+               (eacl/spice-object :group "group-one")
+               :reviewer document-1)]
            ;; Force the forward viewer scan across the adaptive local-scan
            ;; threshold. The fallback must still seek the exact viewer prefix
            ;; rather than leak or omit these adjacent editor relationships.
-           (map
-            #(eacl/->Relationship
-              alice :editor
-              (eacl/spice-object :document (str "adjacent-document-" %)))
-            (range 40)))))
+             (map
+              #(eacl/->Relationship
+                alice :editor
+                (eacl/spice-object :document (str "adjacent-document-" %)))
+              (range 40)))))
         ;; Reassertions exercise storage-level set semantics and adapter-level
         ;; duplicate suppression without creating another logical tuple.
-        (dotimes [_ 2]
-          (eacl/write-relationship!
-           client :touch alice :viewer document-1))
-        (let [provider (:source client)
-              selected (source/acquire! provider :current)
-              adapter (source/adapter selected)]
-          (try
-            (let [subject-id
-                  (backend/invoke adapter :object-id->internal "alice")
-                  bob-id
-                  (backend/invoke adapter :object-id->internal "bob")
-                  relation-id
-                  (:relation-id
-                   (first
-                    (backend/invoke
-                     adapter :relation-defs :document :viewer)))
-                  resource-ids (->> ["document-1" "document-2" "document-3"
-                                     "document-4" "document-5" "document-large"]
-                                    (mapv #(backend/invoke
-                                            adapter :object-id->internal %))
-                                    sort
-                                    vec)
-                  document-id
-                  (backend/invoke adapter :object-id->internal "document-1")
-                  subject-ids (->> ["alice" "bob" "carol" "dave" "eve"]
-                                   (mapv #(backend/invoke
-                                           adapter :object-id->internal %))
-                                   sort
-                                   vec)
-                  forward-prefix [:user subject-id relation-id :document]
-                  reverse-prefix [:document document-id relation-id :user]
-                  scan (fn [operation prefix options]
-                         (apply backend/invoke adapter operation
-                                (conj prefix options)))]
-              (testing "small endpoints avoid seek; large endpoints fall back"
-                (with-redefs [d/seek-datoms
-                              (fn [& _]
-                                (throw
-                                 (ex-info "Small endpoint opened a seek."
-                                          {:type :test/unexpected-seek})))]
-                  (is (= [document-id]
-                         (scan :subject->resources
-                               [:user bob-id relation-id :document]
-                               {:direction :asc}))))
-                (let [seek-calls (atom 0)
-                      original-seek d/seek-datoms]
+          (dotimes [_ 2]
+            (eacl/write-relationship!
+             client :touch alice :viewer document-1))
+          (let [provider (:source client)
+                selected (source/acquire! provider :current)
+                adapter (source/adapter selected)]
+            (try
+              (let [subject-id
+                    (backend/invoke adapter :object-id->internal "alice")
+                    bob-id
+                    (backend/invoke adapter :object-id->internal "bob")
+                    relation-id
+                    (:relation-id
+                     (first
+                      (backend/invoke
+                       adapter :relation-defs :document :viewer)))
+                    resource-ids (->> ["document-1" "document-2" "document-3"
+                                       "document-4" "document-5" "document-large"]
+                                      (mapv #(backend/invoke
+                                              adapter :object-id->internal %))
+                                      sort
+                                      vec)
+                    document-id
+                    (backend/invoke adapter :object-id->internal "document-1")
+                    subject-ids (->> ["alice" "bob" "carol" "dave" "eve"]
+                                     (mapv #(backend/invoke
+                                             adapter :object-id->internal %))
+                                     sort
+                                     vec)
+                    forward-prefix [:user subject-id relation-id :document]
+                    reverse-prefix [:document document-id relation-id :user]
+                    scan (fn [operation prefix options]
+                           (apply backend/invoke adapter operation
+                                  (conj prefix options)))]
+                (testing "small endpoints avoid seek; large endpoints fall back"
                   (with-redefs [d/seek-datoms
-                                (fn [& args]
-                                  (swap! seek-calls inc)
-                                  (apply original-seek args))]
-                    (is (= resource-ids
-                           (scan :subject->resources forward-prefix
+                                (fn [& _]
+                                  (throw
+                                   (ex-info "Small endpoint opened a seek."
+                                            {:type :test/unexpected-seek})))]
+                    (is (= [document-id]
+                           (scan :subject->resources
+                                 [:user bob-id relation-id :document]
                                  {:direction :asc}))))
-                  (is (= 1 @seek-calls))))
+                  (let [seek-calls (atom 0)
+                        original-seek d/seek-datoms]
+                    (with-redefs [d/seek-datoms
+                                  (fn [& args]
+                                    (swap! seek-calls inc)
+                                    (apply original-seek args))]
+                      (is (= resource-ids
+                             (scan :subject->resources forward-prefix
+                                   {:direction :asc}))))
+                    (is (= 1 @seek-calls))))
 
-              (testing "complete ordering, uniqueness, large safe IDs, and replay"
-                (doseq [[operation prefix expected]
-                        [[:subject->resources forward-prefix resource-ids]
-                         [:resource->subjects reverse-prefix subject-ids]]]
-                  (let [ascending (scan operation prefix {:direction :asc})
-                        descending (scan operation prefix {:direction :desc})]
-                    (is (= expected ascending))
-                    (is (= expected (scan operation prefix {})))
-                    (is (= (vec (reverse expected)) descending))
-                    (is (= ascending (scan operation prefix {:direction :asc})))
-                    (is (= (count ascending) (count (distinct ascending))))))
-                (is (= large-safe-id (peek resource-ids))))
+                (testing "complete ordering, uniqueness, large safe IDs, and replay"
+                  (doseq [[operation prefix expected]
+                          [[:subject->resources forward-prefix resource-ids]
+                           [:resource->subjects reverse-prefix subject-ids]]]
+                    (let [ascending (scan operation prefix {:direction :asc})
+                          descending (scan operation prefix {:direction :desc})]
+                      (is (= expected ascending))
+                      (is (= expected (scan operation prefix {})))
+                      (is (= (vec (reverse expected)) descending))
+                      (is (= ascending (scan operation prefix {:direction :asc})))
+                      (is (= (count ascending) (count (distinct ascending))))))
+                  (is (= large-safe-id (peek resource-ids))))
 
-              (testing "inclusive and exclusive bounds in both directions"
-                (doseq [[operation prefix expected]
-                        [[:subject->resources forward-prefix resource-ids]
-                         [:resource->subjects reverse-prefix subject-ids]]
-                        bound expected]
-                  (is (= (filterv #(<= bound %) expected)
-                         (scan operation prefix
-                               {:direction :asc :bound-eid bound
-                                :inclusive-bound? true})))
-                  (is (= (filterv #(< bound %) expected)
-                         (scan operation prefix
-                               {:direction :asc :bound-eid bound
-                                :inclusive-bound? false})))
-                  (is (= (->> expected (filterv #(>= bound %)) reverse vec)
-                         (scan operation prefix
-                               {:direction :desc :bound-eid bound
-                                :inclusive-bound? true})))
-                  (is (= (->> expected (filterv #(> bound %)) reverse vec)
-                         (scan operation prefix
-                               {:direction :desc :bound-eid bound
-                                :inclusive-bound? false})))))
+                (testing "inclusive and exclusive bounds in both directions"
+                  (doseq [[operation prefix expected]
+                          [[:subject->resources forward-prefix resource-ids]
+                           [:resource->subjects reverse-prefix subject-ids]]
+                          bound expected]
+                    (is (= (filterv #(<= bound %) expected)
+                           (scan operation prefix
+                                 {:direction :asc :bound-eid bound
+                                  :inclusive-bound? true})))
+                    (is (= (filterv #(< bound %) expected)
+                           (scan operation prefix
+                                 {:direction :asc :bound-eid bound
+                                  :inclusive-bound? false})))
+                    (is (= (->> expected (filterv #(>= bound %)) reverse vec)
+                           (scan operation prefix
+                                 {:direction :desc :bound-eid bound
+                                  :inclusive-bound? true})))
+                    (is (= (->> expected (filterv #(> bound %)) reverse vec)
+                           (scan operation prefix
+                                 {:direction :desc :bound-eid bound
+                                  :inclusive-bound? false})))))
 
-              (testing "all page sizes use an exclusive sentinel step without skips"
-                (doseq [[operation prefix expected]
-                        [[:subject->resources forward-prefix resource-ids]
-                         [:resource->subjects reverse-prefix subject-ids]]
-                        direction [:asc :desc]
-                        page-size [1 2 3 5 20]]
-                  (let [expected (if (= :desc direction)
-                                   (vec (reverse expected))
-                                   expected)
-                        result (collect-exclusive-pages
-                                adapter operation prefix direction page-size)]
-                    (is (= expected (:values result)))
-                    (is (= (inc (long (Math/ceil
-                                      (/ (double (count expected)) page-size))))
-                           (:calls result))))))
+                (testing "all page sizes use an exclusive sentinel step without skips"
+                  (doseq [[operation prefix expected]
+                          [[:subject->resources forward-prefix resource-ids]
+                           [:resource->subjects reverse-prefix subject-ids]]
+                          direction [:asc :desc]
+                          page-size [1 2 3 5 20]]
+                    (let [expected (if (= :desc direction)
+                                     (vec (reverse expected))
+                                     expected)
+                          result (collect-exclusive-pages
+                                  adapter operation prefix direction page-size)]
+                      (is (= expected (:values result)))
+                      (is (= (inc (long (Math/ceil
+                                         (/ (double (count expected)) page-size))))
+                             (:calls result))))))
 
-              (testing "zero and oversized limits are exact"
-                (is (= [] (scan :subject->resources forward-prefix
-                                {:direction :asc :limit 0})))
-                (is (= resource-ids
-                       (scan :subject->resources forward-prefix
-                             {:direction :asc :limit 1000}))))
+                (testing "zero and oversized limits are exact"
+                  (is (= [] (scan :subject->resources forward-prefix
+                                  {:direction :asc :limit 0})))
+                  (is (= resource-ids
+                         (scan :subject->resources forward-prefix
+                               {:direction :asc :limit 1000}))))
 
-              (testing "missing and adjacent prefixes never leak"
-                (is (= []
-                       (scan :subject->resources
-                             [:user subject-id relation-id :missing]
-                             {:direction :asc :limit 100})))
-                (is (= []
-                       (scan :resource->subjects
-                             [:document document-id relation-id :missing]
-                             {:direction :desc :limit 100}))))
+                (testing "missing and adjacent prefixes never leak"
+                  (is (= []
+                         (scan :subject->resources
+                               [:user subject-id relation-id :missing]
+                               {:direction :asc :limit 100})))
+                  (is (= []
+                         (scan :resource->subjects
+                               [:document document-id relation-id :missing]
+                               {:direction :desc :limit 100}))))
 
-              (is (true?
-                   (backend/invoke
-                    adapter :direct-match?
-                    :user subject-id relation-id :document
-                    (first resource-ids))))
-              (source/release! selected)
-              (is (= {:active 0 :oldest-age-ms nil}
-                     (d/active-read-snapshot-info))))
-            (finally
-              (source/release! selected)))))))))
+                (is (true?
+                     (backend/invoke
+                      adapter :direct-match?
+                      :user subject-id relation-id :document
+                      (first resource-ids))))
+                (source/release! selected)
+                (is (= {:active 0 :oldest-age-ms nil}
+                       (d/active-read-snapshot-info))))
+              (finally
+                (source/release! selected)))))))))
 
 (deftest shared-v8-backend-contract-test
   (with-connection
@@ -1421,26 +1420,26 @@
                 escaped (atom nil)]
             (binding [request-counters/*ledger* ledger]
               (eacl/with-snapshot [snapshot (eacl/snapshot client)]
-                 (reset! escaped snapshot)
-                 (is (= ["server-1" "server-2"]
-                        (mapv (comp :id :resource)
-                              (:data
-                               (eacl/read-relationships
-                                snapshot
-                                (assoc scan-query :cache? false))))))
-                 (is (= ["server-1" "server-2"]
-                        (mapv :id
-                              (:data
-                               (eacl/lookup-resources
-                                snapshot
-                                (assoc enumerate-query :cache? false))))))
-                 (doseq [[label invoke]
-                         [[:scan #(eacl/read-relationships snapshot scan-query)]
-                          [:enumerate
-                           #(eacl/lookup-resources snapshot enumerate-query)]]]
-                   (is (= :eacl/snapshot-thread-violation
-                          (:type @(future (error-data invoke))))
-                       (name label)))))
+                (reset! escaped snapshot)
+                (is (= ["server-1" "server-2"]
+                       (mapv (comp :id :resource)
+                             (:data
+                              (eacl/read-relationships
+                               snapshot
+                               (assoc scan-query :cache? false))))))
+                (is (= ["server-1" "server-2"]
+                       (mapv :id
+                             (:data
+                              (eacl/lookup-resources
+                               snapshot
+                               (assoc enumerate-query :cache? false))))))
+                (doseq [[label invoke]
+                        [[:scan #(eacl/read-relationships snapshot scan-query)]
+                         [:enumerate
+                          #(eacl/lookup-resources snapshot enumerate-query)]]]
+                  (is (= :eacl/snapshot-thread-violation
+                         (:type @(future (error-data invoke))))
+                      (name label)))))
             (is (= {:public-entries 2
                     :acquisitions 1
                     :context-constructions 2

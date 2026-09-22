@@ -221,9 +221,31 @@ module PublicIdentityBoundary {
   {
   }
 
-  // Native entity IDs and public numeric IDs occupy different trust domains.
-  // The former mixed adapter callback selected the native branch solely from
-  // the host value's numeric shape, even for an authenticated public cursor.
+  // Application IDs and resolved entity IDs occupy different types at the
+  // authorization boundary.  Resolution happens once at ingress; the engine
+  // consumes the resulting InternalId directly and has no resolver callback.
+  datatype ResolvedObject = ResolvedObject(resolvedIdentity: InternalId)
+
+  function ResolveAtIngress(id: PublicId): ResolvedObject {
+    ResolvedObject(Resolve(id))
+  }
+
+  function EngineIdentity(resolved: ResolvedObject): InternalId {
+    resolved.resolvedIdentity
+  }
+
+  lemma ApplicationIdsResolveExactlyOnceAtIngress(id: PublicId)
+    ensures EngineIdentity(ResolveAtIngress(id)) == Resolve(id)
+  {
+  }
+
+  lemma ResolvedEngineIdentitiesBypassTheCodec(id: InternalId)
+    ensures EngineIdentity(ResolvedObject(id)) == id
+  {
+  }
+
+  // The former mixed callback selected the native branch solely from the
+  // host value's numeric shape, even for an authenticated application cursor.
   datatype IdentitySelection =
     | CodecSelection(codecIdentity: InternalId)
     | NativeSelection(nativeIdentity: int)
@@ -234,7 +256,7 @@ module PublicIdentityBoundary {
   }
 
   function PublicDomainCursorResolution(id: PublicId): IdentitySelection {
-    CodecSelection(Resolve(id))
+    CodecSelection(EngineIdentity(ResolveAtIngress(id)))
   }
 
   lemma NumericPublicCursorHasANativeAliasCounterexample()

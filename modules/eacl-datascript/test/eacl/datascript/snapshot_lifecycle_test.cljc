@@ -1476,7 +1476,7 @@
       (let [error (ex-info "injected foreign failure"
                            {:type :test/foreign-failure})]
         (with-redefs
-         [engine/check-evidence (fn [& _] (throw error))]
+         [engine/check-evidence-eids (fn [& _] (throw error))]
           (assert-one-release!
            (observed-failure
             conn #(eacl/can? client user :admin account))

@@ -58,8 +58,8 @@
    'eacl.backend.v8/direct-match-invoker :direct-match?
    'backend/direct-edge-invoker :direct-edge
    'eacl.backend.v8/direct-edge-invoker :direct-edge
-   'backend/public-object-id->internal :public-object-id->internal
-   'eacl.backend.v8/public-object-id->internal :public-object-id->internal})
+   'backend/object-id->internal :object-id->internal
+   'eacl.backend.v8/object-id->internal :object-id->internal})
 
 (defn- invoke-calls
   [[file source] features]

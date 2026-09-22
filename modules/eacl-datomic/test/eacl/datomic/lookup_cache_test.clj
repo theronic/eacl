@@ -76,14 +76,14 @@
                          :evaluation :complete-denotation}
           forward-calls (atom 0)
           reverse-calls (atom 0)
-          original-forward engine/lookup-resources
-          original-reverse engine/lookup-subjects]
+          original-forward engine/lookup-resources-eids
+          original-reverse engine/lookup-subjects-eids]
       (seed-direct! conn client)
-      (with-redefs [engine/lookup-resources
+      (with-redefs [engine/lookup-resources-eids
                     (fn [db query continuation-context]
                       (swap! forward-calls inc)
                       (original-forward db query continuation-context))
-                    engine/lookup-subjects
+                    engine/lookup-subjects-eids
                     (fn [db query continuation-context]
                       (swap! reverse-calls inc)
                       (original-reverse db query continuation-context))]
@@ -106,12 +106,12 @@
                  :resource/type :account
                  :evaluation :complete-denotation}
           calls (atom 0)
-          original engine/lookup-resources
+          original engine/lookup-resources-eids
           second-rel (->Relationship (spice-object :user "alice")
                                      :owner
                                      (spice-object :account "a-2"))]
       (seed-direct! conn client)
-      (with-redefs [engine/lookup-resources
+      (with-redefs [engine/lookup-resources-eids
                     (fn [db internal-query continuation-context]
                       (swap! calls inc)
                       (original db internal-query continuation-context))]
@@ -181,14 +181,14 @@
                  :resource/type :server
                  :evaluation :complete-denotation}
           calls (atom 0)
-          original engine/lookup-resources]
+          original engine/lookup-resources-eids]
       (eacl/write-schema! client arrow-schema)
       @(d/transact conn [{:eacl/id "alice"}
                          {:eacl/id "bob"}
                          {:eacl/id "account"}
                          {:eacl/id "server"}])
       (eacl/create-relationships! client [owner-rel account-rel])
-      (with-redefs [engine/lookup-resources
+      (with-redefs [engine/lookup-resources-eids
                     (fn [db internal-query continuation-context]
                       (swap! calls inc)
                       (original db internal-query continuation-context))]
@@ -218,10 +218,10 @@
 (deftest cached-pages-store-eids-and-reapply-current-id-coercion-test
   (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client conn {:cache (live-cache-context)})
-          original engine/lookup-resources
+          original engine/lookup-resources-eids
           calls (atom 0)]
       (seed-direct! conn client)
-      (with-redefs [engine/lookup-resources
+      (with-redefs [engine/lookup-resources-eids
                     (fn [db internal-query continuation-context]
                       (swap! calls inc)
                       (original db internal-query continuation-context))]
@@ -303,14 +303,14 @@
                          :evaluation :complete-denotation}
           forward-calls (atom 0)
           reverse-calls (atom 0)
-          original-forward engine/count-resources
-          original-reverse engine/count-subjects]
+          original-forward engine/count-resources-eids
+          original-reverse engine/count-subjects-eids]
       (seed-direct! conn client)
-      (with-redefs [engine/count-resources
+      (with-redefs [engine/count-resources-eids
                     (fn [db query]
                       (swap! forward-calls inc)
                       (original-forward db query))
-                    engine/count-subjects
+                    engine/count-subjects-eids
                     (fn [db query]
                       (swap! reverse-calls inc)
                       (original-reverse db query))]
@@ -452,9 +452,9 @@
                  :resource/type :account}
           entered-count (promise)
           release-count (promise)
-          original-count engine/count-resources]
+          original-count engine/count-resources-eids]
       (seed-direct! conn client)
-      (with-redefs [engine/count-resources
+      (with-redefs [engine/count-resources-eids
                     (fn [db internal-query]
                       (deliver entered-count true)
                       @release-count
@@ -601,13 +601,13 @@
           account (spice-object :account "a-1")
           query {:subject alice :permission :admin :resource/type :account}
           calls (atom 0)
-          original engine/check-evidence
+          original engine/check-evidence-eids
           lookups (atom 0)
-          original-lookup engine/lookup-resources]
-      (with-redefs [engine/check-evidence (fn [db s p r]
-                                            (swap! calls inc)
-                                            (original db s p r))
-                    engine/lookup-resources
+          original-lookup engine/lookup-resources-eids]
+      (with-redefs [engine/check-evidence-eids (fn [db s p r]
+                                                 (swap! calls inc)
+                                                 (original db s p r))
+                    engine/lookup-resources-eids
                     (fn [db q cc]
                       (swap! lookups inc)
                       (original-lookup db q cc))]

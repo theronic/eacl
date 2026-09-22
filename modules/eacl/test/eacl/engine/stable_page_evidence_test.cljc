@@ -67,7 +67,6 @@
                                (repeat (fn [& _] (throw (ex-info "Unexpected page adapter read" {})))))
                        {:native-revision (constantly 1)
                         :object-id->internal identity
-                        :public-object-id->internal identity
                         :internal-id->object identity})}))
 
 (deftest standalone-qualified-tokens-bind-time-context-and-policy

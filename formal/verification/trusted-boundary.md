@@ -238,7 +238,9 @@ For an operation to inherit a kernel theorem, its adapter must establish:
 2. external/internal object conversion is deterministic, injective, and
    round-trips for every visible object; host equality is not resolver
    congruence for representation-distinct public values, so unresolved IDs
-   may be equality-keyed only after canonical-representation admission;
+   may be equality-keyed only after canonical-representation admission; the
+   configured converter runs exactly once at ingress, while resolved EIDs
+   enter the engine directly and never re-enter that converter;
 3. relation and permission definitions are complete for the requested schema;
 4. forward and reverse scans are finite, duplicate-free, complete,
    directionally equivalent, strictly ordered within the adapter's internal

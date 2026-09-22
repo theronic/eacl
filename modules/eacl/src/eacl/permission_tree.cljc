@@ -404,7 +404,7 @@
         internal-root-id
         (adapter-call!
          (fn [_]
-           (backend/public-object-id->internal adapter root-id)))
+           (backend/object-id->internal adapter root-id)))
         _ (check! :permission-tree-root-resolution)
         _ (when (and (some? internal-root-id)
                      (not (exact-integer/natural? internal-root-id)))

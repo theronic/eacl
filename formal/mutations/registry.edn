@@ -449,7 +449,7 @@
   {:id :numeric-public-id-native-eid-alias
    :mechanism :executed-production
    :mutation :treat-a-numeric-public-cursor-id-as-an-already-resolved-native-eid
-   :target-symbol "backend/public-object-id->internal"
+   :target-symbol "backend/object-id->internal"
    :consumer-symbol "relay/internalize-prepared-page-query"
    :detector "numeric-public-id-native-eid-alias-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}

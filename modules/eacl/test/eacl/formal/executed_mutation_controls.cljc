@@ -780,8 +780,7 @@
     :operations
     (merge
      (operation-map)
-     {:object-id->internal identity
-      :public-object-id->internal
+     {:object-id->internal
       (fn [public-id]
         ({0 101 false 102} public-id))})}))
 
@@ -797,10 +796,12 @@
     (and
      (gate)
      (false?
-      (with-redefs [backend/public-object-id->internal
+      (with-redefs [backend/object-id->internal
                     (fn [candidate public-id]
-                      (backend/invoke
-                       candidate :object-id->internal public-id))]
+                      (if (number? public-id)
+                        public-id
+                        (backend/invoke
+                         candidate :object-id->internal public-id)))]
         (gate))))))
 
 (defn false-stable-edge-presence-killed?

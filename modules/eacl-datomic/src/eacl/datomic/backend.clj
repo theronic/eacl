@@ -350,19 +350,11 @@
        :schema-generation (fn [] (certified-schema-generation db))
        :object-id->internal
        (fn [object-id]
-         ;; Shared orchestration uses internal numeric eids in cache-normalized
-         ;; engine requests. Preserve that native-id convention here; public
-         ;; request and cursor identities use the distinct operation below.
-         (if (number? object-id)
-           (d/entid db object-id)
-           ((or object-id->entid ddb/object-eid) db object-id)))
-       :public-object-id->internal
-       (fn [object-id]
          (if object-id->entid
            (object-id->entid db object-id)
-           ;; A raw adapter without client configuration still treats this as
-           ;; public application data. Never fall back to d/entid's numeric
-           ;; native-EID interpretation at the public-only boundary.
+           ;; Raw compatibility adapters still resolve application IDs by the
+           ;; stored EACL identity attribute. Numeric values are data here,
+           ;; never an implicit request to use a native Datomic entity ID.
            (when (d/entid db :eacl/id)
              (d/entid db [:eacl/id object-id]))))
        :internal-id->object (fn [internal-id] (external-id db internal-id))

@@ -162,13 +162,9 @@
 
      :object-id->internal
      (fn [object-id]
-       (if (number? object-id)
-         object-id
-         (object-id->entid db object-id)))
-
-     :public-object-id->internal
-     (fn [object-id]
-       (object-id->entid db object-id))
+       (if object-id->entid
+         (object-id->entid db object-id)
+         (ds/entid db [:eacl/id object-id])))
 
      :internal-id->object
      (fn [internal-id]

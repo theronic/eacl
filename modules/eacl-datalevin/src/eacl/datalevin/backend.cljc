@@ -196,20 +196,13 @@
 
        :object-id->internal
        (fn [object-id]
-         (if (number? object-id)
-           (exact-natural! :entity-id object-id)
-           (ddb/with-db
-             snapshot
-             (fn [db]
-               (when-some [internal-id (object-id->entid db object-id)]
-                 (exact-natural! :entity-id internal-id))))))
-
-       :public-object-id->internal
-       (fn [object-id]
          (ddb/with-db
            snapshot
            (fn [db]
-             (when-some [internal-id (object-id->entid db object-id)]
+             (when-some [internal-id
+                         (if object-id->entid
+                           (object-id->entid db object-id)
+                           (d/entid db [:eacl/id object-id]))]
                (exact-natural! :entity-id internal-id)))))
 
        :internal-id->object

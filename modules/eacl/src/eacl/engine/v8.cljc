@@ -1,6 +1,7 @@
 (ns eacl.engine.v8
   (:require [eacl.authorization.evidence :as evidence]
             [eacl.authorization.result :as authorization-result]
+            [eacl.backend.entity-id :as entity-id]
             [eacl.backend.v8 :as backend]
             [eacl.cache.derived-schema :as derived-schema]
             [eacl.core :refer [spice-object]]
@@ -161,10 +162,29 @@
            (.warn js/console message (pr-str data)))))))
 
 (defn object-eid
-  "Resolves an external object id through the snapshot adapter."
+  "Converts one application object ID through the snapshot adapter."
   [snapshot id]
   (when (some? id)
-    (backend/invoke snapshot :object-id->internal id)))
+    (backend/object-id->internal snapshot id)))
+
+(defn- internal-object-eid
+  "Accepts an already-resolved backend ID without invoking the application-ID
+  codec a second time."
+  [id]
+  (when (some? id)
+    (when-not (entity-id/valid? id)
+      (throw
+       (ex-info
+        "The authorization engine received an invalid internal object ID."
+        {:type :eacl/invalid-internal-id
+         :eacl/error :eacl/invalid-internal-id
+         :value id})))
+    id))
+
+(defn- resolve-object
+  [snapshot object]
+  (when object
+    (update object :id #(object-eid snapshot %))))
 
 (defn- page-error!
   [message data]
@@ -1668,18 +1688,18 @@
                      :asc progress
                      :desc (or last-selected progress))]
     (cond-> {:data (mapv :node selected)
-     :page-info
-     {:start-cursor start-cursor
-      :end-cursor end-cursor
-      :has-next-page?
-      (case direction
-        :asc (boolean (:more? result))
-        :desc (boolean bound))
-      :has-previous-page?
-      (case direction
-        :asc (boolean bound)
-        :desc (boolean (:more? result)))
-      :bounded? (boolean (:bounded? result))}}
+             :page-info
+             {:start-cursor start-cursor
+              :end-cursor end-cursor
+              :has-next-page?
+              (case direction
+                :asc (boolean (:more? result))
+                :desc (boolean bound))
+              :has-previous-page?
+              (case direction
+                :asc (boolean bound)
+                :desc (boolean (:more? result)))
+              :bounded? (boolean (:bounded? result))}}
       (and (or evidence-decisions? *qualification*)
            (= :detailed (or result-policy *lookup-result-policy*)))
       (assoc :result-evidence
@@ -1827,7 +1847,7 @@
                               (force scope-delay) coords))
         _ (validate-operator-bound! plan cover-plan traversal
                                     scope-delay bound)
-        anchor-eid (object-eid db (:id anchor))]
+        anchor-eid (internal-object-eid (:id anchor))]
     (if (nil? anchor-eid)
       empty-bounded-page
       (let [accept? (:accept? candidate-filter)
@@ -1881,20 +1901,20 @@
                          (or last-selected progress))]
         (report-least-path-run! run)
         (with-emission-evidence
-        {:data (mapv :node items)
-         :page-info
-         {:start-cursor start-cursor
-          :end-cursor end-cursor
-          :has-next-page?
-          (if (= :asc direction)
-            (boolean (:has-more? run))
-            (boolean bound))
-          :has-previous-page?
-          (if (= :asc direction)
-            (boolean bound)
-            (boolean (:has-more? run)))
-          :bounded? (boolean (:bounded? run))}}
-         ordered)))))
+          {:data (mapv :node items)
+           :page-info
+           {:start-cursor start-cursor
+            :end-cursor end-cursor
+            :has-next-page?
+            (if (= :asc direction)
+              (boolean (:has-more? run))
+              (boolean bound))
+            :has-previous-page?
+            (if (= :asc direction)
+              (boolean bound)
+              (boolean (:has-more? run)))
+            :bounded? (boolean (:bounded? run))}}
+          ordered)))))
 
 (defn- least-path-lookup-page
   "Keyset pagination for an acyclic plan: ascending pages resume strictly
@@ -1904,7 +1924,7 @@
   [db plan traversal query {:keys [direction size bound]}
    result-type anchor subject-type]
   (validate-least-path-bound! plan traversal bound)
-  (let [anchor-eid (object-eid db (:id anchor))]
+  (let [anchor-eid (internal-object-eid (:id anchor))]
     (if (nil? anchor-eid)
       (page-response {:items [] :has-next? false
                       :has-previous? (boolean bound)})
@@ -1929,16 +1949,16 @@
         (report-least-path-run! run)
         (report-adapter-attempts! attempts)
         (with-emission-evidence
-        (page-response
-         {:items items
-          :range-reusable? true
-          :has-next? (if descending?
-                       (boolean bound)
-                       (boolean (:has-more? run)))
-          :has-previous? (if descending?
-                           (boolean (:has-more? run))
-                           (boolean bound))})
-         ordered)))))
+          (page-response
+           {:items items
+            :range-reusable? true
+            :has-next? (if descending?
+                         (boolean bound)
+                         (boolean (:has-more? run)))
+            :has-previous? (if descending?
+                             (boolean (:has-more? run))
+                             (boolean bound))})
+          ordered)))))
 
 (defn- structural-cover-fetch
   "Enumerates the positive structural cover from the same compact scan/cache.
@@ -1965,7 +1985,7 @@
                      (= :desc direction)
                      (nil? bound))
             (complete-evaluation-required! query))
-        anchor-eid (object-eid db (:id anchor))]
+        anchor-eid (internal-object-eid (:id anchor))]
     (if (nil? anchor-eid)
       empty-bounded-page
       (let [{:keys [fetch-fn attempts]}
@@ -1979,50 +1999,50 @@
             checkpoint-key
             (when checkpoints
               (checkpoint-key plan traversal subject-type anchor-eid
-               (checkpoint-series-size query size)))
+                              (checkpoint-series-size query size)))
             fetch-exclusive
             (fn [candidate-bound limit]
               (binding [*qualification* (when-not (:structural-cover? candidate-filter) *qualification*)]
-              (if least-path?
-                (let [run-options (least-path-run-options
-                                   plan fetch-fn traversal subject-type
-                                   anchor-eid limit direction candidate-bound
-                                   true)
-                      run (run-routed
-                           candidate-bound
-                           #(run-least-path-page run-options traversal))
-                      items
-                      (mapv
-                       (fn [{:keys [value coords evidence]}]
-                         (cond-> {:node (spice-object result-type value)
-                                  :cursor (least-path-edge plan traversal coords)}
-                           (some? evidence) (assoc :evidence evidence)))
-                       (:emissions run))]
-                  (report-least-path-run! run)
+                (if least-path?
+                  (let [run-options (least-path-run-options
+                                     plan fetch-fn traversal subject-type
+                                     anchor-eid limit direction candidate-bound
+                                     true)
+                        run (run-routed
+                             candidate-bound
+                             #(run-least-path-page run-options traversal))
+                        items
+                        (mapv
+                         (fn [{:keys [value coords evidence]}]
+                           (cond-> {:node (spice-object result-type value)
+                                    :cursor (least-path-edge plan traversal coords)}
+                             (some? evidence) (assoc :evidence evidence)))
+                         (:emissions run))]
+                    (report-least-path-run! run)
                   ;; Raw descending least-path emissions are already in
                   ;; examination order.
-                  items)
-                (let [result
-                      (run-routed
-                       candidate-bound
-                       (fn []
-                         (stable-page/edge-page
-                          (stable-edge-page-options
-                           db plan fetch-fn traversal subject-type anchor-eid
-                           limit direction candidate-bound checkpoints
-                           checkpoint-key true))))
-                      items
-                      (cond->> (stable-items plan traversal result-type
-                                            (:start-ordinal result) (:eids result))
-                        *qualification*
-                        (mapv (fn [item]
-                                (let [value (get (:result-evidence result) (get-in item [:node :id]) true)]
-                                  (cond-> item (not (true? value)) (assoc :evidence value))))))]
+                    items)
+                  (let [result
+                        (run-routed
+                         candidate-bound
+                         (fn []
+                           (stable-page/edge-page
+                            (stable-edge-page-options
+                             db plan fetch-fn traversal subject-type anchor-eid
+                             limit direction candidate-bound checkpoints
+                             checkpoint-key true))))
+                        items
+                        (cond->> (stable-items plan traversal result-type
+                                               (:start-ordinal result) (:eids result))
+                          *qualification*
+                          (mapv (fn [item]
+                                  (let [value (get (:result-evidence result) (get-in item [:node :id]) true)]
+                                    (cond-> item (not (true? value)) (assoc :evidence value))))))]
                   ;; Stable-page returns canonical order for both directions;
                   ;; filtering examines backward windows in reverse order.
-                  (if (= :desc direction)
-                    (vec (reverse items))
-                    items)))))
+                    (if (= :desc direction)
+                      (vec (reverse items))
+                      items)))))
             page
             (execute-filtered-lookup-window
              result-type page-req
@@ -2062,7 +2082,7 @@
                           (force scope-delay) cover-edge))
         _ (validate-recursive-operator-bound!
            plan cover-plan traversal scope-delay bound)
-        anchor-eid (object-eid db (:id anchor))]
+        anchor-eid (internal-object-eid (:id anchor))]
     (if (nil? anchor-eid)
       empty-bounded-page
       (let [external-accept? (:accept? candidate-filter)
@@ -2169,7 +2189,7 @@
                      (nil? bound))
             (complete-evaluation-required! query))
         _ (validate-stable-bound! plan traversal bound)
-        anchor-eid (object-eid db (:id anchor))
+        anchor-eid (internal-object-eid (:id anchor))
         {:keys [fetch-fn attempts]} (stable-fetch-fn db)
         result (run-routed
                 bound
@@ -2180,24 +2200,26 @@
                     size direction bound checkpoints
                     (when checkpoints
                       (checkpoint-key plan traversal subject-type anchor-eid
-               (checkpoint-series-size query size)))
+                                      (checkpoint-series-size query size)))
                     false))))]
     (report-adapter-attempts! attempts)
     (cond-> (page-response
-     {:items (stable-items plan traversal result-type
-                           (:start-ordinal result) (:eids result))
-      :range-reusable? true
-      :has-next? (:has-next? result)
-      :has-previous? (:has-previous? result)})
+             {:items (stable-items plan traversal result-type
+                                   (:start-ordinal result) (:eids result))
+              :range-reusable? true
+              :has-next? (:has-next? result)
+              :has-previous? (:has-previous? result)})
       (and *qualification* (= :detailed *lookup-result-policy*))
       (assoc :result-evidence (:result-evidence result)))))
 
-(defn check-evidence
+(defn ^:no-doc check-evidence-eids
+  "Checks a permission using object maps whose IDs are already resolved
+  backend entity IDs. This path never invokes the application-ID codec."
   [db subject permission resource]
   (let [subject-type (:type subject)
-        subject-eid (object-eid db (:id subject))
+        subject-eid (internal-object-eid (:id subject))
         resource-type (:type resource)
-        resource-eid (object-eid db (:id resource))
+        resource-eid (internal-object-eid (:id resource))
         defined-root?
         (and subject-eid
              resource-eid
@@ -2250,17 +2272,32 @@
             allowed?)))
       false)))
 
+(defn check-evidence
+  "Checks a permission after converting each application object ID exactly
+  once through the adapter's configured codec."
+  [db subject permission resource]
+  (check-evidence-eids db
+                       (resolve-object db subject)
+                       permission
+                       (resolve-object db resource)))
+
+(defn ^:no-doc can-eids?
+  [db subject permission resource]
+  (evidence/has?
+   (evidence/throw-if-fault!
+    (check-evidence-eids db subject permission resource))))
+
 (defn can? [db subject permission resource]
   (evidence/has?
    (evidence/throw-if-fault! (check-evidence db subject permission resource))))
 
-(defn lookup-resources
+(defn ^:no-doc lookup-resources-eids
   "Stable-discovery forward pagination.
 
-  Raw-impl callers must hold one DB value for a whole exact-snapshot walk; the
-  public client authenticates and scopes cursor state before it reaches here."
+  The query subject ID is already resolved. Raw-impl callers should use
+  `lookup-resources`, which performs the one application-ID conversion."
   ([db query]
-   (lookup-resources db query nil))
+   (lookup-resources-eids db query nil))
   ([db query {:keys [continuation-cache continuation-cache-fn
                      candidate-filter]}]
    ;; Deferred: an acyclic (least-path) plan never touches continuation
@@ -2271,11 +2308,21 @@
      (binding [*lookup-result-policy* (authorization-result/result-policy query)]
        (project-lookup-page (stable-lookup-page db :forward query cache-fn candidate-filter))))))
 
-(defn lookup-subjects
-  "Stable-discovery reverse pagination; cursors are only valid against the
-  minting db basis."
+(defn lookup-resources
+  "Stable-discovery forward pagination over application object IDs."
   ([db query]
-   (lookup-subjects db query nil))
+   (lookup-resources db query nil))
+  ([db query options]
+   (lookup-resources-eids
+    db
+    (update query :subject #(resolve-object db %))
+    options)))
+
+(defn ^:no-doc lookup-subjects-eids
+  "Stable-discovery reverse pagination; cursors are only valid against the
+  minting db basis. The query resource ID is already resolved."
+  ([db query]
+   (lookup-subjects-eids db query nil))
   ([db query {:keys [continuation-cache continuation-cache-fn
                      candidate-filter]}]
    (when (:subject/relation query)
@@ -2289,6 +2336,16 @@
                                (continuation-cache-fn))))]
      (binding [*lookup-result-policy* (authorization-result/result-policy query)]
        (project-lookup-page (stable-lookup-page db :reverse query cache-fn candidate-filter))))))
+
+(defn lookup-subjects
+  "Stable-discovery reverse pagination over application object IDs."
+  ([db query]
+   (lookup-subjects db query nil))
+  ([db query options]
+   (lookup-subjects-eids
+    db
+    (update query :resource #(resolve-object db %))
+    options)))
 
 (def ^:private count-pagination-keys
   [:cursor :limit :first :last :before :after])
@@ -2337,7 +2394,7 @@
   [db plan traversal query result-type anchor subject-type count-limit]
   (let [cover-plan (stable-cover-plan db plan)
         proof-identity (operator-snapshot-proof-identity db)
-        anchor-eid (object-eid db (:id anchor))
+        anchor-eid (internal-object-eid (:id anchor))
         continuation-cache (stable-page/make-checkpoint-store)
         cache-fn (constantly continuation-cache)
         evaluate-batch (recursive-batch-evaluator
@@ -2394,7 +2451,7 @@
 
 (defn- operator-count
   [db plan traversal query anchor subject-type result-type count-limit]
-  (if-let [anchor-eid (object-eid db (:id anchor))]
+  (if-let [anchor-eid (internal-object-eid (:id anchor))]
     (if (operator-recursive/recursive-plan? plan)
       (recursive-operator-count
        db plan traversal query result-type anchor subject-type count-limit)
@@ -2454,7 +2511,7 @@
                           :count-limit limit}))))
      limit policy)))
 
-(defn count-resources
+(defn ^:no-doc count-resources-eids
   [db {:keys [subject] :as query}]
   (reject-count-pagination-keys! "count-resources" query)
   (count-route db query
@@ -2463,10 +2520,15 @@
                 :anchor subject
                 :subject-type (:type subject)
                 :result-type (:resource/type query)
-                :stable-count-fn stable-route/count-resources
-                :anchor-id-key :subject-id}))
+                :stable-count-fn stable-route/count-resources-eids
+                :anchor-id-key :subject-eid}))
 
-(defn count-subjects
+(defn count-resources
+  [db query]
+  (count-resources-eids
+   db (update query :subject #(resolve-object db %))))
+
+(defn ^:no-doc count-subjects-eids
   [db {:keys [resource] :as query}]
   (reject-count-pagination-keys! "count-subjects" query)
   (when (:subject/relation query)
@@ -2479,5 +2541,10 @@
                 :anchor resource
                 :subject-type (:subject/type query)
                 :result-type (:subject/type query)
-                :stable-count-fn stable-route/count-subjects
-                :anchor-id-key :resource-id}))
+                :stable-count-fn stable-route/count-subjects-eids
+                :anchor-id-key :resource-eid}))
+
+(defn count-subjects
+  [db query]
+  (count-subjects-eids
+   db (update query :resource #(resolve-object db %))))
