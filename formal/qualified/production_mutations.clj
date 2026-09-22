@@ -108,7 +108,7 @@
         values-for @#'staged/values-for
         collect data/collect
         can? core/can?
-        check-evidence engine/check-evidence
+        check-evidence-eids engine/check-evidence-eids
         check-result result/check-result
         discovery-options stable-route/discovery-options
         buffer-id @#'reducer/buffer-id
@@ -327,9 +327,9 @@
       :redefs {#'core/can? (fn [& args] (try (apply can? args) (catch Throwable _ false)))}}
      :public-point-routing-omits-qualification
      {:gate #'public-point-test/public-point-routes-preserve-conditional-evidence-and-expiring-bans
-      :redefs {#'engine/check-evidence (fn [& args]
-                                         (binding [engine/*qualification* nil]
-                                           (apply check-evidence args)))}}
+      :redefs {#'engine/check-evidence-eids (fn [& args]
+                                              (binding [engine/*qualification* nil]
+                                                (apply check-evidence-eids args)))}}
      :legacy-inactive-stream-path-becomes-active
      {:gate #'legacy-lookup-test/qualified-unions-keep-native-order-and-complete-node-evidence
       :redefs {#'least-path/stream-next
