@@ -57,8 +57,8 @@
    {:claim
     :conditional-composition-of-generated-authority-and-source-specializations-under-documented-tcb
     ;; The locked 2026-09-22 whole-tree run, including the public identity and
-    ;; request-boundary corrections, verifies 9,611 solver proof efforts.
-    :minimum-proof-efforts 9611}
+    ;; request-boundary corrections, verifies 9,612 solver proof efforts.
+    :minimum-proof-efforts 9612}
    :cursor-codec-cost-model
    {:source "formal/dafny/CursorCost.dfy"
     :claim :conditional-operation-count-bound

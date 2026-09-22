@@ -392,10 +392,11 @@ no verified-release claim existed.
   the shared client implementation, while the formal mutation model treated
   every sequential collection as valid.
 - **Correction:** relationship writes, preparation, and snapshot transaction
-  planning validate every nested operation, endpoint, relation, and qualifier
-  before protocol dispatch. `PublicRequestBoundary.dfy` distinguishes a valid
-  sequential batch from one containing malformed updates; an executed mutant
-  and protocol-level regression bind the rule to production.
+  planning validate every nested operation, required endpoint, relation, and
+  qualifier before protocol dispatch. `PublicRequestBoundary.dfy` both requires
+  every mandatory nested field and distinguishes a valid sequential batch from
+  one containing malformed updates; an executed mutant and protocol-level
+  regression bind the rule to production.
 
 The authoritative minimized fixtures and closing evidence are under
 `formal/counterexamples/`. Run them with
