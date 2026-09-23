@@ -202,11 +202,31 @@
     (validate-evidence-witnesses! options candidates)
     (check-many-normalized (assoc options :candidates candidates))))
 
+(declare check-many-normalized)
+
+(defn ^:no-doc check-many-trusted
+  "`check-many-eids` for an engine caller that has already validated each
+  candidate's typed point context and deduplicated the vector, and supplies
+  every candidate with its `:true-nodes` set. Skips only that re-validation;
+  witness validation and evaluation are unchanged."
+  [{:keys [plan candidates] :as options}]
+  (when-not (operator-plan/operator-plan? plan)
+    (invalid! :operator-plan-required
+              "Vector evaluation requires a sealed operator plan."
+              {:plan-domain (:domain plan)}))
+  (when (> (count candidates) backend/maximum-direct-membership-batch-width)
+    (invalid! :candidate-width
+              "Vector candidate width exceeds the physical maximum."
+              {:width (count candidates)
+               :maximum-width backend/maximum-direct-membership-batch-width}))
+  (validate-evidence-witnesses! options candidates)
+  (check-many-normalized options))
+
 (defn- check-many-normalized
   "Trusted core of `check-many-eids`: the candidate vector is already
   normalized (each caller normalizes exactly once at its boundary)."
   [{:keys [adapter plan candidates cache-lookup cache-publish-many!
-           limits permission node-id qualification]}]
+           limits permission node-id qualification delegate]}]
   (let [width (count candidates)]
     (if (zero? width)
       []
@@ -262,12 +282,17 @@
                     (if (empty? pending)
                       (fn [] (continue witnessed))
                       (do
-                        (let [active-now @active]
-                          (doseq [index pending]
-                            (when (contains? active-now [node-key index])
-                              (scalar/active-recursion-outcome
-                               {:node node-key :candidate-index index}))))
-                        (vswap! active into (map #(vector node-key %) pending))
+                        ;; The active nodes are exactly the unfinished
+                        ;; ancestors of this evaluation: children run one at a
+                        ;; time, each on a subset of its parent's pending
+                        ;; candidates. Re-entering an active node with pending
+                        ;; candidates is therefore a cycle for each of them,
+                        ;; so one membership test per node replaces one per
+                        ;; node and candidate.
+                        (when (contains? @active node-key)
+                          (scalar/active-recursion-outcome
+                           {:node node-key :candidate-index (first pending)}))
+                        (vswap! active conj node-key)
                         (add-stat! :node-candidate-evaluations (count pending))
                         (let [predicate
                               (get-in predicate-programs
@@ -275,8 +300,7 @@
                               instruction (:instruction predicate)
                               finish!
                               (fn [values]
-                                (vswap! active #(reduce disj %
-                                                        (map (fn [index] [node-key index]) pending)))
+                                (vswap! active disj node-key)
                                 (let [resolved (commit! node-key values pending)]
                                   (fn [] (continue resolved))))]
                           (case instruction
@@ -344,9 +368,30 @@
                                                 :subject-eid (:subject-eid candidate)
                                                 :resource-eid
                                                 (:resource-eid candidate)
-                                                :limits limits :qualification qualification})]
+                                                :limits limits :qualification qualification
+                                                :delegate delegate})]
                                           (assoc result index decision)))
                                       witnessed pending))
+
+                            :delegated-membership
+                            ;; A union-only operand of a delegated view: the
+                            ;; oracle decides every pending candidate at once
+                            ;; through that permission's own sealed union plan.
+                            (let [decisions
+                                  (when delegate
+                                    (vec (delegate (:permission predicate)
+                                                   (mapv #(nth candidates %) pending))))]
+                              (when-not (and decisions
+                                             (= (count pending) (count decisions)))
+                                (invalid! :invalid-delegated-decisions
+                                          "A delegated operand returned no aligned decisions."
+                                          {:node node-key
+                                           :expected (count pending)
+                                           :actual (count decisions)}))
+                              (finish! (reduce (fn [result [index decision]]
+                                                 (assoc result index decision))
+                                               witnessed
+                                               (map vector pending decisions))))
 
                             (:any-true :all-true)
                             (let [op (if (= :any-true instruction) :union :intersection)]

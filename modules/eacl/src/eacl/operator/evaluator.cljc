@@ -221,7 +221,7 @@
   denied without backend work. Recursive plans fail with a typed transition
   requirement; they are never interpreted as false."
   [{:keys [adapter plan subject-type subject-eid resource-eid limits
-           permission node-id qualification arrow-witness]}]
+           permission node-id qualification arrow-witness delegate]}]
   (when-not (operator-plan/operator-plan? plan)
     (invalid! :operator-plan-required
               "Operator evaluation requires a sealed operator plan."
@@ -233,7 +233,11 @@
   (if (or (nil? subject-eid) (nil? resource-eid))
     false
     (do
-      (when-not (acyclic-plan? plan)
+      ;; A delegated view keeps its recursion inside union-only operands that
+      ;; this machine never enters: their roots answer through `delegate`.
+      ;; The active-key guard below still fails closed on any other cycle.
+      (when-not (or (acyclic-plan? plan)
+                    (and delegate (:operator-delegation plan)))
         (throw
          (ex-info "Recursive operator plan requires stratified evaluation."
                   {:type :eacl.operator/recursive-plan-required
@@ -368,6 +372,24 @@
                                  (:descriptor predicate))
                                 [memo active value]
                                 (complete-value memo active key decision
+                                                maximum-memo-entries)]
+                            (recur stack memo active value))
+
+                          :delegated-membership
+                          (let [decisions
+                                (when delegate
+                                  (vec (delegate (:permission predicate)
+                                                 [{:direction :forward
+                                                   :subject-type current-subject-type
+                                                   :subject-eid current-subject-eid
+                                                   :resource-type (first permission)
+                                                   :resource-eid current-resource-eid}])))
+                                _ (when-not (= 1 (count decisions))
+                                    (invalid! :invalid-delegated-decisions
+                                              "A delegated operand returned no aligned decision."
+                                              {:key key}))
+                                [memo active value]
+                                (complete-value memo active key (first decisions)
                                                 maximum-memo-entries)]
                             (recur stack memo active value))
 

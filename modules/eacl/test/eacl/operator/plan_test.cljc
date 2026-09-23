@@ -284,3 +284,53 @@
     (is (= 3 (get-in expression [:metrics :node-count])))
     (is (= 2 (count (get-in expression
                             [:dag :nodes (:root expression) 1]))))))
+
+(def ^:private delegation-schema
+  "definition user {}
+   definition folder {
+     relation parent: folder
+     relation reader: user
+     relation deleter: user
+     relation banned: user
+     relation eligible: user
+     permission readable = reader + parent->readable
+     permission granted = deleter + parent->granted
+     permission removable = granted & readable
+     permission kept = granted - readable
+     permission cleared = granted - banned
+     permission cleared_readable = cleared & readable
+     permission either = (granted + readable) & (granted + reader)
+     permission inherited = reader + (parent->inherited & eligible)
+   }")
+
+(deftest recursion-inside-union-only-operands-is-delegable-test
+  (let [adapter (adapter delegation-schema :delegation)
+        seal #(plan/seal-plan adapter [:folder %])
+        delegated #(plan/delegated-permissions (seal %))]
+    (testing "union-only recursive operands are delegated; operator nodes are not"
+      (is (= #{[:folder :granted] [:folder :readable]} (delegated :removable)))
+      (is (= #{[:folder :granted] [:folder :readable]} (delegated :kept)))
+      (is (= #{[:folder :granted] [:folder :readable]}
+             (delegated :cleared_readable))))
+    (testing "recursion through an intersection is not delegable"
+      (is (nil? (delegated :inherited))))
+    (testing "the sealed derived field matches a recomputation and stays
+              outside the fingerprint"
+      (let [sealed (seal :removable)
+            recomputed (dissoc sealed :delegated-permissions)]
+        (is (= (:delegated-permissions sealed)
+               (plan/delegated-permissions recomputed)))
+        (is (= sealed (plan/validate-plan adapter sealed)))
+        (is (= (:fingerprint sealed) (:fingerprint (seal :removable))))))))
+
+(deftest delegated-generator-follows-the-anchor-and-left-chain-test
+  (let [adapter (adapter delegation-schema :delegation-generator)
+        generator (fn [permission]
+                    (let [sealed (plan/seal-plan adapter [:folder permission])]
+                      (plan/delegated-generator
+                       sealed (:root sealed) (plan/delegated-permissions sealed))))]
+    (is (= [:folder :granted] (generator :removable)) "intersection anchor")
+    (is (= [:folder :granted] (generator :kept)) "exclusion left operand")
+    (is (= [:folder :granted] (generator :cleared_readable))
+        "through an operator permission to its own left operand")
+    (is (nil? (generator :either)) "a union anchor fans in")))

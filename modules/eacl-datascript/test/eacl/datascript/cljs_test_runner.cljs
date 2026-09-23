@@ -74,6 +74,8 @@
             [eacl.operator.lookup-test]
             [eacl.operator.feature-gate-test]
             [eacl.operator.recursive-test]
+            [eacl.operator.delegated-recursion-test]
+            [eacl.operator.recursive-intersection-differential-test]
             [eacl.relationships.endpoint-pair-test]
             [eacl.relationships.edge-test]
             [eacl.relationships.upgrade-test]
@@ -187,6 +189,8 @@
                'eacl.operator.lookup-test
                'eacl.operator.feature-gate-test
                'eacl.operator.recursive-test
+               'eacl.operator.delegated-recursion-test
+               'eacl.operator.recursive-intersection-differential-test
                'eacl.relationships.endpoint-pair-test
                'eacl.relationships.edge-test
                'eacl.relationships.upgrade-test
