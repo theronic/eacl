@@ -10,6 +10,8 @@
   :operator-delegation-admits-operator-cycle
   :operator-delegated-generator-wrong-operand
   :operator-delegation-withheld
+  :operator-generator-drops-union-term
+  :operator-holdings-truncated-as-complete
   :membership-level-below-latest-skip
   :membership-first-level-certificate
   :membership-conditional-answered-false]
@@ -246,6 +248,26 @@
    :target-symbol "operator-plan/delegated-permissions"
    :consumer-symbol "engine/lookup-resources"
    :detector "operator-delegation-withheld-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :operator-generator-drops-union-term
+   :mechanism :executed-production
+   :mutation :drop-a-union-term-from-a-flattened-generator
+   :target-symbol "cover-plan/generator-terms"
+   :consumer-symbol "engine/lookup-resources"
+   :detector "operator-generator-drops-union-term-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :operator-holdings-truncated-as-complete
+   :mechanism :executed-production
+   :mutation :decide-relation-leaves-from-truncated-holdings
+   :target-symbol "route/subject-holdings"
+   :consumer-symbol "engine/lookup-resources"
+   :detector "operator-holdings-truncated-as-complete-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
     {:test

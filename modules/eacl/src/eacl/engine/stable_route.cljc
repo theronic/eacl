@@ -820,6 +820,31 @@
           (:conditional? outcome) ::qualified
           :else false)))))
 
+(defn ^:no-doc subject-holdings
+  "One subject's grants of one relation slice, read by one forward scan of at
+  most `holdings-limit` edges and retained in the request's `context`:
+  `{:complete? flag :edges {endpoint compact-edge}}`. The edges are the
+  stored compact edges a direct probe of each resource returns. When the
+  subject holds the slice `holdings-limit` times or more, `:complete?` is
+  false and a caller probes instead."
+  [{:keys [fetch-fn adapter context qualification cut-point!]}
+   subject-type subject-eid relation-eid resource-type]
+  (let [key [:subject-holdings subject-type subject-eid relation-eid resource-type]]
+    (or (get @context key)
+        (let [fetch-fn (or fetch-fn (reducer/adapter-fetch-fn adapter))
+              _ (when cut-point! (cut-point! nil))
+              edges (reducer/bounded-vector
+                     (fetch-fn (cond-> (forward-scan subject-type subject-eid relation-eid
+                                                     resource-type nil holdings-limit)
+                                 qualification (assoc :include-qualifier? true)))
+                     holdings-limit)
+              holdings {:complete? (< (count edges) holdings-limit)
+                        :edges (into {} (map (juxt edge/endpoint identity)) edges)}]
+          (request-counters/add-commands! 1)
+          (request-counters/add-fetched-values! (count edges))
+          (vswap! context assoc key holdings)
+          holdings))))
+
 (defn check-many-eids
   "Decides one subject's membership in the plan's root permission for many
   resources: one value per resource, with the permissionship `check-eids`

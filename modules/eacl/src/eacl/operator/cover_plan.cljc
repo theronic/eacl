@@ -128,8 +128,26 @@
     (fn [& arguments]
       (apply backend/invoke adapter operation arguments))))
 
+(defn- cover-definitions
+  "The per-node cover's `:permission-defs`: each synthetic node's rows."
+  [operator-plan {:keys [semantic->synthetic synthetic->semantic]}]
+  (fn [resource-type permission-name]
+    (let [synthetic [resource-type permission-name]
+          semantic (get synthetic->semantic synthetic)]
+      (when-not semantic
+        (throw
+         (ex-info
+          "Least-path requested an unknown operator cover node."
+          {:type :eacl.operator/invalid-cover
+           :eacl/error :eacl.operator/invalid-cover
+           :node synthetic})))
+      (node-definitions operator-plan semantic->synthetic
+                        semantic synthetic))))
+
 (defn- wrapper-adapter
-  [adapter operator-plan {:keys [semantic->synthetic synthetic->semantic]}]
+  "The base adapter, with `permission-defs` serving synthetic definitions.
+  `fingerprint` names what the definitions were derived from."
+  [adapter fingerprint permission-defs]
   (let [operations
         (into {}
               (map (fn [operation]
@@ -139,19 +157,7 @@
         (assoc operations
                :schema-generation
                (forwarding-operation adapter :schema-generation)
-               :permission-defs
-               (fn [resource-type permission-name]
-                 (let [synthetic [resource-type permission-name]
-                       semantic (get synthetic->semantic synthetic)]
-                   (when-not semantic
-                     (throw
-                      (ex-info
-                       "Least-path requested an unknown operator cover node."
-                       {:type :eacl.operator/invalid-cover
-                        :eacl/error :eacl.operator/invalid-cover
-                        :node synthetic})))
-                   (node-definitions operator-plan semantic->synthetic
-                                     semantic synthetic))))
+               :permission-defs permission-defs)
         operations
         (cond-> operations
           (backend/supports? adapter :qualification qualification-data/capability)
@@ -170,8 +176,7 @@
       {:id (backend/backend-id adapter)
        :capabilities (backend/capabilities adapter)
        :traversal-execution (backend/traversal-execution adapter)
-       :fingerprint {:base (backend/fingerprint adapter)
-                     :operator-cover (:fingerprint operator-plan)}
+       :fingerprint (merge {:base (backend/fingerprint adapter)} fingerprint)
        :deterministic? (backend/deterministic? adapter)
        :identity-contract (backend/identity-contract adapter)
        ;; The forwarding operations already run the base adapter's runtime
@@ -209,7 +214,10 @@
                   :eacl/error :eacl.operator/invalid-cover
                   :permission permission})))
      (let [cover-plan
-           (sealed-plan/seal-plan (wrapper-adapter adapter plan maps) root)
+           (sealed-plan/seal-plan
+            (wrapper-adapter adapter {:operator-cover (:fingerprint plan)}
+                             (cover-definitions plan maps))
+            root)
            allowed (set (get-in plan [:relation-closures permission :all]))
            outside (vec (remove allowed
                                 (sealed-plan/relation-ids cover-plan)))]
@@ -223,3 +231,150 @@
               :operator-semantic->synthetic semantic->synthetic
               :operator-synthetic->semantic synthetic->semantic
               :operator-root-semantic [permission root-id])))))
+
+;; ---------------------------------------------------------------------------
+;; Flattened generators
+;; ---------------------------------------------------------------------------
+
+(def ^:private generator-tag :eacl.operator.generator/node)
+
+(defn- generator-name [permission]
+  [generator-tag permission])
+
+(defn- generated-permission
+  "The permission a flattened generator node's name stands for, or nil."
+  [permission-name]
+  (when (and (vector? permission-name)
+             (= 2 (count permission-name))
+             (= generator-tag (first permission-name)))
+    (second permission-name)))
+
+(defn ^:no-doc generator-terms
+  "The cover leaves of `permission`'s expression, in expression order, each
+  once: a union contributes every child, an intersection its sealed anchor,
+  and an exclusion its left operand. Every result of `permission` holds at
+  least one of them. Pure over sealed fields."
+  [plan permission]
+  (let [covers (get-in plan [:covers permission])]
+    (letfn [(leaves [node-id]
+              (let [{:keys [kind source-node source-nodes]} (get covers node-id)]
+                (case kind
+                  :union (mapcat leaves source-nodes)
+                  :child (leaves source-node)
+                  [node-id])))]
+      (vec (distinct (leaves (get (operator-plan/expression-roots plan)
+                                  permission)))))))
+
+(defn ^:no-doc generator-definitions
+  "The definition rows of `permission`'s flattened generator node: one per
+  cover leaf, or one per partition of an arrow leaf, deduplicated in order.
+  A reference to a delegated permission names that permission, so the
+  union engine seals its own rules. A reference to any other permission
+  names that permission's generator node."
+  [plan delegated [resource-type :as permission]]
+  (let [reference (fn [target]
+                    (if (contains? delegated target)
+                      (second target)
+                      (generator-name target)))
+        common {:permission-id (str "operator-generator:" (pr-str permission))
+                :resource-type resource-type
+                :permission-name (generator-name permission)}]
+    (into []
+          (comp
+           (mapcat
+            (fn [node-id]
+              (let [predicate (get-in plan [:predicate-programs permission node-id])]
+                (case (:instruction predicate)
+                  :direct-membership
+                  [(assoc common
+                          :source-relation-name :self
+                          :target-type :relation
+                          :target-name (get-in predicate [:descriptor :relation]))]
+
+                  :permission-membership
+                  [(assoc common
+                          :source-relation-name :self
+                          :target-type :permission
+                          :target-name (reference (:target-node predicate)))]
+
+                  :arrow-membership
+                  (mapv
+                   (fn [{:keys [intermediate-type target-kind target-name target-node]}]
+                     (assoc common
+                            :source-relation-name (get-in predicate [:descriptor :relation])
+                            :source-subject-type intermediate-type
+                            :target-type target-kind
+                            :target-name (if (= :permission target-kind)
+                                           (reference target-node)
+                                           target-name)))
+                   (get-in predicate [:descriptor :partitions]))
+
+                  (throw
+                   (ex-info "Operator generator leaf has a non-leaf predicate."
+                            {:type :eacl.operator/invalid-cover
+                             :eacl/error :eacl.operator/invalid-cover
+                             :permission permission :node-id node-id
+                             :instruction (:instruction predicate)}))))))
+           (distinct))
+          (generator-terms plan permission))))
+
+(defn- generator-adapter
+  [adapter plan delegated]
+  (let [base-definitions (forwarding-operation adapter :permission-defs)
+        generated (into #{}
+                        (comp (map :permission)
+                              (remove #(contains? delegated %)))
+                        (:expressions plan))]
+    (wrapper-adapter
+     adapter
+     {:operator-generator (:fingerprint plan)}
+     (fn [resource-type permission-name]
+       (let [permission (generated-permission permission-name)]
+         (cond
+           (and permission
+                (= resource-type (first permission))
+                (contains? generated permission))
+           (generator-definitions plan delegated permission)
+
+           (contains? delegated [resource-type permission-name])
+           (base-definitions resource-type permission-name)
+
+           :else
+           (throw
+            (ex-info "The sealer requested an unknown operator generator node."
+                     {:type :eacl.operator/invalid-cover
+                      :eacl/error :eacl.operator/invalid-cover
+                      :node [resource-type permission-name]}))))))))
+
+(defn seal-generator
+  "Seals the flattened generator of a recursive operator plan whose
+  union-only permissions are `delegated`
+  (`operator-plan/delegated-permissions`).
+
+  The generator has one synthetic union node per other permission the root's
+  cover reaches, and it reaches the delegated permissions' own union rules.
+  It generates the same set as the per-node cover of `seal-plan`, through one
+  node per permission instead of one per expression node. Reads outside the
+  root's relation closure are rejected."
+  [adapter plan delegated]
+  (when-not (operator-plan/operator-plan? plan)
+    (throw
+     (ex-info "Generator sealing requires an operator plan."
+              {:type :eacl.operator/invalid-cover
+               :eacl/error :eacl.operator/invalid-cover})))
+  (let [[resource-type :as permission] (:root plan)
+        generator-plan (sealed-plan/seal-plan
+                        (generator-adapter adapter plan delegated)
+                        [resource-type (generator-name permission)])
+        allowed (set (get-in plan [:relation-closures permission :all]))
+        outside (vec (remove allowed
+                             (sealed-plan/relation-ids generator-plan)))]
+    (when (seq outside)
+      (throw
+       (ex-info "Operator generator reads outside the operator dependency closure."
+                {:type :eacl.operator/invalid-cover
+                 :eacl/error :eacl.operator/invalid-cover
+                 :outside-relation-ids outside})))
+    (assoc generator-plan
+           :operator-root-semantic
+           [permission (get (operator-plan/expression-roots plan) permission)])))

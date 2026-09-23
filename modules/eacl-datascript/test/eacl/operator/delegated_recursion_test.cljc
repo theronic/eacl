@@ -1,9 +1,9 @@
 (ns eacl.operator.delegated-recursion-test
   "Routing of recursive operator plans whose recursion lies inside union-only
-  operands: the operands are decided by the union engine, the delegated
-  operand's own sealed plan generates candidates, and cursors minted under any
-  other generator are rejected. Plans that recurse through an operator keep
-  the tabled recursive evaluator."
+  operands: the operands are decided by the union engine, and candidates come
+  from the delegated operand's own sealed plan or else from the flattened
+  generator. Cursors minted under any other generator are rejected. Plans that
+  recurse through an operator keep the tabled recursive evaluator."
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is testing]]
             [datascript.core :as ds]
             [eacl.authorization.evidence :as evidence]
@@ -19,7 +19,8 @@
             [eacl.operator.cover-plan :as cover-plan]
             [eacl.operator.evaluator-test :as evaluator-fixtures]
             [eacl.operator.plan :as plan]
-            [eacl.operator.recursive :as recursive]))
+            [eacl.operator.recursive :as recursive]
+            [eacl.request.counters :as counters]))
 
 (def schema
   "definition user {}
@@ -31,6 +32,11 @@
      permission readable = reader + parent->readable
      permission granted = deleter + parent->granted
      permission removable = granted & readable
+     permission removable_top = deleter + (granted & readable)
+     permission prunable_top = deleter + (granted - readable)
+     permission either = (granted + readable) & (reader + deleter + eligible)
+     permission gated = eligible & readable
+     permission parent_removable = deleter + parent->removable
      permission inherited = reader + (parent->inherited & eligible)
    }")
 
@@ -98,6 +104,88 @@
                    (assoc query :first 1
                           :after (assoc edge :cover-fingerprint
                                         (:fingerprint synthetic))))))))))))
+
+;; f0 is the root of f0 -> f1 -> f2 -> f3. Alice deletes from f0 down, reads
+;; from f1 down, and is eligible at f2.
+(def ^:private flattened-roots
+  "Roots whose anchor chains end at no single delegated operand, with their
+  flattened generator rows as [source target-type target] and their results."
+  {:removable_top {:rows #{[:self :relation :deleter] [:self :permission :granted]}
+                   :results #{"f0" "f1" "f2" "f3"}}
+   :prunable_top {:rows #{[:self :relation :deleter] [:self :permission :granted]}
+                  :results #{"f0"}}
+   :either {:rows #{[:self :permission :granted] [:self :permission :readable]}
+            :results #{"f0" "f1" "f2"}}
+   :gated {:rows #{[:self :relation :eligible]}
+           :results #{"f2"}}
+   :parent_removable {:rows #{[:self :relation :deleter]
+                              [:parent :permission
+                               [:eacl.operator.generator/node [:folder :removable]]]}
+                      :results #{"f0" "f2" "f3"}}})
+
+(defn- generator-rows [operator-plan permission]
+  (set (map (juxt :source-relation-name :target-type :target-name)
+            (cover-plan/generator-definitions
+             operator-plan (plan/delegated-permissions operator-plan) permission))))
+
+(deftest flattened-generators-follow-covers-test
+  (let [{:keys [adapter client]} (fixture)
+        alice (eacl/spice-object :user "alice")
+        walk (fn [permission]
+               (set (map :id (:data (eacl/lookup-resources
+                                     client {:subject alice :permission permission
+                                             :resource/type :folder :first 10})))))]
+    (doseq [[permission {:keys [rows results]}] flattened-roots]
+      (testing (name permission)
+        (let [operator-plan (plan/seal-plan adapter [:folder permission])
+              delegated (plan/delegated-permissions operator-plan)]
+          (is (some? delegated))
+          (is (nil? (plan/delegated-generator operator-plan (:root operator-plan) delegated)))
+          (is (= rows (generator-rows operator-plan [:folder permission])))
+          (is (= results (walk permission)))
+          (is (= results (with-redefs [plan/delegated-permissions (constantly nil)]
+                           (walk permission)))
+              "the tabled route agrees"))))
+    (testing "an operator permission an arrow reaches gets its own node"
+      (is (= #{[:self :permission :granted]}
+             (generator-rows (plan/seal-plan adapter [:folder :parent_removable])
+                             [:folder :removable]))))))
+
+(deftest flattened-generator-cursors-test
+  (let [{:keys [adapter]} (fixture)
+        query {:subject (eacl/spice-object :user "alice") :permission :removable_top
+               :resource/type :folder}
+        operator-plan (plan/seal-plan adapter [:folder :removable_top])
+        generator (cover-plan/seal-generator
+                   adapter operator-plan (plan/delegated-permissions operator-plan))
+        first-page (engine/lookup-resources adapter (assoc query :first 1))
+        edge (get-in first-page [:page-info :end-cursor])
+        rest-page (engine/lookup-resources adapter (assoc query :first 10 :after edge))]
+    (testing "the flattened generator's fingerprint is the cursors' cover"
+      (is (= :operator-recursive-edge (:kind edge)))
+      (is (= (:fingerprint generator) (:cover-fingerprint edge))))
+    (testing "the walk continues from its own cursor"
+      (is (= 4 (count (into (set (map :id (:data first-page)))
+                            (map :id (:data rest-page)))))))
+    (testing "a cursor minted under the per-node cover is rejected"
+      (let [per-node (cover-plan/seal-plan adapter operator-plan)]
+        (is (not= (:fingerprint per-node) (:fingerprint generator)))
+        (is (= :eacl.pagination/invalid-cursor
+               (:eacl/error
+                (error-data
+                 #(engine/lookup-resources
+                   adapter
+                   (assoc query :first 1
+                          :after (assoc edge :cover-fingerprint
+                                        (:fingerprint per-node))))))))))
+    (testing "a generator that would read outside the root's closure is rejected"
+      (is (= :eacl.operator/invalid-cover
+             (:type (error-data
+                     #(cover-plan/seal-generator
+                       adapter
+                       (assoc-in operator-plan
+                                 [:relation-closures [:folder :removable_top] :all] [])
+                       (plan/delegated-permissions operator-plan)))))))))
 
 (deftest delegated-checks-and-counts-use-the-union-engine-test
   (let [{:keys [client]} (fixture)
@@ -192,6 +280,70 @@
                  (lookup :detailed)))
           (is (= (set (keep (fn [[folder p]] (when (= :has-permission p) folder)) expected))
                  (lookup :definite))))))))
+
+(deftest relation-leaves-decide-from-the-subjects-holdings-test
+  ;; `removable_top = deleter + (granted & readable)`: its `deleter` leaf is
+  ;; decided for a whole batch from alice's deleter holdings. Her grant on f0
+  ;; expires at 200 and her grant on f2 is caveated and expires at 300, so
+  ;; the leaf's decisions carry certificates and a residual with a deadline.
+  ;; The detailed lookup must still carry exactly what each check returns,
+  ;; with or without the holdings path.
+  (let [conn (datascript/create-conn)
+        client (datascript/make-client
+                conn {:clock (constantly 100)
+                      :caveat-evaluator (qualification-fixtures/portable-evaluator (atom 0))})
+        alice (eacl/spice-object :user "alice")
+        folders (mapv #(eacl/spice-object :folder %) ["f0" "f1" "f2" "f3"])]
+    (eacl/write-schema! client (str "caveat enabled(flag bool) { flag }\n" schema))
+    (ds/transact! conn (mapv #(hash-map :eacl/id %) ["alice" "f0" "f1" "f2" "f3"]))
+    (eacl/create-relationships!
+     client
+     [(eacl/->Relationship (folders 0) :parent (folders 1))
+      (eacl/->Relationship (folders 1) :parent (folders 2))
+      (eacl/->Relationship (folders 2) :parent (folders 3))
+      (eacl/->Relationship alice :reader (folders 3))])
+    (let [db (ds/db conn)
+          eid #(ds/entid db [:eacl/id %])
+          deleter (ds/entid db [:eacl.relation/resource-type+relation-name+subject-type
+                                [:folder :deleter :user]])
+          caveat (ds/entid db [:eacl.caveat/name "enabled"])
+          writer (qualifiers/writer conn)]
+      (ds/transact! conn [{:db/id deleter :eacl.relation/caveats [caveat]
+                          :eacl.relation/allows-unqualified? true}])
+      (staged/write! writer :create [:user (eid "alice") deleter :folder (eid "f0")]
+                     {:valid-until-ms 200})
+      (staged/write! writer :create [:user (eid "alice") deleter :folder (eid "f2")]
+                     {:caveat caveat :valid-until-ms 300}))
+    (doseq [context [{} {"flag" true} {"flag" false}]
+            limit [stable-route/holdings-limit 1]]
+      (testing (str "context " context ", holdings limit " limit)
+        (with-redefs [stable-route/holdings-limit limit]
+          (let [checks (into {}
+                             (map (fn [folder]
+                                    [folder (select-keys
+                                             (eacl/check-permission
+                                              client {:subject alice :permission :removable_top
+                                                      :resource folder :caveat-context context})
+                                             [:permissionship :missing-fields :residual])]))
+                             folders)
+                ledger (counters/make-ledger)
+                items (counters/call-with-ledger
+                       ledger
+                       #(:data (eacl/lookup-resources
+                                client {:subject alice :permission :removable_top
+                                        :resource/type :folder :first 10
+                                        :caveat-context context :result-policy :detailed
+                                        :cache? false})))
+                probes (:probes (counters/snapshot ledger))]
+            (is (= (into {} (remove #(= :no-permission (:permissionship (val %)))) checks)
+                   (into {} (map (fn [item]
+                                   [(:object item)
+                                    (select-keys item [:permissionship :missing-fields
+                                                       :residual])]))
+                         items)))
+            (if (= 1 limit)
+              (is (pos? probes) "incomplete holdings fall back to probes")
+              (is (zero? probes) "the leaf reads alice's holdings once"))))))))
 
 (deftest conditional-results-carry-the-point-checks-residual-test
   ;; `granted` holds on f0 through a direct deleter grant until 200 and

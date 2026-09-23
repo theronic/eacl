@@ -671,22 +671,30 @@
     ;; decided level by level (LeveledMembership.dfy): the widest decisive
     ;; witness, with its exact deadline; conditional and faulty evidence stay
     ;; with the membership-probe check, and a conditional operator result is
-    ;; recomputed with point operands. Executable refinement:
+    ;; recomputed with point operands. Candidates come from the delegated
+    ;; operand's own plan or else from the flattened generator, one synthetic
+    ;; union node per operator permission. A batched evaluation decides a
+    ;; relation leaf from the subject's holdings, read once per request, with
+    ;; the edge a probe returns. Executable refinement:
     ;; eacl.engine.memoized-membership-refinement-test and
     ;; eacl.engine.leveled-membership-refinement-test run the production
     ;; search beside transcriptions over random programs, the latter with
     ;; expiring and caveated relationships and an independent widest-witness
     ;; fixed point; eacl.operator.delegation-refinement-test checks the
-    ;; delegation analysis against an oracle, and every engine answer against
-    ;; a stratified least fixed point and the tabled evaluator, over random
-    ;; operator schemas. The membership-* and operator-delegat* mutation
-    ;; controls are killed by them on both runtimes.
+    ;; delegation analysis against an oracle, each flattened generator's rows
+    ;; for covering their root, and every engine answer against a stratified
+    ;; least fixed point and the tabled evaluator, over random operator
+    ;; schemas. The membership-*, operator-delegat*, operator-generator-* and
+    ;; operator-holdings-* mutation controls are killed by them on both
+    ;; runtimes.
     :entry-points
     ["eacl.operator.plan/delegated-permissions"
      "eacl.operator.plan/delegated-generator"
+     "eacl.operator.cover-plan/seal-generator"
      "eacl.operator.recursive/evaluate-cached-many"
      "eacl.operator.vector-evaluator/check-many-trusted"
-     "eacl.engine.stable-route/check-many-eids"]
+     "eacl.engine.stable-route/check-many-eids"
+     "eacl.engine.stable-route/subject-holdings"]
     :theorems
     [:exhausted-search-admits-only-negative-states
      :found-search-proves-its-root

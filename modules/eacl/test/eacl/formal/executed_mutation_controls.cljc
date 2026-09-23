@@ -20,6 +20,7 @@
             [eacl.engine.stable-reducer :as stable-reducer]
             [eacl.engine.stable-route :as route]
             [eacl.engine.v8 :as engine]
+            [eacl.operator.cover-plan :as cover-plan]
             [eacl.operator.evaluator :as operator-evaluator]
             [eacl.operator.lookup :as operator-lookup]
             [eacl.operator.plan :as operator-plan]
@@ -1950,9 +1951,9 @@ definition document {
 ;;;
 ;;; 100 is the parent of 101, of 102, of 103; 104 and 105 are each other's
 ;;; parent. User 300 deletes from 100 down, reads from 101 down, and is
-;;; eligible at 102, 104 and 105: `removable` is 101-103, `prune` is 100, and
-;;; `inherited`, whose operator recurses, is 101-102 (the 104-105 cycle grants
-;;; nothing).
+;;; eligible at 102, 104 and 105: `removable` is 101-103, `prune` is 100,
+;;; `either_top`, a union at an operator's root, is 101-105, and `inherited`,
+;;; whose operator recurses, is 101-102 (the 104-105 cycle grants nothing).
 
 (def ^:private delegation-control-schema
   "definition user {}
@@ -1965,6 +1966,7 @@ definition folder {
   permission granted = deleter + parent->granted
   permission removable = granted & readable
   permission prune = granted - readable
+  permission either_top = eligible + (granted & readable)
   permission inherited = reader + (parent->inherited & eligible)
 }")
 
@@ -2022,6 +2024,44 @@ definition folder {
                              (or (first (remove #{generator} delegated))
                                  generator)))]
              (delegation-control-lookup :prune))))))
+
+(defn operator-generator-drops-union-term-killed?
+  []
+  (let [original cover-plan/generator-terms
+        expected #{101 102 103 104 105}
+        answer #(let [ids (delegation-control-lookup :either_top)]
+                  (if (vector? ids) (set ids) ids))]
+    (and
+     (= expected (answer))
+     ;; Each term of `eligible + (granted & readable)` reaches resources the
+     ;; other does not, so a flattened generator without either one never
+     ;; offers some of the root's results.
+     (not= expected
+           (with-redefs [cover-plan/generator-terms
+                         (fn [plan permission]
+                           (let [terms (original plan permission)]
+                             (if (< 1 (count terms)) (pop terms) terms)))]
+             (answer))))))
+
+(defn operator-holdings-truncated-as-complete-killed?
+  []
+  (let [original route/subject-holdings
+        expected #{101 102 103 104 105}
+        answer #(let [ids (delegation-control-lookup :either_top)]
+                  (if (vector? ids) (set ids) ids))]
+    (with-redefs [route/holdings-limit 2]
+      (and
+       (= expected (answer))
+       ;; User 300 is eligible at 102, 104 and 105. A holdings scan bounded
+       ;; at two is incomplete; taking it as complete loses 105, which only
+       ;; the `eligible` leaf grants.
+       (not= expected
+             (with-redefs [route/subject-holdings
+                           (fn [options subject-type subject-eid relation-eid resource-type]
+                             (assoc (original options subject-type subject-eid
+                                              relation-eid resource-type)
+                                    :complete? true))]
+               (answer)))))))
 
 (defn operator-delegation-withheld-killed?
   []
@@ -2227,6 +2267,10 @@ definition doc {
    :operator-delegated-generator-wrong-operand
    operator-delegated-generator-wrong-operand-killed?
    :operator-delegation-withheld operator-delegation-withheld-killed?
+   :operator-generator-drops-union-term
+   operator-generator-drops-union-term-killed?
+   :operator-holdings-truncated-as-complete
+   operator-holdings-truncated-as-complete-killed?
    :membership-level-below-latest-skip membership-level-below-latest-skip-killed?
    :membership-first-level-certificate membership-first-level-certificate-killed?
    :membership-conditional-answered-false

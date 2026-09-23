@@ -67,6 +67,17 @@ expires.
 Caveated relationships are still decided one resource at a time. So is any
 evidence that could let access appear later.
 
+The same holds when the operator sits under a union, or when a union is an
+intersection's anchor:
+
+```zed
+permission delete_top = deleter + (delete_granted & read_account)
+```
+
+EACL generates `delete_top`'s candidates from `deleter` and from
+`delete_granted`'s own traversal. It decides `deleter` for a whole page from
+the subject's `deleter` grants, read once per request.
+
 A permission that recurses through the operator itself, such as
 `view = reader + (parent->view & eligible)`, needs stratified recursive
 evaluation, which costs more per result.

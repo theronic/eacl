@@ -171,12 +171,14 @@ set-algebra semantics:
   retained skip bounds, and checks every certificate against an independent
   widest-witness fixed point.
 - `eacl.operator.delegation-refinement-test` covers random operator schemas.
-  It checks the delegation analysis against an independent oracle. It checks
-  every lookup, count, check and reverse lookup against a stratified least
-  fixed point, and against the tabled evaluator.
+  It checks the delegation analysis against an independent oracle. It
+  evaluates each flattened generator's rows with its own semantics and
+  requires them to cover the root. It checks every lookup, count, check and
+  reverse lookup against a stratified least fixed point, and against the
+  tabled evaluator.
 
-Registered mutation controls run both campaigns on the JVM and in
-ClojureScript. The Clojure search itself has no mechanized proof.
+Registered mutation controls run the campaigns' obligations on the JVM and
+in ClojureScript. The Clojure search itself has no mechanized proof.
 
 ### Permission-tree assurance boundary
 

@@ -1369,7 +1369,7 @@
   conditional decision is recomputed with `point-delegate` before it is
   returned or published, and equals what a check returns."
   [{:keys [adapter plan candidates permission qualification delegate
-           point-delegate]}
+           point-delegate holdings]}
    delegated]
   (let [permission (or permission (:root plan))
         evaluate
@@ -1390,7 +1390,8 @@
                              :resource-eid resource-eid
                              :true-nodes #{}})
                           candidates)
-                    :delegate delegate}
+                    :delegate delegate
+                    :holdings holdings}
              qualification
              (assoc :qualification qualification
                     :witness-scope (qualification/exact-reuse-identity qualification)))))
