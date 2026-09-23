@@ -59,7 +59,15 @@ permission delete = delete_granted & read_account
 
 EACL decides each operand the way it decides that operand on its own, and it
 generates `delete`'s candidates with the traversal a lookup of one operand
-uses. A permission that recurses through the operator itself, such as
+uses. This holds when relationships expire, too. An operand whose only
+witnesses expire is decided in a few passes, one per distinct expiry it
+meets, and the grant is certified until the last of those witnesses
+expires.
+
+Caveated relationships are still decided one resource at a time. So is any
+evidence that could let access appear later.
+
+A permission that recurses through the operator itself, such as
 `view = reader + (parent->view & eligible)`, needs stratified recursive
 evaluation, which costs more per result.
 

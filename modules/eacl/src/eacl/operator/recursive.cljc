@@ -1349,36 +1349,63 @@
           (observe! @counters)
           result)))))
 
+(defn- conditional-decision?
+  "True for a residual-bearing value: neither Boolean, decisive, nor a
+  fault."
+  [decision]
+  (not (or (boolean? decision) (evidence/has? decision) (evidence/no? decision)
+           (evidence/fault? decision))))
+
 (defn- evaluate-delegated
   "Decides point questions whose recursion is confined to union-only operands
   (`operator-plan/delegated-permissions`): the acyclic vector evaluator runs
   the operator nodes, and `delegate` decides every union-only operand through
   its own sealed union plan. No question graph, component condensation, or
-  checkpoint exists on this path; the decisions are the same denotation."
-  [{:keys [adapter plan candidates permission qualification delegate]}
+  checkpoint exists on this path; the decisions are the same denotation.
+
+  A batched `delegate` may certify a decisive operand until its widest
+  witness expires, where the point check certifies its first witness. The
+  two deadlines show only in a conditional result's residual. So a
+  conditional decision is recomputed with `point-delegate` before it is
+  returned or published, and equals what a check returns."
+  [{:keys [adapter plan candidates permission qualification delegate
+           point-delegate]}
    delegated]
-  (let [permission (or permission (:root plan))]
+  (let [permission (or permission (:root plan))
+        evaluate
+        (fn [delegate candidates]
+          ;; Candidates were validated once and deduplicated by
+          ;; `evaluate-cached-many`; the vector evaluator's own
+          ;; re-validation is skipped.
+          (vector-evaluator/check-many-trusted
+           (cond-> {:adapter adapter
+                    :plan (operator-plan/delegated-view plan delegated)
+                    :permission permission
+                    :candidates
+                    (mapv (fn [{:keys [direction subject-type subject-eid resource-eid]}]
+                            {:direction direction
+                             :subject-type subject-type
+                             :subject-eid subject-eid
+                             :resource-type (first permission)
+                             :resource-eid resource-eid
+                             :true-nodes #{}})
+                          candidates)
+                    :delegate delegate}
+             qualification
+             (assoc :qualification qualification
+                    :witness-scope (qualification/exact-reuse-identity qualification)))))
+        decisions (evaluate delegate candidates)
+        conditional (when point-delegate
+                      (vec (keep-indexed (fn [index decision]
+                                           (when (conditional-decision? decision) index))
+                                         decisions)))]
     {:decisions
-     ;; Candidates were validated once and deduplicated by
-     ;; `evaluate-cached-many`; the vector evaluator's own re-validation is
-     ;; skipped.
-     (vector-evaluator/check-many-trusted
-      (cond-> {:adapter adapter
-               :plan (operator-plan/delegated-view plan delegated)
-               :permission permission
-               :candidates
-               (mapv (fn [{:keys [direction subject-type subject-eid resource-eid]}]
-                       {:direction direction
-                        :subject-type subject-type
-                        :subject-eid subject-eid
-                        :resource-type (first permission)
-                        :resource-eid resource-eid
-                        :true-nodes #{}})
-                     candidates)
-               :delegate delegate}
-        qualification
-        (assoc :qualification qualification
-               :witness-scope (qualification/exact-reuse-identity qualification))))
+     (if (seq conditional)
+       (reduce (fn [decisions [index decision]] (assoc decisions index decision))
+               (vec decisions)
+               (map vector conditional
+                    (evaluate point-delegate (mapv #(nth candidates %) conditional))))
+       decisions)
      :checkpoint nil
      :counters {}
      :replayed? false}))

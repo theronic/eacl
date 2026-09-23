@@ -1830,13 +1830,18 @@
   "The union-engine oracle for a delegated operator plan's union-only
   operands (`operator-plan/delegated-permissions`): each operand is decided
   through its own sealed union plan, never re-derived by the operator
-  machinery. `:batched` serves lookups and counts: candidates that share one
-  subject (every forward page and count) go through
-  `stable-route/check-many-eids` with one request-scoped membership context,
-  so holdings, intermediates, and decided ancestors are read once per
-  request. `:point` serves a single check, where the exact point check is
-  already the cheapest decision. Returns the oracle and the attempt counter
-  of its routed read path."
+  machinery.
+
+  - `:batched` serves lookups and counts. Candidates that share one subject
+    (every forward page and count) go through `stable-route/check-many-eids`
+    with one request-scoped membership context, so holdings, intermediates,
+    and decided ancestors are read once per request.
+  - `:point` serves a single check, where the exact point check is already
+    the cheapest decision.
+
+  Returns the oracle's `:delegate`, its `:point-delegate` (the exact point
+  check per candidate, which reproduces a check's certificates), and the
+  attempt counter of its routed read path."
   [db mode]
   (let [{:keys [fetch-fn attempts]} (stable-fetch-fn db)
         context (when (= :batched mode) (stable-route/membership-context))
@@ -1844,35 +1849,40 @@
                        {:adapter db
                         :fetch-fn fetch-fn
                         :qualification *qualification*
-                        :cut-point! (stable-cut-point)})]
+                        :cut-point! (stable-cut-point)})
+        point (fn [permission candidates]
+                (let [options (assoc options :plan (stable-plan db permission))]
+                  (mapv (fn [candidate]
+                          (stable-route/check-eids
+                           (assoc options
+                                  :subject-type (:subject-type candidate)
+                                  :subject-eid (:subject-eid candidate)
+                                  :resource-eid (:resource-eid candidate))))
+                        candidates)))]
     {:attempts attempts
+     :point-delegate point
      :delegate
-     (fn [permission candidates]
-       (let [options (assoc options :plan (stable-plan db permission))
-             {:keys [subject-type subject-eid]} (first candidates)]
-         (if (and context
-                  (every? #(and (= subject-eid (:subject-eid %))
-                                (= subject-type (:subject-type %)))
-                          candidates))
-           (stable-route/check-many-eids
-            (assoc options
-                   :subject-type subject-type
-                   :subject-eid subject-eid
-                   :resource-eids (mapv :resource-eid candidates)
-                   :context context))
-           (mapv (fn [candidate]
-                   (stable-route/check-eids
-                    (assoc options
-                           :subject-type (:subject-type candidate)
-                           :subject-eid (:subject-eid candidate)
-                           :resource-eid (:resource-eid candidate))))
-                 candidates))))}))
+     (if context
+       (fn [permission candidates]
+         (let [{:keys [subject-type subject-eid]} (first candidates)]
+           (if (every? #(and (= subject-eid (:subject-eid %))
+                             (= subject-type (:subject-type %)))
+                       candidates)
+             (stable-route/check-many-eids
+              (assoc options
+                     :plan (stable-plan db permission)
+                     :subject-type subject-type
+                     :subject-eid subject-eid
+                     :resource-eids (mapv :resource-eid candidates)
+                     :context context))
+             (point permission candidates))))
+       point)}))
 
 (defn- recursive-batch-evaluator
   "The exact recursive operator decision for one aligned batch of cover
-  nodes, shared by recursive paging and counting. `delegate`, when present,
-  is the union-operand oracle of a delegated plan."
-  [db plan traversal subject-type anchor-eid proof-identity delegate]
+  nodes, shared by recursive paging and counting. `oracle`, when present, is
+  the union-operand oracle of a delegated plan."
+  [db plan traversal subject-type anchor-eid proof-identity oracle]
   (fn [nodes]
     (let [candidates
           (mapv (fn [node]
@@ -1893,7 +1903,8 @@
             :scope-identity proof-identity
             :qualification *qualification*
             :limits (recursive-operator-limits)
-            :delegate delegate
+            :delegate (:delegate oracle)
+            :point-delegate (:point-delegate oracle)
             ;; The engine reads only the decisions; skip the portable
             ;; checkpoint's sorts and digest.
             :checkpoint? false})))))))
@@ -2171,8 +2182,7 @@
                      (delegated-operand-oracle db :batched))
             recursive-decisions
             (recursive-batch-evaluator
-             db plan traversal subject-type anchor-eid proof-identity
-             (:delegate oracle))
+             db plan traversal subject-type anchor-eid proof-identity oracle)
             evaluate-batch
             (fn [nodes]
               (let [decisions (recursive-decisions nodes)
@@ -2455,7 +2465,7 @@
                  (delegated-operand-oracle db :batched))
         evaluate-batch (recursive-batch-evaluator
                         db plan traversal subject-type anchor-eid
-                        proof-identity (:delegate oracle))
+                        proof-identity oracle)
         target (when (some? count-limit) (inc count-limit))
         policy (authorization-result/result-policy query)]
     (if (nil? anchor-eid)

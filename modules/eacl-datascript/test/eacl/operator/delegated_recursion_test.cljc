@@ -6,6 +6,7 @@
   the tabled recursive evaluator."
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is testing]]
             [datascript.core :as ds]
+            [eacl.authorization.evidence :as evidence]
             [eacl.authorization.qualification-test :as qualification-fixtures]
             [eacl.core :as eacl]
             [eacl.datascript.qualifiers :as qualifiers]
@@ -16,6 +17,7 @@
             [eacl.engine.stable-route :as stable-route]
             [eacl.engine.v8 :as engine]
             [eacl.operator.cover-plan :as cover-plan]
+            [eacl.operator.evaluator-test :as evaluator-fixtures]
             [eacl.operator.plan :as plan]
             [eacl.operator.recursive :as recursive]))
 
@@ -190,3 +192,58 @@
                  (lookup :detailed)))
           (is (= (set (keep (fn [[folder p]] (when (= :has-permission p) folder)) expected))
                  (lookup :definite))))))))
+
+(deftest conditional-results-carry-the-point-checks-residual-test
+  ;; `granted` holds on f0 through a direct deleter grant until 200 and
+  ;; through its parent's until 500: the point check certifies its first
+  ;; witness (200), the batched search the widest (500). `readable` is
+  ;; caveated, so `removable` is conditional, and its residual carries the
+  ;; certificate; the detailed lookup must carry the check's.
+  (let [conn (datascript/create-conn)
+        client (datascript/make-client
+                conn {:clock (constantly 100)
+                      :caveat-evaluator (qualification-fixtures/portable-evaluator (atom 0))})
+        alice (eacl/spice-object :user "alice")
+        f0 (eacl/spice-object :folder "f0")]
+    (eacl/write-schema! client (str "caveat enabled(flag bool) { flag }\n" schema))
+    (ds/transact! conn (mapv #(hash-map :eacl/id %) ["alice" "f0" "p"]))
+    (eacl/create-relationships!
+     client [(eacl/->Relationship (eacl/spice-object :folder "p") :parent f0)])
+    (let [db (ds/db conn)
+          eid #(ds/entid db [:eacl/id %])
+          relation (fn [name]
+                     (ds/entid db [:eacl.relation/resource-type+relation-name+subject-type
+                                   [:folder name :user]]))
+          caveat (ds/entid db [:eacl.caveat/name "enabled"])
+          writer (qualifiers/writer conn)]
+      (ds/transact! conn [{:db/id (relation :reader) :eacl.relation/caveats [caveat]
+                          :eacl.relation/allows-unqualified? true}])
+      (staged/write! writer :create [:user (eid "alice") (relation :deleter) :folder (eid "f0")]
+                     {:valid-until-ms 200})
+      (staged/write! writer :create [:user (eid "alice") (relation :deleter) :folder (eid "p")]
+                     {:valid-until-ms 500})
+      (staged/write! writer :create [:user (eid "alice") (relation :reader) :folder (eid "f0")]
+                     {:caveat caveat}))
+    (testing "the batched and point certificates of `granted` differ"
+      (let [db (ds/db conn)
+            eid #(ds/entid db [:eacl/id %])
+            adapter (datascript-backend/basis-adapter db {})
+            options {:adapter adapter :plan (sealed-plan/seal-plan adapter [:folder :granted])
+                     :subject-type :user :subject-eid (eid "alice")
+                     :qualification (evaluator-fixtures/qualified-request db 100 {})}]
+        (is (= 200 (evidence/valid-until
+                    (stable-route/check-eids (assoc options :resource-eid (eid "f0"))))))
+        (is (= [500] (mapv evidence/valid-until
+                           (stable-route/check-many-eids
+                            (assoc options :resource-eids [(eid "f0")]
+                                   :context (stable-route/membership-context))))))))
+    (let [check (eacl/check-permission client {:subject alice :permission :removable
+                                               :resource f0 :caveat-context {}})
+          item (first (:data (eacl/lookup-resources
+                              client {:subject alice :permission :removable
+                                      :resource/type :folder :first 10
+                                      :caveat-context {} :result-policy :detailed})))]
+      (is (= :conditional-permission (:permissionship check)))
+      (is (= f0 (:object item)))
+      (is (= (select-keys check [:permissionship :missing-fields :residual])
+             (select-keys item [:permissionship :missing-fields :residual]))))))

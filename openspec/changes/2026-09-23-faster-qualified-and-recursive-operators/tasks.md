@@ -7,20 +7,20 @@
 
 ## 2. Expiring evidence in the memoized membership search (PR 1)
 
-- [ ] 2.1 Classify the evidence of every edge and witness `check-many-eids` meets as plain, expiring with a deadline, conditional, or fault. Verify with unit tests in `eacl.engine.membership-test`.
-- [ ] 2.2 Implement the leveled search (design D1):
+- [x] 2.1 Classify the evidence of every edge and witness `check-many-eids` meets as plain, expiring with a deadline, conditional, or fault. Verify with unit tests in `eacl.engine.membership-test`.
+- [x] 2.2 Implement the leveled search (design D1):
   - one memo per level, where negatives keep their closure's latest skipped deadline;
   - the next level is the latest skipped deadline;
   - certificates are `Evidence{true, v, complete}`, or plain `true` at `+∞`;
   - conditional evidence is skipped and flagged, and faults fall back.
 
   Verify that permissionship always equals `check-eids`, and that every expiring grant's certificate equals an independently computed widest witness.
-- [ ] 2.3 Recompute conditional combined operator decisions for batched candidates on the `:point` oracle. Verify that detailed lookup items still equal `check-permission` decisions in the qualified lookup tests.
-- [ ] 2.4 Extend the Dafny membership model with levels, proving three things: the level sequence finds the widest witness, per-level memos are sound, and certificates are sound. Verify `dafny format` and `bin/formal verify`.
-- [ ] 2.5 Add a leveled refinement campaign on DataScript with random expiring tuples and cycles (CLJC, registered in the ClojureScript runner). It runs a transcription of the leveled search beside production and compares decisions, per-level memos and certificates. Verify it passes on the JVM and in ClojureScript.
-- [ ] 2.6 Register mutation controls for the leveled search: the next level set one below the latest skipped deadline, the first level's deadline reported as the certificate, and a conditional-only resource answered false. Verify `eacl.formal.mutation-control-test`.
-- [ ] 2.7 Update the `:delegated-operator-recursion` assurance contract, `docs/permission-set-algebra.md` and `docs/formal-verification.md`. Verify `bin/formal source-closure` and `bin/formal manifest`, which should report its theorems passed.
-- [ ] 2.8 Verify the gate's expiring cases are within budget. Run the CI-equivalent battery and the ClojureScript suite, then open PR 1 stacked on #199.
+- [x] 2.3 Recompute conditional combined operator decisions for batched candidates on the `:point` oracle. Verify that detailed lookup items still equal `check-permission` decisions in the qualified lookup tests.
+- [x] 2.4 Extend the Dafny membership model with levels, proving three things: the level sequence finds the widest witness, per-level memos are sound, and certificates are sound. Verify `dafny format` and `bin/formal verify`.
+- [x] 2.5 Add a leveled refinement campaign on DataScript with random expiring tuples and cycles (CLJC, registered in the ClojureScript runner). It runs a transcription of the leveled search beside production and compares decisions, per-level memos and certificates. Verify it passes on the JVM and in ClojureScript.
+- [x] 2.6 Register mutation controls for the leveled search: the next level set one below the latest skipped deadline, the first level's deadline reported as the certificate, and a conditional-only resource answered false. Verify `eacl.formal.mutation-control-test`.
+- [x] 2.7 Update the `:delegated-operator-recursion` assurance contract, `docs/permission-set-algebra.md` and `docs/formal-verification.md`. Verify `bin/formal source-closure` and `bin/formal manifest`, which should report its theorems passed.
+- [x] 2.8 Verify the gate's expiring cases are within budget. Run the CI-equivalent battery and the ClojureScript suite, then open PR 1 stacked on #199.
 
 ## 3. Flattened generators (PR 2)
 

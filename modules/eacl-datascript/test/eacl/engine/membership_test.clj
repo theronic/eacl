@@ -155,3 +155,103 @@
               (is (= actual (route/check-many-eids
                              (assoc options :resource-eids resources
                                     :context membership)))))))))))
+
+(deftest evidence-classes-for-the-leveled-search-test
+  (let [evidence-class @#'route/evidence-class]
+    (is (= [:decisive nil] (evidence-class true)))
+    (is (= :absent (evidence-class false)))
+    (is (= :absent (evidence-class nil)))
+    (is (= [:decisive 100] (evidence-class (evidence/with-certificate true 100 true))))
+    (is (= :conditional (evidence-class (evidence/with-certificate true 100 false))))
+    (is (= :absent (evidence-class (evidence/with-certificate false 100 true))))
+    (is (= :conditional (evidence-class (evidence/conditional [:caveat 1] ["flag"]))))
+    (is (= :fault (evidence-class (evidence/fault :eacl.qualifier/invalid :qualifier-ref))))))
+
+(deftest expiring-grants-are-decided-by-their-widest-witness-test
+  ;; x has two witness paths: through p1 (edge until 500, reader until 800)
+  ;; and through p2 (plain edge, reader until 200); its grant ends at 500. y
+  ;; is read directly until 300 and through r (edge until 400, plain reader);
+  ;; its grant ends at 400. z has a plain witness beside an expiring path. w
+  ;; reads itself through a parent self-loop until 250. v's only decisive
+  ;; witness expires at 600 beside a caveated one; k is caveated only; u has
+  ;; no access.
+  (let [conn (schema/create-conn {})]
+    (schema/write-schema! conn
+                          "caveat enabled(flag bool) { flag }
+                          definition user {}
+                          definition doc {
+                            relation reader: user
+                            relation parent: doc
+                            permission view = reader + parent->view
+                          }")
+    (ds/transact! conn (mapv #(hash-map :eacl/id %)
+                             ["user" "x" "p1" "p2" "y" "q" "r" "z" "w" "v" "vp" "k" "u"]))
+    (let [eid #(ds/entid (ds/db conn) [:eacl/id %])
+          relation (fn [name type]
+                     (ds/entid (ds/db conn)
+                               [:eacl.relation/resource-type+relation-name+subject-type
+                                [:doc name type]]))
+          reader (relation :reader :user)
+          parent (relation :parent :doc)
+          caveat (ds/entid (ds/db conn) [:eacl.caveat/name "enabled"])
+          writer (qualifiers/writer conn)
+          user (eid "user")
+          grant! (fn [doc qualifier]
+                   (staged/write! writer :create [:user user reader :doc (eid doc)] qualifier))
+          parent! (fn [parent-doc child qualifier]
+                    (staged/write! writer :create
+                                   [:doc (eid parent-doc) parent :doc (eid child)] qualifier))]
+      (ds/transact! conn [(hash-map :db/id reader :eacl.relation/caveats [caveat]
+                                    :eacl.relation/allows-unqualified? true)])
+      (parent! "p1" "x" {:valid-until-ms 500})
+      (grant! "p1" {:valid-until-ms 800})
+      (parent! "p2" "x" nil)
+      (grant! "p2" {:valid-until-ms 200})
+      (grant! "y" {:valid-until-ms 300})
+      (parent! "q" "y" nil)
+      (parent! "r" "q" {:valid-until-ms 400})
+      (grant! "r" nil)
+      (grant! "q" {:valid-until-ms 300})
+      (parent! "p1" "z" nil)
+      (grant! "z" nil)
+      (parent! "w" "w" nil)
+      (grant! "w" {:valid-until-ms 250})
+      (grant! "v" {:caveat caveat})
+      (parent! "vp" "v" nil)
+      (grant! "vp" {:valid-until-ms 600})
+      (grant! "k" {:caveat caveat})
+      (let [db (ds/db conn)
+            adapter (datascript-backend/basis-adapter db {})
+            plan (sealed-plan/seal-plan adapter [:doc :view])
+            resources (mapv eid ["x" "y" "z" "w" "v" "k" "u"])
+            deadline (fn [value] (when-not (boolean? value) (evidence/valid-until value)))]
+        (doseq [[time expected] [[100 [500 400 nil 250 600 :point nil]]
+                                 [450 [500 nil nil nil 600 :point nil]]]]
+          (testing (str "time " time)
+            (let [qualification (fixtures/qualified-request db time {})
+                  options {:adapter adapter :plan plan :subject-type :user
+                           :subject-eid user :qualification qualification}
+                  points (mapv #(route/check-eids (assoc options :resource-eid %)) resources)
+                  stats (atom {})
+                  many (binding [route/*membership-stats* stats]
+                         (route/check-many-eids (assoc options :resource-eids resources
+                                                       :context (route/membership-context))))]
+              (is (= (mapv evidence/permissionship points)
+                     (mapv evidence/permissionship many))
+                  "permissionship always equals the point check")
+              (doseq [[resource point value want] (map vector resources points many expected)]
+                (cond
+                  (= :point want)
+                  (is (= point value) (str resource ": the point check's own value"))
+
+                  (evidence/has? value)
+                  (do (is (= want (deadline value))
+                          (str resource ": the widest witness's first expiry"))
+                      (is (or (nil? (deadline value))
+                              (<= (deadline point) (deadline value)))
+                          (str resource ": never shorter than the point check")))
+
+                  :else
+                  (is (and (false? value) (nil? want)) (str resource))))
+              (is (= 1 (:fallbacks @stats)) "only the caveat-only resource falls back")
+              (is (pos? (:levels @stats 0)) "expiring witnesses are found below the plain level"))))))))

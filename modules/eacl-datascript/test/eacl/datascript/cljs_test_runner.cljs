@@ -77,6 +77,7 @@
             [eacl.operator.delegated-recursion-test]
             [eacl.operator.delegation-refinement-test]
             [eacl.engine.memoized-membership-refinement-test]
+            [eacl.engine.leveled-membership-refinement-test]
             [eacl.operator.recursive-intersection-differential-test]
             [eacl.relationships.endpoint-pair-test]
             [eacl.relationships.edge-test]
@@ -195,6 +196,7 @@
                'eacl.operator.delegated-recursion-test
                'eacl.operator.delegation-refinement-test
                'eacl.engine.memoized-membership-refinement-test
+               'eacl.engine.leveled-membership-refinement-test
                'eacl.operator.recursive-intersection-differential-test
                'eacl.relationships.endpoint-pair-test
                'eacl.relationships.edge-test
