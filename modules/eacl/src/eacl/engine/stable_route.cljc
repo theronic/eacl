@@ -459,6 +459,388 @@
     false
     (probe-check-eids options)))
 
+;; ---------------------------------------------------------------------------
+;; Memoized membership of one subject
+;; ---------------------------------------------------------------------------
+
+(def ^:dynamic *membership-stats*
+  "Optional observation-only atom for `check-many-eids`: resources decided,
+  memoized root answers, exact point-check fallbacks, and subject-holding
+  scans."
+  nil)
+
+(defn- add-membership-stats! [deltas]
+  (when-let [stats *membership-stats*]
+    (swap! stats #(merge-with + % deltas)))
+  nil)
+
+(def holdings-limit
+  "The largest per-relation holding set `check-many-eids` retains for one
+  subject. A relation the subject holds more often is decided per candidate
+  by the exact-bound probe instead."
+  256)
+
+(defn membership-context
+  "Request-scoped state for `check-many-eids`. Its entries describe one
+  selected immutable basis and one qualification scope, so a caller creates
+  one per request and never shares it with another request."
+  []
+  (volatile! {}))
+
+(defn- holding-key
+  "The subject-anchored relation slice a base rule consults, or nil when the
+  rule can never match a subject of `subject-type`."
+  [subject-type rule]
+  (case (:rule rule)
+    :relation
+    (when (= subject-type (:subject-type rule))
+      [(:relation-eid rule) (:resource-type rule)])
+
+    :arrow-relation
+    (when (= subject-type (:target-subject-type rule))
+      [(:target-relation-eid rule) (:intermediate-type rule)])
+
+    (:self-permission :arrow-permission) nil
+
+    (throw
+     (ex-info "Membership check met an unrecognized sealed rule kind."
+              {:eacl/error :eacl.plan/unknown-rule-kind
+               :rule-kind (:rule rule)
+               :node (:node rule)}))))
+
+(defn ^:no-doc possible-nodes
+  "Plan nodes the subject can hold on some entity at this basis: the least
+  fixed point over the rule graph seeded by the relation slices in which the
+  subject holds at least one tuple. A node outside it is false for every
+  entity, so the search never enters it."
+  [reverse-rules subject-type holdings]
+  (loop [possible #{}]
+    (let [grown
+          (reduce-kv
+           (fn [result node rules]
+             (if (or (contains? result node)
+                     (some (fn [rule]
+                             (case (:rule rule)
+                               (:self-permission :arrow-permission)
+                               (contains? result (:target-node rule))
+
+                               (when-let [key (holding-key subject-type rule)]
+                                 (:any? (get holdings key)))))
+                           rules))
+               (conj result node)
+               result))
+           possible
+           reverse-rules)]
+      (if (= (count grown) (count possible))
+        possible
+        (recur grown)))))
+
+(defn ^:no-doc push-successors
+  "Pushes a state's non-base successors so the frame of its first rule in
+  sealed order is on top, skipping rules that cannot reach the subject. A
+  state frame is [node eid]; an arrow frame is [rule eid], expanded when it
+  reaches the top of the stack."
+  [stack rules eid subject-type holdings possible]
+  (loop [index (dec (count rules))
+         stack stack]
+    (if (neg? index)
+      stack
+      (let [rule (nth rules index)]
+        (recur
+         (dec index)
+         (case (:rule rule)
+           :relation stack
+
+           :self-permission
+           (if (contains? possible (:target-node rule))
+             (conj stack [(:target-node rule) eid])
+             stack)
+
+           :arrow-permission
+           (if (contains? possible (:target-node rule))
+             (conj stack [rule eid])
+             stack)
+
+           :arrow-relation
+           (if (:any? (get holdings (holding-key subject-type rule)))
+             (conj stack [rule eid])
+             stack)))))))
+
+(defn- membership-entry
+  "The subject's holdings and possible nodes for one sealed plan, read once
+  per request: one bounded forward scan per relation slice the plan's base
+  rules name for this subject type."
+  [context fetch! plan subject-type subject-eid]
+  (let [key [:subject (:fingerprint plan) subject-type subject-eid]]
+    (or (get @context key)
+        (let [reverse-rules (get-in plan [:indexes :reverse-rules])
+              slices (->> (vals reverse-rules)
+                          (mapcat identity)
+                          (keep #(holding-key subject-type %))
+                          distinct
+                          sort)
+              holdings
+              (into {}
+                    (map (fn [[relation-eid resource-type :as slice]]
+                           (let [edges (fetch! (forward-scan subject-type subject-eid
+                                                             relation-eid resource-type
+                                                             nil holdings-limit))]
+                             [slice {:any? (boolean (seq edges))
+                                     :complete? (< (count edges) holdings-limit)
+                                     :edges (into {} (map (juxt edge/endpoint identity))
+                                                  edges)}])))
+                    slices)
+              entry {:reverse-rules reverse-rules
+                     :holdings holdings
+                     :possible (possible-nodes reverse-rules subject-type holdings)
+                     :memo (volatile! {})}]
+          (add-membership-stats! {:holding-scans (count slices)})
+          (vswap! context assoc key entry)
+          entry))))
+
+(defn- expand-arrow
+  "Expands an arrow frame onto `stack`: every intermediate whose via edge is
+  plainly present contributes its target state (arrow to a permission) or
+  its target tuple's probe (arrow to a relation). Returns the new stack,
+  ::found, or ::qualified."
+  [{:keys [probe intermediates qualify]} stack rule eid]
+  (let [edges (intermediates (:resource-type rule) eid (:via-relation-eid rule)
+                             (:intermediate-type rule))
+        permission? (= :arrow-permission (:rule rule))]
+    (loop [index (dec (count edges))
+           stack stack]
+      (if (neg? index)
+        stack
+        (let [compact-edge (nth edges index)
+              via (qualify (:via-relation-eid rule) compact-edge)]
+          (cond
+            (false? via) (recur (dec index) stack)
+            (not (true? via)) ::qualified
+
+            permission?
+            (recur (dec index)
+                   (conj stack [(:target-node rule) (edge/endpoint compact-edge)]))
+
+            :else
+            (let [held (qualify (:target-relation-eid rule)
+                                (probe (:target-relation-eid rule)
+                                       (:intermediate-type rule)
+                                       (edge/endpoint compact-edge)))]
+              (cond
+                (true? held) ::found
+                (false? held) (recur (dec index) stack)
+                :else ::qualified))))))))
+
+(defn- base-outcome
+  "Decides a state's direct relation rules from the subject's holdings:
+  ::found, ::qualified, or nil when none holds plainly."
+  [{:keys [probe qualify subject-type]} rules eid]
+  (loop [index 0]
+    (when (< index (count rules))
+      (let [rule (nth rules index)]
+        (if (and (= :relation (:rule rule))
+                 (= subject-type (:subject-type rule)))
+          (let [value (qualify (:relation-eid rule)
+                               (probe (:relation-eid rule) (:resource-type rule) eid))]
+            (cond
+              (true? value) ::found
+              (false? value) (recur (inc index))
+              :else ::qualified))
+          (recur (inc index)))))))
+
+(defn ^:no-doc decide-plainly
+  "Decides one resource by a depth-first search that admits only plain
+  Boolean evidence, reusing and extending the entry's memo. Returns true,
+  false, or ::qualified when a path meets conditional or temporal evidence;
+  such a resource is then decided by the exact point check.
+
+  Soundness of the memo: a search that exhausts without a witness visited
+  every state reachable from each state it admitted (successors are pushed
+  before the stack can empty, and memo-false states were exhausted before),
+  so each admitted state is false. A search that finds a witness proves its
+  root state true. Both facts are plain Booleans over one immutable basis,
+  and a plain value composes identically under any path prefix."
+  [{:keys [root subject-type step! admit!] :as search}
+   {:keys [reverse-rules holdings possible memo]} resource-eid]
+  (let [root-state [root resource-eid]]
+    (loop [stack [root-state]
+           visited (transient #{})]
+      (if (zero? (count stack))
+        (let [visited (persistent! visited)]
+          (vswap! memo #(reduce (fn [m state] (assoc m state false)) % visited))
+          false)
+        (let [frame (peek stack)
+              stack (pop stack)
+              _ (step! (count stack))
+              head (nth frame 0)]
+          (if (map? head)
+            (let [expanded (expand-arrow search stack head (nth frame 1))]
+              ;; A vector is the grown stack; `case` would hash it to
+              ;; dispatch, so the sentinels are tested explicitly.
+              (cond
+                (not (keyword? expanded)) (recur expanded visited)
+                (= ::found expanded) (do (vswap! memo assoc root-state true) true)
+                :else ::qualified))
+            (let [known (get @memo frame)]
+              (cond
+                (true? known) (do (vswap! memo assoc root-state true) true)
+
+                (or (false? known)
+                    (contains? visited frame)
+                    (not (contains? possible head)))
+                (recur stack visited)
+
+                :else
+                (let [eid (nth frame 1)
+                      rules (get reverse-rules head)
+                      _ (admit!)]
+                  (case (base-outcome search rules eid)
+                    ::found (do (vswap! memo assoc root-state true) true)
+                    ::qualified ::qualified
+                    (recur (push-successors stack rules eid subject-type
+                                            holdings possible)
+                           (conj! visited frame))))))))))))
+
+(defn check-many-eids
+  "Decides one subject's membership in the plan's root permission for many
+  resources: one value per resource, each equal to what `check-eids` returns
+  for that point (conditional and temporal values are `check-eids`' own).
+
+  The request-scoped `:context` (from `membership-context`) carries what
+  every later call may reuse over the same basis: the subject's holdings of
+  each relation slice the plan names (one bounded forward scan per slice), the
+  plan nodes those holdings can reach at all, each arrow's intermediates, and
+  completed plain decisions. A base rule is then decided from the retained
+  holdings instead of an adapter probe, a node the subject cannot hold is
+  never entered, and an ancestor shared by many resources is decided once.
+  Anything but plain Boolean evidence routes that resource to the exact point
+  check. Typed limits apply per call with the point check's meanings."
+  [{:keys [fetch-fn adapter plan subject-type subject-eid resource-eids
+           context cut-point! physical-chunk-size qualification
+           max-admissions max-commands max-transitions max-values max-stack]
+    :or {physical-chunk-size reducer/default-physical-chunk-size
+         max-admissions reducer/default-max-admissions
+         max-commands reducer/default-max-commands
+         max-transitions reducer/default-max-transitions
+         max-values reducer/default-max-values
+         max-stack reducer/default-max-stack}
+    :as options}]
+  (if (nil? subject-eid)
+    (vec (repeat (count resource-eids) false))
+    (let [fetch-fn (or fetch-fn (reducer/adapter-fetch-fn adapter))
+          context (or context (membership-context))
+          ;; admissions, transitions, commands, fetched values. The zeros are
+          ;; explicit: ClojureScript fills an unsized long-array with nil.
+          counts (long-array 4 0)
+          counters (fn []
+                     {:admissions (aget counts 0) :transitions (aget counts 1)
+                      :commands (aget counts 2) :fetched-values (aget counts 3)})
+          fetch! (fn [descriptor]
+                   (when cut-point! (cut-point! nil))
+                   (when (>= (aget counts 2) max-commands)
+                     (limit-failure! :max-commands (counters)
+                                     {:max-commands max-commands}))
+                   (let [values (reducer/bounded-vector
+                                 (fetch-fn (cond-> descriptor qualification
+                                                   (assoc :include-qualifier? true)))
+                                 (:limit descriptor))]
+                     (when (> (+ (aget counts 3) (count values)) max-values)
+                       (limit-failure! :max-values (counters)
+                                       {:max-values max-values
+                                        :staged (count values)}))
+                     (aset counts 2 (inc (aget counts 2)))
+                     (aset counts 3 (+ (aget counts 3) (count values)))
+                     values))
+          entry (membership-entry context fetch! plan subject-type subject-eid)
+          holdings (:holdings entry)
+          memo (:memo entry)
+          root (:root plan)
+          search
+          {:root root
+           :subject-type subject-type
+           :probe
+           (fn [relation-eid resource-type eid]
+             (let [{:keys [any? complete? edges]}
+                   (get holdings [relation-eid resource-type])]
+               (cond
+                 (not any?) nil
+                 complete? (get edges eid)
+                 :else
+                 (let [value (first (fetch! (reverse-scan resource-type eid
+                                                          relation-eid subject-type
+                                                          (dec subject-eid) 1)))]
+                   (when (= subject-eid (some-> value edge/endpoint))
+                     value)))))
+           :intermediates
+           (fn [resource-type eid via-relation-eid intermediate-type]
+             (let [key [:intermediates resource-type eid via-relation-eid
+                        intermediate-type]]
+               (or (get @context key)
+                   (let [values
+                         (loop [bound nil acc (transient [])]
+                           (let [chunk (fetch! (reverse-scan resource-type eid
+                                                             via-relation-eid
+                                                             intermediate-type
+                                                             bound
+                                                             physical-chunk-size))
+                                 acc (reduce conj! acc chunk)]
+                             (if (< (count chunk) physical-chunk-size)
+                               (persistent! acc)
+                               (recur (edge/endpoint (peek chunk)) acc))))]
+                     (vswap! context assoc key values)
+                     values))))
+           :qualify (if qualification
+                      (fn [relation value]
+                        (qualification/qualify qualification relation value))
+                      (fn [_ value] (some? value)))
+           :step! (fn [depth]
+                    (when (>= (aget counts 1) max-transitions)
+                      (limit-failure! :max-transitions (counters)
+                                      {:max-transitions max-transitions}))
+                    (when (> depth max-stack)
+                      (limit-failure! :max-stack (counters)
+                                      {:max-stack max-stack
+                                       :staged depth}))
+                    (aset counts 1 (inc (aget counts 1)))
+                    (when cut-point! (cut-point! nil)))
+           :admit! (fn []
+                     (when (>= (aget counts 0) max-admissions)
+                       (limit-failure! :max-admissions (counters)
+                                       {:max-admissions max-admissions
+                                        :staged 1}))
+                     (aset counts 0 (inc (aget counts 0))))}
+          decided
+          (mapv (fn [resource-eid]
+                  (if (nil? resource-eid)
+                    false
+                    (let [known (get @memo [root resource-eid])]
+                      (if (some? known)
+                        known
+                        (decide-plainly search entry resource-eid)))))
+                resource-eids)
+          fallbacks (count (filter #{::qualified} decided))]
+      (request-counters/add-commands! (aget counts 2))
+      (request-counters/add-fetched-values! (aget counts 3))
+      (when (or reducer/*observer-stats* reducer/*reducer-work-stats*)
+        (reducer/report-work-stats!
+         [reducer/*observer-stats* reducer/*reducer-work-stats*]
+         {:derived-grants (aget counts 0)
+          :advanced-datoms (aget counts 2)
+          :queued-work (aget counts 1)
+          :fetched-values (aget counts 3)}))
+      (add-membership-stats! {:decided (count resource-eids)
+                              :fallbacks fallbacks})
+      (if (zero? fallbacks)
+        decided
+        (mapv (fn [resource-eid value]
+                (if (= ::qualified value)
+                  (probe-check-eids (-> options
+                                        (dissoc :resource-eids :context)
+                                        (assoc :fetch-fn fetch-fn
+                                               :resource-eid resource-eid)))
+                  value))
+              resource-eids decided)))))
+
 (defn derives-from-node?
   "The membership-probe point check anchored at an arbitrary plan node:
   does the subject reach `:start-node`'s permission on the resource?

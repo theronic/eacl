@@ -36,6 +36,15 @@ and the release width — is folded into one composite fingerprint
 (`eacl.sealed-plan.v1` domain); any order-affecting change is a new
 fingerprint and invalidates outstanding cursors explicitly.
 
+An intersection or exclusion plan pages in its generator's order, filtered by
+the exact operator decision. When the plan's recursion lies entirely inside
+union-only operands (`eacl.operator.plan/delegated-permissions`), the
+generator is the sealed union plan of the operand at the end of the root's
+anchor/left chain, and each operand is decided by the union engine. Recursive
+operator cursors authenticate both the operator plan fingerprint and the
+generator's fingerprint, so a cursor minted under another generator is
+rejected as invalid.
+
 Result uniqueness holds by construction: the single root emission point is
 keyed by the emitted entity (forward: `[:grant root-node eid]`; reverse:
 `[:reverse-subject type eid]`); interior merge points are keyed by target

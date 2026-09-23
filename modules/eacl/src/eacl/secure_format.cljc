@@ -187,9 +187,10 @@
     (string? value) (render-string value)
     (uuid/value? value) (str "#uuid \"" (uuid/text (uuid/capture value)) "\"")
     (keyword? value)
-    (str ":" (when-let [keyword-namespace (namespace value)]
-               (str keyword-namespace "/"))
-         (name value))
+    ;; `:namespace/name`, the keyword's own printed form: the JVM caches
+    ;; it on the keyword and ClojureScript keeps the qualified name.
+    #?(:clj (str value)
+       :cljs (str ":" (.-fqn ^Keyword value)))
     (integer? value) (str value)
     (map? value) (render-map value)
     (set? value)
@@ -197,27 +198,50 @@
     (sequential? value)
     (str "[" (str/join " " (map portable-render value)) "]")))
 
-(def ^:private ordinary-keyword-component
-  ;; A deliberately conservative EDN subset. Fast-path only spellings whose
-  ;; printed namespace/name split is self-evident; unusual legal keywords keep
-  ;; the exact reader round-trip below.
-  #"[A-Za-z_*!?$%&=<>.+-][A-Za-z0-9_*!?$%&=<>.+-]*")
+(defn- ordinary-keyword-code?
+  "One code unit of the conservative EDN subset
+  `[A-Za-z_*!?$%&=<>.+-][A-Za-z0-9_*!?$%&=<>.+-]*`: a letter or one of the
+  thirteen symbol characters anywhere, a digit anywhere but first."
+  [code first?]
+  (or (and (<= 65 code) (<= code 90))
+      (and (<= 97 code) (<= code 122))
+      (and (not first?) (<= 48 code) (<= code 57))
+      (case code
+        (33 36 37 38 42 43 45 46 60 61 62 63 95) true
+        false)))
+
+(defn- ordinary-keyword-component?
+  "A deliberately conservative EDN subset. Fast-path only spellings whose
+  printed namespace/name split is self-evident; unusual legal keywords keep
+  the exact reader round-trip in `unambiguous-keyword?`."
+  [text]
+  (let [length (count text)]
+    (and (pos? length)
+         (loop [index 0]
+           (cond
+             (= index length) true
+             (ordinary-keyword-code? (long (string-code-unit-at text index))
+                                     (zero? index))
+             (recur (inc index))
+             :else false)))))
 
 (defn- ordinary-keyword?
   [value]
   (let [keyword-namespace (namespace value)]
-    (and (re-matches ordinary-keyword-component (name value))
+    (and (ordinary-keyword-component? (name value))
          (or (nil? keyword-namespace)
-             (re-matches ordinary-keyword-component keyword-namespace)))))
+             (ordinary-keyword-component? keyword-namespace)))))
 
 (defn- unambiguous-keyword?
+  "An ordinary keyword's components are ASCII, hence well-formed, so it
+  needs neither the Unicode scans nor the reader round-trip."
   [value]
-  (and
-   (well-formed-unicode? (name value))
-   (or (nil? (namespace value))
-       (well-formed-unicode? (namespace value)))
-   (or
-    (ordinary-keyword? value)
+  (or
+   (ordinary-keyword? value)
+   (and
+    (well-formed-unicode? (name value))
+    (or (nil? (namespace value))
+        (well-formed-unicode? (namespace value)))
     (try
       (= value (edn/read-string (portable-render value)))
       (catch #?(:clj Exception :cljs :default) _
@@ -638,6 +662,59 @@
    (sha-256
     (str domain "\n" (encode-canonical value)))))
 
+(defn- host-utf8
+  "`utf8-bytes` in the host's own byte container (a byte array on the JVM, a
+  JS array in ClojureScript), with the same well-formedness check."
+  [value]
+  (let [value (str value)]
+    (when-not (well-formed-unicode? value)
+      (format-error! :invalid-unicode {}))
+    #?(:clj (.getBytes ^String value StandardCharsets/UTF_8)
+       :cljs (gcrypt/stringToUtf8ByteArray value))))
+
+(defn- framed
+  "One record's bytes behind their length as four big-endian bytes, in the
+  host's byte container."
+  [bytes]
+  #?(:clj
+     (let [^bytes bytes bytes
+           length (alength bytes)
+           framed (byte-array (+ 4 length))]
+       (aset framed 0 (unchecked-byte (bit-shift-right length 24)))
+       (aset framed 1 (unchecked-byte (bit-shift-right length 16)))
+       (aset framed 2 (unchecked-byte (bit-shift-right length 8)))
+       (aset framed 3 (unchecked-byte length))
+       (System/arraycopy bytes 0 framed 4 length)
+       framed)
+     :cljs
+     (let [length (.-length bytes)]
+       (.concat #js [(bit-and (bit-shift-right length 24) 255)
+                     (bit-and (bit-shift-right length 16) 255)
+                     (bit-and (bit-shift-right length 8) 255)
+                     (bit-and length 255)]
+                bytes))))
+
+(defn- absorb!
+  [digest framed]
+  #?(:clj (.update ^MessageDigest digest ^bytes framed)
+     :cljs (.update digest framed)))
+
+(defn- framed-digest
+  "A SHA-256 state that has absorbed the length-framed domain."
+  [domain]
+  (when-not (and (string? domain) (not-empty domain))
+    (format-error! :invalid-domain {:domain domain}))
+  (let [digest #?(:clj (MessageDigest/getInstance "SHA-256")
+                  :cljs (goog.crypt.Sha256.))]
+    (absorb! digest (framed (host-utf8 domain)))
+    digest))
+
+(defn- finish-digest
+  [digest]
+  (b64url-encode
+   #?(:clj (.digest ^MessageDigest digest)
+      :cljs (vec (.digest digest)))))
+
 (defn canonical-records-digest
   "Domain-separated digest of an ordered, potentially large record sequence.
 
@@ -647,57 +724,97 @@
   content. Record order is part of the digest contract; callers must sort
   semantically unordered inputs before calling this function."
   [domain records]
-  (when-not (and (string? domain) (not-empty domain))
-    (format-error! :invalid-domain {:domain domain}))
-  (let [digest #?(:clj (MessageDigest/getInstance "SHA-256")
-                  :cljs (goog.crypt.Sha256.))
-        update-bytes!
-        (fn [bytes]
-          (let [length (count bytes)
-                prefix [(bit-and (bit-shift-right length 24) 255)
-                        (bit-and (bit-shift-right length 16) 255)
-                        (bit-and (bit-shift-right length 8) 255)
-                        (bit-and length 255)]]
-            #?(:clj
-               (do
-                 (.update ^MessageDigest digest
-                          (byte-array (map unchecked-byte prefix)))
-                 (.update ^MessageDigest digest
-                          (byte-array (map unchecked-byte bytes))))
-               :cljs
-               (do
-                 (.update digest (clj->js prefix))
-                 (.update digest (clj->js bytes))))))]
-    (update-bytes! (utf8-bytes domain))
+  (let [digest (framed-digest domain)]
     (doseq [record records]
-      (update-bytes! (utf8-bytes (encode-canonical record))))
-    (b64url-encode
-     #?(:clj
-        (mapv #(bit-and (int %) 255)
-              (.digest ^MessageDigest digest))
-        :cljs
-        (vec (.digest digest))))))
+      (absorb! digest (framed (host-utf8 (encode-canonical record)))))
+    (finish-digest digest)))
+
+(defn- host-map []
+  #?(:clj (java.util.HashMap.) :cljs (js/Map.)))
+
+(defn- host-get [memo key]
+  #?(:clj (.get ^java.util.HashMap memo key) :cljs (.get memo key)))
+
+(defn- host-put! [memo key value]
+  #?(:clj (.put ^java.util.HashMap memo key value) :cljs (.set memo key value))
+  value)
+
+(defn- canonical-array
+  "`values` as an array in ascending order of `order-key`."
+  [values order-key]
+  (let [array (to-array values)]
+    (when (< 1 (alength array))
+      (let [by-key (fn [left right] (compare (order-key left) (order-key right)))]
+        #?(:clj (java.util.Arrays/sort ^objects array ^java.util.Comparator by-key)
+           :cljs (.sort array by-key))))
+    array))
 
 (defn canonical-tree-digest
   "Digests already admitted compiler data without encoding a whole aggregate.
    Container tags and arities preserve structure; map keys and set members
    retain canonical order. Scalar records still use the bounded wire codec.
-   This is not a replacement for admission limits on untrusted input."
+   This is not a replacement for admission limits on untrusted input.
+
+   The digest is the records digest of the tree's pre-order record sequence:
+   `[:map n]`, `[:set n]` or `[:sequence n]` before a container's children
+   (a map's keys and set members in canonical order, each key followed by its
+   value) and `[:value v]` for every other value. The records are streamed
+   into the digest instead of being built first, and each distinct record is
+   encoded and framed once per digest. A container orders its members by
+   their canonical encodings; a keyword's encoding is its printed form, so
+   keywords order without encoding. Every leaf, keys included, is still
+   validated by the codec when its own record is encoded."
   [domain value]
-  (letfn [(records [value]
-            (cond
-              (map? value)
-              (cons [:map (count value)]
-                    (mapcat (fn [key]
-                              (concat (records key) (records (get value key))))
-                            (sort-by encode-canonical (keys value))))
-              (set? value)
-              (cons [:set (count value)]
-                    (mapcat records (sort-by encode-canonical value)))
-              (sequential? value)
-              (cons [:sequence (count value)] (mapcat records value))
-              :else [[:value value]]))]
-    (canonical-records-digest domain (records value))))
+  (let [digest (framed-digest domain)
+        leaves (host-map)
+        headers (host-map)
+        encodings (host-map)
+        leaf! (fn [value]
+                (absorb!
+                 digest
+                 (if-some [bytes (host-get leaves value)]
+                   bytes
+                   (host-put! leaves value
+                              (framed (host-utf8 (encode-canonical [:value value])))))))
+        ;; `[kind n]` for a container arity renders as exactly this text and
+        ;; always satisfies the codec's bounds.
+        header! (fn [tag kind n]
+                  (let [key (+ (* 4 n) tag)]
+                    (absorb!
+                     digest
+                     (if-some [bytes (host-get headers key)]
+                       bytes
+                       (host-put! headers key
+                                  (framed (host-utf8 (str "[" kind " " n "]"))))))))
+        order-key (fn [value]
+                    (if (keyword? value)
+                      (portable-render value)
+                      (if-some [encoded (host-get encodings value)]
+                        encoded
+                        (host-put! encodings value (encode-canonical value)))))]
+    (letfn [(walk! [value]
+              (cond
+                (map? value)
+                (let [^objects ordered (canonical-array (keys value) order-key)]
+                  (header! 0 ":map" (count value))
+                  (dotimes [index (alength ordered)]
+                    (let [key (aget ordered index)]
+                      (walk! key)
+                      (walk! (get value key)))))
+
+                (set? value)
+                (let [^objects ordered (canonical-array value order-key)]
+                  (header! 1 ":set" (count value))
+                  (dotimes [index (alength ordered)]
+                    (walk! (aget ordered index))))
+
+                (sequential? value)
+                (do (header! 2 ":sequence" (count value))
+                    (reduce (fn [_ item] (walk! item) nil) nil value))
+
+                :else (leaf! value)))]
+      (walk! value))
+    (finish-digest digest)))
 
 (defn ^:no-doc capture-keyring
   "Captures at most once for a protected operation. Static codec options are

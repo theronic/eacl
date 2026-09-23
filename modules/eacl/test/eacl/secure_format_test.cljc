@@ -1,6 +1,7 @@
 (ns eacl.secure-format-test
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is testing]]
+            [#?(:clj clojure.edn :cljs cljs.tools.reader.edn) :as edn]
             [clojure.string :as str]
             [eacl.cache.standard-lru :as lru]
             [eacl.causal-token :as token]
@@ -1129,3 +1130,153 @@
       (is (= :invalid-unicode
              (:reason (try (secure/utf8-size s) nil
                            (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error (ex-data error)))))))))
+
+;; ---------------------------------------------------------------------------
+;; Digest contract restated independently of the streaming implementation
+;; ---------------------------------------------------------------------------
+
+(defn- reference-records-digest
+  "The records digest restated on the public codec: SHA-256 over every
+  length-framed record, domain first, each record being its canonical UTF-8
+  bytes behind their four-byte big-endian length."
+  [domain records]
+  (let [frame (fn [bytes]
+                (let [n (count bytes)]
+                  (into [(bit-and (bit-shift-right n 24) 255)
+                         (bit-and (bit-shift-right n 16) 255)
+                         (bit-and (bit-shift-right n 8) 255)
+                         (bit-and n 255)]
+                        bytes)))]
+    (secure/b64url-encode
+     (secure/sha-256
+      (into (frame (secure/utf8-bytes domain))
+            (mapcat #(frame (secure/utf8-bytes (secure/encode-canonical %))))
+            records)))))
+
+(defn- reference-tree-records
+  "The tree digest's pre-order record sequence, built the way the original
+  implementation built it: members ordered by their canonical encodings."
+  [value]
+  (cond
+    (map? value)
+    (cons [:map (count value)]
+          (mapcat (fn [key]
+                    (concat (reference-tree-records key)
+                            (reference-tree-records (get value key))))
+                  (sort-by secure/encode-canonical (keys value))))
+    (set? value)
+    (cons [:set (count value)]
+          (mapcat reference-tree-records (sort-by secure/encode-canonical value)))
+    (sequential? value)
+    (cons [:sequence (count value)] (mapcat reference-tree-records value))
+    :else [[:value value]]))
+
+(defn- digest-outcome
+  [f]
+  (try (f)
+       (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+         [:rejected (:type (ex-data error))])))
+
+(defn- digest-corpus
+  "Deterministic nested values: every container kind, keywords the fast path
+  accepts and ones it must send to the reader (including ambiguous ones),
+  strings that need escaping or are not well-formed, integers at and past
+  the exact range, and UUIDs."
+  [n]
+  (let [state (atom 20260923)
+        next-int (fn [bound]
+                   (let [value (mod (* 48271 @state) 2147483647)]
+                     (reset! state value)
+                     (mod (quot value 256) bound)))
+        keywords (into (pseudo-random-keywords 24)
+                       [:a :b :a/b :x/y-z :eacl/id (keyword "9") (keyword "a" "b/c")
+                        (keyword "a b") (keyword "é") (keyword "x" "é")])
+        strings ["" "a" "\"q\"" "back\\slash" "tab\t" "nl\n" "é中" "\u0001"
+                 "\uD800"]
+        scalars [nil true false 0 -1000 999 9007199254740991 -9007199254740991
+                 #uuid "00000000-0000-0000-0000-00000000002a"]
+        scalar (fn []
+                 (case (next-int 4)
+                   0 (nth keywords (next-int (count keywords)))
+                   1 (nth strings (next-int (count strings)))
+                   2 (- (next-int 2001) 1000)
+                   (nth scalars (next-int (count scalars)))))
+        value (fn value [depth]
+                (if (or (> depth 3) (< (next-int 10) 4))
+                  (scalar)
+                  (case (next-int 4)
+                    0 (into {} (repeatedly (next-int 5)
+                                           #(vector (value (inc depth))
+                                                    (value (inc depth)))))
+                    1 (into #{} (repeatedly (next-int 5) #(value (inc depth))))
+                    2 (vec (repeatedly (next-int 5) #(value (inc depth))))
+                    (apply list (repeatedly (next-int 4) #(value (inc depth)))))))]
+    (vec (repeatedly n #(value 0)))))
+
+(deftest canonical-tree-digest-vector-test
+  (is (= "7HzY4FrE7NBe8E0yrqd_aLzUcYirGiod2GUjYMPsR8E"
+         (secure/canonical-tree-digest
+          "test/tree/v1"
+          {:rule :arrow-permission :node [:account :read_account]
+           :path [:root :child 2] :ids #{3 1 2} :name "a\"bé" :none nil
+           :flags [true false] :nested {[:k 1] {:x/y -7}}
+           :uuid #uuid "00000000-0000-0000-0000-000000000001"}))
+      "CLJ and CLJS must reproduce the digest the original record-building
+      implementation produced for this value"))
+
+(deftest streaming-digests-equal-the-restated-record-contract-test
+  (let [corpus (digest-corpus #?(:clj 1500 :cljs 400))
+        outcomes (atom {:digest 0 :rejected 0})]
+    (doseq [value corpus]
+      (let [tree (digest-outcome
+                  #(secure/canonical-tree-digest "test/tree-contract/v1" value))
+            records (digest-outcome
+                     #(secure/canonical-records-digest
+                       "test/records-contract/v1" [value [:wrapped value]]))]
+        (swap! outcomes update (if (string? tree) :digest :rejected) inc)
+        (is (= (digest-outcome
+                #(reference-records-digest "test/tree-contract/v1"
+                                           (reference-tree-records value)))
+               tree)
+            (pr-str value))
+        (is (= (digest-outcome
+                #(reference-records-digest "test/records-contract/v1"
+                                           [value [:wrapped value]]))
+               records)
+            (pr-str value))))
+    (testing "the corpus exercises both accepted and rejected values"
+      (is (< 100 (:digest @outcomes)))
+      (is (< 20 (:rejected @outcomes))))))
+
+(defn- reference-unambiguous-keyword?
+  "The original admission rule: well-formed components, then either the
+  conservative spelling regex or an exact reader round trip."
+  [value]
+  (let [well-formed? #(string? (digest-outcome (fn [] (str (secure/utf8-size %)))))
+        ordinary #"[A-Za-z_*!?$%&=<>.+-][A-Za-z0-9_*!?$%&=<>.+-]*"
+        rendered (str ":" (when-let [n (namespace value)] (str n "/")) (name value))]
+    (boolean
+     (and (well-formed? (name value))
+          (or (nil? (namespace value)) (well-formed? (namespace value)))
+          (or (and (re-matches ordinary (name value))
+                   (or (nil? (namespace value))
+                       (re-matches ordinary (namespace value))))
+              (try (= value (edn/read-string rendered))
+                   (catch #?(:clj Exception :cljs :default) _ false)))))))
+
+(deftest keyword-admission-fast-path-equals-the-regex-rule-test
+  (let [codes (concat (range 32 127) [0xE9 0x4E2D 0xD800 0xDC00])
+        character (fn [code]
+                    #?(:clj (str (char code)) :cljs (.fromCharCode js/String code)))
+        singles (map character codes)
+        pairs (for [a "aZ0_*!?.+-/:#'\"\\,;@^~`([{ é"
+                    b "aZ09_*!?$%&=<>.+-/:#'\",;@ é"]
+                (str a b))
+        names (concat singles pairs ["abc" "a-b" "a.b" "ab9" "9ab" "-9" "+a" ".5"])
+        corpus (for [n [nil "a" "x.y" "9" "é" "a-b" "a b"]
+                     component names]
+                 (keyword n component))]
+    (doseq [value corpus]
+      (is (= (reference-unambiguous-keyword? value)
+             (string? (digest-outcome #(secure/encode-canonical value))))
+          (pr-str [(namespace value) (name value)])))))

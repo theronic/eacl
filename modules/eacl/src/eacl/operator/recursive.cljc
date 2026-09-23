@@ -16,6 +16,7 @@
             [eacl.execution :as execution]
             [eacl.operator.batch-schedule :as batch-schedule]
             [eacl.operator.plan :as operator-plan]
+            [eacl.operator.vector-evaluator :as vector-evaluator]
             [eacl.request.counters :as request-counters]
             [eacl.secure-format :as secure-format]
             [eacl.subproblem-cache :as subproblem]))
@@ -1348,6 +1349,50 @@
           (observe! @counters)
           result)))))
 
+(defn- evaluate-delegated
+  "Decides point questions whose recursion is confined to union-only operands
+  (`operator-plan/delegated-permissions`): the acyclic vector evaluator runs
+  the operator nodes, and `delegate` decides every union-only operand through
+  its own sealed union plan. No question graph, component condensation, or
+  checkpoint exists on this path; the decisions are the same denotation."
+  [{:keys [adapter plan candidates permission qualification delegate]}
+   delegated]
+  (let [permission (or permission (:root plan))]
+    {:decisions
+     ;; Candidates were validated once and deduplicated by
+     ;; `evaluate-cached-many`; the vector evaluator's own re-validation is
+     ;; skipped.
+     (vector-evaluator/check-many-trusted
+      (cond-> {:adapter adapter
+               :plan (operator-plan/delegated-view plan delegated)
+               :permission permission
+               :candidates
+               (mapv (fn [{:keys [direction subject-type subject-eid resource-eid]}]
+                       {:direction direction
+                        :subject-type subject-type
+                        :subject-eid subject-eid
+                        :resource-type (first permission)
+                        :resource-eid resource-eid
+                        :true-nodes #{}})
+                     candidates)
+               :delegate delegate}
+        qualification
+        (assoc :qualification qualification
+               :witness-scope (qualification/exact-reuse-identity qualification))))
+     :checkpoint nil
+     :counters {}
+     :replayed? false}))
+
+(defn- evaluate-fresh
+  "The uncached evaluator for validated options: delegated evaluation when
+  the caller supplies a union-operand oracle and the plan's recursion lies
+  entirely inside union-only permissions, otherwise the tabled evaluator."
+  [{:keys [plan delegate checkpoint] :as options}]
+  (if-let [delegated (when (and delegate (nil? checkpoint))
+                       (operator-plan/delegated-permissions plan))]
+    (evaluate-delegated options delegated)
+    (evaluate-many-validated options)))
+
 (def ^:private point-cache-options
   {:valid? boolean?})
 
@@ -1361,12 +1406,14 @@
 (defn evaluate-cached-many
   "Returns aligned recursive point decisions with proof-compatible completed
   point reuse. Only unresolved distinct points enter the recursive evaluator;
-  no point is published until that whole demanded vector succeeds."
+  no point is published until that whole demanded vector succeeds. An
+  optional `:delegate` oracle, `(fn [permission candidates] decisions)`,
+  decides union-only operands when the plan's recursion lies inside them."
   [{:keys [plan candidates permission scope-identity checkpoint qualification] :as options}]
   (validate-many-options! plan candidates)
   (let [options (assoc options :limits (normalize-limits (:limits options)))]
     (if (or checkpoint (nil? subproblem/*store*))
-      (evaluate-many-validated options)
+      (evaluate-fresh options)
       (let [permission (or permission (:root plan))
             store subproblem/*store*
             scope-identity (if qualification
@@ -1395,7 +1442,7 @@
                  vec)
             evaluated
             (if (seq misses)
-              (evaluate-many-validated (assoc options :candidates misses))
+              (evaluate-fresh (assoc options :candidates misses))
               {:decisions [] :counters {}})
             miss-decisions (zipmap misses (:decisions evaluated))
             decisions

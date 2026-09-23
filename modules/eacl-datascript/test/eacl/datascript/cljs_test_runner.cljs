@@ -74,6 +74,10 @@
             [eacl.operator.lookup-test]
             [eacl.operator.feature-gate-test]
             [eacl.operator.recursive-test]
+            [eacl.operator.delegated-recursion-test]
+            [eacl.operator.delegation-refinement-test]
+            [eacl.engine.memoized-membership-refinement-test]
+            [eacl.operator.recursive-intersection-differential-test]
             [eacl.relationships.endpoint-pair-test]
             [eacl.relationships.edge-test]
             [eacl.relationships.upgrade-test]
@@ -91,6 +95,7 @@
             [eacl.schema.expression-graph-test]
             [eacl.schema.expression-fuzz-test]
             [eacl.schema.expression-persistence-test]
+            [eacl.datascript.fresh-client-decode-test]
             [eacl.schema.expression-policy-test]
             [eacl.spicedb.parser-portability-test]
             [eacl.subproblem-cache-test]
@@ -187,6 +192,10 @@
                'eacl.operator.lookup-test
                'eacl.operator.feature-gate-test
                'eacl.operator.recursive-test
+               'eacl.operator.delegated-recursion-test
+               'eacl.operator.delegation-refinement-test
+               'eacl.engine.memoized-membership-refinement-test
+               'eacl.operator.recursive-intersection-differential-test
                'eacl.relationships.endpoint-pair-test
                'eacl.relationships.edge-test
                'eacl.relationships.upgrade-test
@@ -213,6 +222,7 @@
                'eacl.schema.expression-graph-test
                'eacl.schema.expression-fuzz-test
                'eacl.schema.expression-persistence-test
+               'eacl.datascript.fresh-client-decode-test
                'eacl.schema.expression-policy-test
                'eacl.spicedb.parser-portability-test
                'eacl.subproblem-cache-test

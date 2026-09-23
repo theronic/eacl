@@ -94,6 +94,10 @@
      "formal/dafny/OperatorRecursiveGeneratedPolicyRefinement.dfy"]
     :claim :conditional-generated-command-and-executable-production-refinement
     :minimum-proof-efforts 35}
+   :memoized-union-membership
+   {:source "formal/dafny/MemoizedMembership.dfy"
+    :claim :conditional-memoized-reachability-with-sound-retained-answers
+    :minimum-proof-efforts 27}
    :ordered-merge
    {:source "formal/dafny/OrderedMerge.dfy"
     :minimum-proof-efforts 82}
@@ -654,6 +658,40 @@
      "formal/dafny/OperatorRecursiveGeneratedPolicyRefinement.dfy"]
     :runtime-targets [:clj-java :cljs-javascript]
     :remaining []}
+   {:operation :delegated-operator-recursion
+    ;; Recursive operator plans whose recursion lies inside union-only
+    ;; operands: the operator nodes run on the acyclic vector evaluator and
+    ;; each operand is decided through its own sealed union plan, by the
+    ;; membership-probe check or, for many resources of one subject, by the
+    ;; memoized search MemoizedMembership.dfy models. Executable refinement:
+    ;; eacl.engine.memoized-membership-refinement-test runs the production
+    ;; search beside a transcription of the leaf's Search over random
+    ;; union-only programs and requires equal decisions, retained answers and
+    ;; possible nodes after every call; eacl.operator.delegation-refinement-test
+    ;; checks the delegation analysis against an oracle, and every engine
+    ;; answer against a stratified least fixed point and the tabled evaluator,
+    ;; over random operator schemas. The membership-* and operator-delegat*
+    ;; mutation controls are killed by them on both runtimes.
+    :entry-points
+    ["eacl.operator.plan/delegated-permissions"
+     "eacl.operator.plan/delegated-generator"
+     "eacl.operator.recursive/evaluate-cached-many"
+     "eacl.operator.vector-evaluator/check-many-trusted"
+     "eacl.engine.stable-route/check-many-eids"]
+    :theorems
+    [:exhausted-search-admits-only-negative-states
+     :found-search-proves-its-root
+     :node-outside-closed-possible-set-is-negative
+     :memoized-searches-equal-reachability-in-any-order]
+    :dafny ["formal/dafny/MemoizedMembership.dfy"
+            "formal/stable-discovery/MembershipProbeCheck.dfy"]
+    :adapter-obligations
+    [:immutable-snapshot
+     :strictly-ordered-unique-eid-scans]
+    :runtime-targets [:clj-java :cljs-javascript]
+    :remaining
+    [:mechanized-host-search-source-refinement
+     :independent-review]}
    {:operation :cache-reuse
     :entry-points ['eacl.cache 'eacl.subproblem-cache]
     :theorems

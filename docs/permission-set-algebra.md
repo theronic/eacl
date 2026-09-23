@@ -48,6 +48,21 @@ A cycle cannot depend on its own exclusion result. EACL rejects such a schema
 with `:eacl.schema/unstratified-exclusion` and keeps the previous schema.
 For example, `permission view = reader - view` is invalid.
 
+An intersection or exclusion whose operands recurse only through unions costs
+about what its operands cost:
+
+```zed
+permission read_account = reader + parent->read_account
+permission delete_granted = deleter + parent->delete_granted
+permission delete = delete_granted & read_account
+```
+
+EACL decides each operand the way it decides that operand on its own, and it
+generates `delete`'s candidates with the traversal a lookup of one operand
+uses. A permission that recurses through the operator itself, such as
+`view = reader + (parent->view & eligible)`, needs stratified recursive
+evaluation, which costs more per result.
+
 EACL supports one-hop arrows. A target permission can contain another arrow,
 but a directly chained expression such as `a->b->c` is not supported.
 

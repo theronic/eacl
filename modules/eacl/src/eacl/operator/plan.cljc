@@ -39,7 +39,8 @@
     :leaf-descriptors :costs :covers :generators :anchors
     :witness-programs :predicate-programs :specializations
     :capability-identity :compatibility-formats :versions :order-contract
-    :fingerprint :expression-roots :certificate-acyclic?})
+    :fingerprint :expression-roots :certificate-acyclic?
+    :delegated-permissions})
 
 (defn- compile-error! [reason message data]
   (throw
@@ -73,6 +74,104 @@
     (let [certificate (:dependency-certificate plan)]
       (and (every? #(= 1 (count %)) (:components certificate))
            (not-any? #(= (:from %) (:to %)) (:edges certificate))))))
+
+(defn- operator-free-dag? [dag]
+  (not-any? #(contains? #{:intersection :exclusion} (first %)) (:nodes dag)))
+
+(defn ^:no-doc delegated-permissions
+  "The union-only permissions of an operator plan's closure, or nil when some
+  intersection or exclusion permission lies on a positive dependency cycle.
+
+  A permission is union-only when neither its own expression nor any
+  permission it reaches uses intersection or exclusion. Its denotation is
+  exactly the union engine's, so an evaluator may decide it through that
+  permission's sealed union plan. When every positive recursive component
+  consists of union-only permissions, the permissions that remain — the ones
+  carrying the operators — form an acyclic graph over those opaque operands,
+  and the acyclic operator evaluators can decide the root once each
+  union-only root is delegated. A pure function of the sealed expressions and
+  dependency certificate; relationship data is never an input."
+  [plan]
+  (if (contains? plan :delegated-permissions)
+    (:delegated-permissions plan)
+    (let [certificate (:dependency-certificate plan)
+          edges (:edges certificate)
+          operator-permissions
+          (into #{}
+                (keep (fn [{:keys [permission dag]}]
+                        (when-not (operator-free-dag? dag) permission)))
+                (:expressions plan))
+          consumers (reduce (fn [index {:keys [from to]}]
+                              (update index to (fnil conj []) from))
+                            {} edges)
+          ;; Everything that reaches an operator permission carries its
+          ;; operators; walk the reversed dependency edges from each one.
+          operator-reaching
+          (loop [pending (vec operator-permissions)
+                 reached operator-permissions]
+            (if-let [permission (peek pending)]
+              (let [fresh (remove reached (get consumers permission))]
+                (recur (into (pop pending) fresh) (into reached fresh)))
+              reached))
+          self-loops (into #{}
+                           (keep (fn [{:keys [from to]}] (when (= from to) from)))
+                           edges)
+          recursive-operator?
+          (some (fn [component]
+                  (and (some operator-reaching component)
+                       (or (> (count component) 1)
+                           (contains? self-loops (first component)))))
+                (:components certificate))]
+      (when-not recursive-operator?
+        (into (sorted-set)
+              (remove operator-reaching)
+              (:vertices certificate))))))
+
+(defn ^:no-doc delegated-generator
+  "The delegated union-only permission whose own sealed union plan generates
+  `permission`'s candidates, or nil. It exists when the root's generator
+  chain — each intersection's sealed anchor, each exclusion's left operand —
+  reaches a permission in `delegated` through permission references alone,
+  without union fan-in. Every result of the root then lies in that
+  permission's closure, which its union plan enumerates exactly, so the plan
+  is a complete candidate cover. Pure over sealed fields."
+  [plan permission delegated]
+  (let [roots (expression-roots plan)]
+    (loop [permission permission
+           node-id (get roots permission)
+           seen #{}]
+      (when-not (contains? seen [permission node-id])
+        (let [seen (conj seen [permission node-id])
+              {:keys [kind source-node]} (get-in plan [:covers permission node-id])
+              predicate (get-in plan [:predicate-programs permission node-id])]
+          (case kind
+            :child (recur permission source-node seen)
+            :self
+            (when (= :permission-membership (:instruction predicate))
+              (let [target (:target-node predicate)]
+                (if (contains? delegated target)
+                  target
+                  (recur target (get roots target) seen))))
+            nil))))))
+
+(defn ^:no-doc delegated-view
+  "An evaluation view of `plan` in which the root predicate of every
+  permission in `permissions` becomes `:delegated-membership`: the acyclic
+  evaluators then ask a caller-supplied union-engine oracle for that operand
+  instead of evaluating its (possibly recursive) expression themselves. The
+  sealed fields, fingerprint, and point-cache identity are unchanged; the view
+  never leaves the evaluator that requested it."
+  [plan permissions]
+  (let [roots (expression-roots plan)]
+    (reduce
+     (fn [view permission]
+       (assoc-in view [:predicate-programs permission (get roots permission)]
+                 {:instruction :delegated-membership
+                  :permission permission
+                  :modes #{:scalar :aligned-vector}
+                  :entity-identity :typed-pair}))
+     (assoc plan :operator-delegation {:permissions permissions})
+     permissions)))
 
 (defn- expression-entity [adapter [resource-type permission-name :as node]]
   (let [entity (backend/invoke adapter :permission-expression
@@ -521,7 +620,8 @@
 (defn- fingerprint-input [plan]
   ;; These projections are recomputed from authenticated fields; fresh-compile
   ;; validation also checks them. The complete remaining plan is authenticated.
-  (dissoc plan :fingerprint :expression-roots :certificate-acyclic?))
+  (dissoc plan :fingerprint :expression-roots :certificate-acyclic?
+          :delegated-permissions))
 
 (defn- compile-operator-plan [adapter root collected]
   (when-not (expression-closure-has-operator? collected)
@@ -628,7 +728,8 @@
         plan (assoc plan :fingerprint fingerprint)]
     (assoc plan
            :expression-roots (expression-roots plan)
-           :certificate-acyclic? (certificate-acyclic? plan))))
+           :certificate-acyclic? (certificate-acyclic? plan)
+           :delegated-permissions (delegated-permissions plan))))
 
 (defn seal-plan
   "Returns the existing union-only sealed plan unchanged, or compiles an
