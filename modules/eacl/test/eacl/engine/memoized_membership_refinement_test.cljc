@@ -42,16 +42,16 @@
 ;; Deterministic cases
 ;; ---------------------------------------------------------------------------
 
-(defn- next-int!
+(defn ^:no-doc next-int!
   "Park-Miller minimal standard: exact in JavaScript doubles too."
   [state bound]
   (let [value (mod (* 48271 @state) 2147483647)]
     (reset! state value)
     (mod (quot value 256) bound)))
 
-(defn- chance? [state percent] (< (next-int! state 100) percent))
+(defn ^:no-doc chance? [state percent] (< (next-int! state 100) percent))
 
-(defn- pick [state values] (nth values (next-int! state (count values))))
+(defn ^:no-doc pick [state values] (nth values (next-int! state (count values))))
 
 (defn- render-term [[kind a b]]
   (case kind
@@ -64,7 +64,7 @@
            (str "  permission " (name permission) " = "
                 (str/join " + " (map render-term terms)) "\n"))))
 
-(defn- render-schema [{:keys [team folder]}]
+(defn ^:no-doc render-schema [{:keys [team folder]}]
   (str "definition user {}\n\n"
        "definition team {\n"
        "  relation member: user\n"
@@ -79,7 +79,7 @@
        (render-permissions folder)
        "}\n"))
 
-(defn- random-permissions
+(defn ^:no-doc random-permissions
   "Union-only bodies over relations, a relation through an arrow, and
   permissions through self and arrow references, recursion included."
   [state]

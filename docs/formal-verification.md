@@ -152,13 +152,24 @@ measured limits are in [Permission set algebra](permission-set-algebra.md).
 Recursive operator plans whose recursion lies inside union-only operands
 decide those operands with the union engine. `MemoizedMembership.dfy` proves
 the memoized search that decides many resources for one subject exact, and
-proves its retained answers sound. Two campaigns connect the production code
-to that model and to the set-algebra semantics:
+proves its retained answers sound.
+
+`LeveledMembership.dfy` extends it to expiring relationships. It proves that
+the level sequence finds the widest decisive witness, and that the
+certificate ending at that witness's first expiry is the exact end of the
+grant.
+
+Three campaigns connect the production code to these models and to the
+set-algebra semantics:
 
 - `eacl.engine.memoized-membership-refinement-test` runs the production
   search beside a transcription of the model's `Search` over random
   union-only programs. After every call it compares the decisions, the
   retained answers and the possible nodes.
+- `eacl.engine.leveled-membership-refinement-test` does the same with random
+  expiring and caveated relationships. It compares per-level memos and
+  retained skip bounds, and checks every certificate against an independent
+  widest-witness fixed point.
 - `eacl.operator.delegation-refinement-test` covers random operator schemas.
   It checks the delegation analysis against an independent oracle. It checks
   every lookup, count, check and reverse lookup against a stratified least

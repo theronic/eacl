@@ -566,10 +566,70 @@
              (conj stack [rule eid])
              stack)))))))
 
+(def ^:private plain-level
+  "The first evidence level: plain evidence only, which never expires. Every
+  later level is a deadline (see `decide-leveled`)."
+  ::plain)
+
+(defn- lasts?
+  "True when evidence ending at `deadline` (nil when plain) is kept at
+  `level`: the graph at a deadline keeps everything lasting at least that
+  long."
+  [deadline level]
+  (or (nil? deadline)
+      (and (not= plain-level level) (<= level deadline))))
+
+(defn- later
+  "The later of two skipped deadlines, either possibly nil."
+  [a b]
+  (cond (nil? a) b (nil? b) a :else (max a b)))
+
+(defn- evidence-class
+  "One qualified value as the leveled search sees it: `[:decisive deadline]`
+  for plain or time-limited `true` (deadline nil when plain), `:absent`,
+  `:conditional` (a caveat residual or incomplete evidence), or `:fault`."
+  [value]
+  (cond
+    (true? value) [:decisive nil]
+    (or (false? value) (nil? value)) :absent
+    (evidence/fault? value) :fault
+    (not (evidence/complete? value)) :conditional
+    (evidence/has? value) [:decisive (evidence/valid-until value)]
+    (evidence/no? value) :absent
+    :else :conditional))
+
+(defn- joined-class
+  "An arrow's via edge (neither absent nor a fault) and its target tuple
+  together: decisive until the earlier deadline only when both are
+  decisive."
+  [via held]
+  (cond
+    (= :absent held) :absent
+    (= :fault held) :fault
+    (or (= :conditional via) (= :conditional held)) :conditional
+    :else [:decisive (let [a (second via) b (second held)]
+                       (cond (nil? a) b (nil? b) a :else (min a b)))]))
+
+(defn- note!
+  "One class's contribution at `level`: ::kept, ::absent, or ::fault. A
+  decisive value that ends before `level` notes its deadline as skipped;
+  conditional evidence is noted and otherwise treated as absent."
+  [{:keys [skipped conditional?]} level class]
+  (if (keyword? class)
+    (case class
+      :absent ::absent
+      :fault ::fault
+      :conditional (do (vreset! conditional? true) ::absent))
+    (if (lasts? (second class) level)
+      ::kept
+      (do (vswap! skipped later (second class)) ::absent))))
+
 (defn- membership-entry
   "The subject's holdings and possible nodes for one sealed plan, read once
   per request: one bounded forward scan per relation slice the plan's base
-  rules name for this subject type."
+  rules name for this subject type. The entry also retains, for the
+  request, each resource's decided answer and one memo per evidence level;
+  `:memo` is the plain level's."
   [context fetch! plan subject-type subject-eid]
   (let [key [:subject (:fingerprint plan) subject-type subject-eid]]
     (or (get @context key)
@@ -590,20 +650,24 @@
                                      :edges (into {} (map (juxt edge/endpoint identity))
                                                   edges)}])))
                     slices)
+              plain-memo (volatile! {})
               entry {:reverse-rules reverse-rules
                      :holdings holdings
                      :possible (possible-nodes reverse-rules subject-type holdings)
-                     :memo (volatile! {})}]
+                     :memo plain-memo
+                     :memos (volatile! {plain-level plain-memo})
+                     :skips (volatile! {})
+                     :answers (volatile! {})}]
           (add-membership-stats! {:holding-scans (count slices)})
           (vswap! context assoc key entry)
           entry))))
 
 (defn- expand-arrow
-  "Expands an arrow frame onto `stack`: every intermediate whose via edge is
-  plainly present contributes its target state (arrow to a permission) or
-  its target tuple's probe (arrow to a relation). Returns the new stack,
-  ::found, or ::qualified."
-  [{:keys [probe intermediates qualify]} stack rule eid]
+  "Expands an arrow frame onto `stack` at `level`: each intermediate whose via
+  edge lasts at `level` contributes its target state (arrow to a permission)
+  or, for an arrow to a relation, its target tuple's decision. Returns the
+  new stack, ::found, or ::fault."
+  [{:keys [probe intermediates qualify]} notes level stack rule eid]
   (let [edges (intermediates (:resource-type rule) eid (:via-relation-eid rule)
                              (:intermediate-type rule))
         permission? (= :arrow-permission (:rule rule))]
@@ -612,109 +676,177 @@
       (if (neg? index)
         stack
         (let [compact-edge (nth edges index)
-              via (qualify (:via-relation-eid rule) compact-edge)]
+              via (evidence-class (qualify (:via-relation-eid rule) compact-edge))]
           (cond
-            (false? via) (recur (dec index) stack)
-            (not (true? via)) ::qualified
+            (= :absent via) (recur (dec index) stack)
+            (= :fault via) ::fault
 
             permission?
-            (recur (dec index)
-                   (conj stack [(:target-node rule) (edge/endpoint compact-edge)]))
+            (let [outcome (note! notes level via)]
+              (cond
+                (= ::kept outcome)
+                (recur (dec index)
+                       (conj stack [(:target-node rule) (edge/endpoint compact-edge)]))
+                (= ::fault outcome) ::fault
+                :else (recur (dec index) stack)))
 
             :else
-            (let [held (qualify (:target-relation-eid rule)
-                                (probe (:target-relation-eid rule)
-                                       (:intermediate-type rule)
-                                       (edge/endpoint compact-edge)))]
+            (let [held (evidence-class
+                        (qualify (:target-relation-eid rule)
+                                 (probe (:target-relation-eid rule)
+                                        (:intermediate-type rule)
+                                        (edge/endpoint compact-edge))))
+                  outcome (note! notes level (joined-class via held))]
               (cond
-                (true? held) ::found
-                (false? held) (recur (dec index) stack)
-                :else ::qualified))))))))
+                (= ::kept outcome) ::found
+                (= ::fault outcome) ::fault
+                :else (recur (dec index) stack)))))))))
 
 (defn- base-outcome
-  "Decides a state's direct relation rules from the subject's holdings:
-  ::found, ::qualified, or nil when none holds plainly."
-  [{:keys [probe qualify subject-type]} rules eid]
+  "Decides a state's direct relation rules at `level` from the subject's
+  holdings: ::found when one lasts there, ::fault, or nil."
+  [{:keys [probe qualify subject-type]} notes level rules eid]
   (loop [index 0]
     (when (< index (count rules))
       (let [rule (nth rules index)]
         (if (and (= :relation (:rule rule))
                  (= subject-type (:subject-type rule)))
-          (let [value (qualify (:relation-eid rule)
-                               (probe (:relation-eid rule) (:resource-type rule) eid))]
+          (let [outcome (note! notes level
+                               (evidence-class
+                                (qualify (:relation-eid rule)
+                                         (probe (:relation-eid rule)
+                                                (:resource-type rule) eid))))]
             (cond
-              (true? value) ::found
-              (false? value) (recur (inc index))
-              :else ::qualified))
+              (= ::kept outcome) ::found
+              (= ::fault outcome) ::fault
+              :else (recur (inc index))))
           (recur (inc index)))))))
 
-(defn ^:no-doc decide-plainly
-  "Decides one resource by a depth-first search that admits only plain
-  Boolean evidence, reusing and extending the entry's memo. Returns true,
-  false, or ::qualified when a path meets conditional or temporal evidence;
-  such a resource is then decided by the exact point check.
+(defn ^:no-doc search-level
+  "One depth-first search from `root-state` in the graph of evidence that
+  lasts at `level`, reusing and extending that level's memo. Returns
+  ::found, ::fault, or, when exhausted, `{:skipped deadline :conditional?
+  flag}`: the latest deadline and whether any conditional evidence the
+  search skipped.
 
-  Soundness of the memo: a search that exhausts without a witness visited
-  every state reachable from each state it admitted (successors are pushed
-  before the stack can empty, and memo-false states were exhausted before),
-  so each admitted state is false. A search that finds a witness proves its
-  root state true. Both facts are plain Booleans over one immutable basis,
-  and a plain value composes identically under any path prefix."
-  [{:keys [root subject-type step! admit!] :as search}
-   {:keys [reverse-rules holdings possible memo]} resource-eid]
-  (let [root-state [root resource-eid]]
+  Within one level the graph is plain, so the memo is sound as in
+  MemoizedMembership.dfy: a search that exhausts visited every state
+  reachable from each state it admitted, so each is negative at this level;
+  a search that finds a witness proves its root. A retained negative keeps
+  its closure's skipped deadline and conditional flag, and a later search
+  that reuses it inherits them."
+  [{:keys [subject-type step! admit!] :as search}
+   {:keys [reverse-rules holdings possible memos skips]} level root-state]
+  (let [memo (or (get @memos level)
+                 (let [memo (volatile! {})] (vswap! memos assoc level memo) memo))
+        notes {:skipped (volatile! nil) :conditional? (volatile! false)}]
     (loop [stack [root-state]
            visited (transient #{})]
       (if (zero? (count stack))
-        (let [visited (persistent! visited)]
+        (let [visited (persistent! visited)
+              skipped @(:skipped notes)
+              conditional? @(:conditional? notes)]
           (vswap! memo #(reduce (fn [m state] (assoc m state false)) % visited))
-          false)
+          (when (or skipped conditional?)
+            (vswap! skips update level
+                    #(reduce (fn [m state] (assoc m state [skipped conditional?]))
+                             (or % {}) visited)))
+          {:skipped skipped :conditional? conditional?})
         (let [frame (peek stack)
               stack (pop stack)
               _ (step! (count stack))
               head (nth frame 0)]
           (if (map? head)
-            (let [expanded (expand-arrow search stack head (nth frame 1))]
+            (let [expanded (expand-arrow search notes level stack head (nth frame 1))]
               ;; A vector is the grown stack; `case` would hash it to
               ;; dispatch, so the sentinels are tested explicitly.
               (cond
                 (not (keyword? expanded)) (recur expanded visited)
-                (= ::found expanded) (do (vswap! memo assoc root-state true) true)
-                :else ::qualified))
+                (= ::found expanded) (do (vswap! memo assoc root-state true) ::found)
+                :else ::fault))
             (let [known (get @memo frame)]
               (cond
-                (true? known) (do (vswap! memo assoc root-state true) true)
+                (true? known) (do (vswap! memo assoc root-state true) ::found)
 
-                (or (false? known)
-                    (contains? visited frame)
+                (false? known)
+                (do (when-let [[skipped conditional?] (get-in @skips [level frame])]
+                      (vswap! (:skipped notes) later skipped)
+                      (when conditional? (vreset! (:conditional? notes) true)))
+                    (recur stack visited))
+
+                (or (contains? visited frame)
                     (not (contains? possible head)))
                 (recur stack visited)
 
                 :else
                 (let [eid (nth frame 1)
                       rules (get reverse-rules head)
-                      _ (admit!)]
-                  (case (base-outcome search rules eid)
-                    ::found (do (vswap! memo assoc root-state true) true)
-                    ::qualified ::qualified
-                    (recur (push-successors stack rules eid subject-type
-                                            holdings possible)
-                           (conj! visited frame))))))))))))
+                      _ (admit!)
+                      outcome (base-outcome search notes level rules eid)]
+                  (cond
+                    (= ::found outcome) (do (vswap! memo assoc root-state true) ::found)
+                    (= ::fault outcome) ::fault
+                    :else (recur (push-successors stack rules eid subject-type
+                                                  holdings possible)
+                                 (conj! visited frame))))))))))))
+
+(defn ^:no-doc decide-leveled
+  "Decides one resource level by level. The first search keeps only plain
+  evidence; each later one keeps the evidence lasting until the latest
+  deadline the previous search skipped. Found at the plain level: true.
+  Found at deadline `v`: evidence true until `v`. No witness path's
+  bottleneck lies strictly between `v` and the previous level, because its
+  first skipped edge would have raised the next level. So `v` is the latest
+  first-expiry over witness paths, the exact end of the grant. Exhausted with
+  nothing skipped: false, which stays false because relationships only
+  expire. ::qualified when a fault is met, or when only conditional evidence
+  remains; the exact point check then decides the resource."
+  [search entry resource-eid]
+  (let [root-state [(:root search) resource-eid]]
+    (loop [level plain-level]
+      (let [outcome (search-level search entry level root-state)]
+        (cond
+          (= ::found outcome)
+          (if (= plain-level level)
+            true
+            (evidence/with-certificate true level true))
+
+          (= ::fault outcome) ::qualified
+
+          (:skipped outcome)
+          (do (add-membership-stats! {:levels 1})
+              (recur (:skipped outcome)))
+
+          (:conditional? outcome) ::qualified
+          :else false)))))
 
 (defn check-many-eids
   "Decides one subject's membership in the plan's root permission for many
-  resources: one value per resource, each equal to what `check-eids` returns
-  for that point (conditional and temporal values are `check-eids`' own).
+  resources: one value per resource, with the permissionship `check-eids`
+  returns for that point.
 
-  The request-scoped `:context` (from `membership-context`) carries what
-  every later call may reuse over the same basis: the subject's holdings of
-  each relation slice the plan names (one bounded forward scan per slice), the
-  plan nodes those holdings can reach at all, each arrow's intermediates, and
-  completed plain decisions. A base rule is then decided from the retained
-  holdings instead of an adapter probe, a node the subject cannot hold is
-  never entered, and an ancestor shared by many resources is decided once.
-  Anything but plain Boolean evidence routes that resource to the exact point
-  check. Typed limits apply per call with the point check's meanings."
+  - A decisive answer is plain true, or true until the latest first-expiry
+    over its witness paths (`decide-leveled`). That certificate is sound and
+    may end later than the point check's, which is the first witness it
+    happened to find.
+  - Plain false stays false, because relationships only expire.
+  - A resource whose decision meets a fault, or rests only on conditional
+    evidence, gets `check-eids`' own value.
+
+  The request-scoped `:context` (from `membership-context`) holds what later
+  calls reuse over the same basis:
+
+  - the subject's holdings of each relation slice the plan names, one bounded
+    forward scan per slice;
+  - the plan nodes those holdings can reach at all;
+  - each arrow's intermediates;
+  - one memo per evidence level;
+  - completed answers.
+
+  A base rule is decided from the retained holdings instead of an adapter
+  probe, a node the subject cannot hold is never entered, and an ancestor
+  shared by many resources is decided once per level. Typed limits apply per
+  call, with the point check's meanings."
   [{:keys [fetch-fn adapter plan subject-type subject-eid resource-eids
            context cut-point! physical-chunk-size qualification
            max-admissions max-commands max-transitions max-values max-stack]
@@ -753,7 +885,7 @@
                      values))
           entry (membership-entry context fetch! plan subject-type subject-eid)
           holdings (:holdings entry)
-          memo (:memo entry)
+          answers (:answers entry)
           root (:root plan)
           search
           {:root root
@@ -813,10 +945,13 @@
           (mapv (fn [resource-eid]
                   (if (nil? resource-eid)
                     false
-                    (let [known (get @memo [root resource-eid])]
-                      (if (some? known)
+                    (let [known (get @answers resource-eid ::unknown)]
+                      (if (not= ::unknown known)
                         known
-                        (decide-plainly search entry resource-eid)))))
+                        (let [value (decide-leveled search entry resource-eid)]
+                          (when-not (= ::qualified value)
+                            (vswap! answers assoc resource-eid value))
+                          value)))))
                 resource-eids)
           fallbacks (count (filter #{::qualified} decided))]
       (request-counters/add-commands! (aget counts 2))

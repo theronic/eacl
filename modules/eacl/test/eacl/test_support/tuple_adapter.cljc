@@ -3,6 +3,7 @@
   relationship tuples, for engine-level tests and mutation controls on both
   runtimes. Object ids are the internal ids."
   (:require [eacl.backend.v8 :as backend]
+            [eacl.relationships.edge :as edge]
             [eacl.schema.expression-persistence :as persistence]
             [eacl.schema.expression-resolver :as resolver]))
 
@@ -16,10 +17,12 @@
 (defn from-validated
   "Builds a v8 adapter over `validated` schema whose relationship tuples are
   exactly `relationships`: a set of
-  `[subject-type subject-eid relation-name resource-type resource-eid]`.
-  Relation names resolve to the deterministic relation ids the sealed plan
-  sees, and both scan directions honor strict eid order and exclusive or
-  inclusive bounds."
+  `[subject-type subject-eid relation-name resource-type resource-eid]`,
+  optionally followed by a positive qualifier id. Relation names resolve to
+  the deterministic relation ids the sealed plan sees, and both scan
+  directions honor strict endpoint order and exclusive or inclusive bounds.
+  A qualified tuple scans as the packed `[endpoint qualifier-id]` edge, as
+  native adapters return it; qualification itself is the caller's."
   [validated relationships]
   (let [candidate (persistence/candidate-schema validated)
         relation-key (juxt :eacl.relation/resource-type
@@ -47,37 +50,39 @@
                                    (:eacl.permission/permission-name entity)]
                                   entity]))
                           (:permissions candidate))
-        tuples (into #{}
-                     (map (fn [[subject-type subject-eid relation-name
-                                resource-type resource-eid]]
-                            [subject-type subject-eid
-                             (get relation-ids
-                                  [resource-type relation-name])
-                             resource-type resource-eid]))
-                     relationships)
+        qualified (into {}
+                        (map (fn [[subject-type subject-eid relation-name
+                                   resource-type resource-eid qualifier-id]]
+                               [[subject-type subject-eid
+                                 (get relation-ids [resource-type relation-name])
+                                 resource-type resource-eid]
+                                qualifier-id]))
+                        relationships)
+        tuples (set (keys qualified))
         scan (fn [match-fn extract-fn]
                (fn [type-a eid-a relation-id type-b
                     {:keys [direction bound-eid inclusive-bound?]}]
-                 (let [eids (->> tuples
-                                 (filter #(match-fn % type-a eid-a
-                                                    relation-id type-b))
-                                 (map extract-fn)
-                                 sort
-                                 vec)
-                       eids (if (= :desc direction)
-                              (vec (reverse eids))
-                              eids)]
-                   (cond->> eids
+                 (let [edges (->> tuples
+                                  (filter #(match-fn % type-a eid-a
+                                                     relation-id type-b))
+                                  (map #(edge/pack (extract-fn %) (get qualified %)))
+                                  (sort-by edge/endpoint)
+                                  vec)
+                       edges (if (= :desc direction)
+                               (vec (reverse edges))
+                               edges)]
+                   (cond->> edges
                      (some? bound-eid)
                      (filterv
-                      (fn [eid]
-                        (if (= :desc direction)
-                          (if inclusive-bound?
-                            (<= eid bound-eid)
-                            (< eid bound-eid))
-                          (if inclusive-bound?
-                            (>= eid bound-eid)
-                            (> eid bound-eid)))))))))]
+                      (fn [compact-edge]
+                        (let [eid (edge/endpoint compact-edge)]
+                          (if (= :desc direction)
+                            (if inclusive-bound?
+                              (<= eid bound-eid)
+                              (< eid bound-eid))
+                            (if inclusive-bound?
+                              (>= eid bound-eid)
+                              (> eid bound-eid))))))))))]
     (backend/make-adapter
      {:id :operator-mutation-control
       :capabilities backend/empty-capabilities

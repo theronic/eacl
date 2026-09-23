@@ -2,6 +2,8 @@
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is testing]]
             [clojure.string :as str]
+            [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.qualification :as qualification]
             [eacl.backend.v8 :as backend]
             [eacl.backend.direct-membership :as direct]
             [eacl.authorization.batch :as batch]
@@ -1919,9 +1921,9 @@ definition document {
 
 (defn membership-found-root-retained-negative-killed?
   []
-  (let [original route/decide-plainly]
+  (let [original route/decide-leveled]
     (membership-refinement-kills?
-     #(with-redefs [route/decide-plainly
+     #(with-redefs [route/decide-leveled
                     (fn [search entry resource-eid]
                       (let [decision (original search entry resource-eid)]
                         (when (true? decision)
@@ -1932,9 +1934,9 @@ definition document {
 
 (defn membership-exhausted-root-forgotten-killed?
   []
-  (let [original route/decide-plainly]
+  (let [original route/decide-leveled]
     (membership-refinement-kills?
-     #(with-redefs [route/decide-plainly
+     #(with-redefs [route/decide-leveled
                     (fn [search entry resource-eid]
                       (let [decision (original search entry resource-eid)]
                         (when (false? decision)
@@ -2037,6 +2039,104 @@ definition folder {
            (with-redefs [operator-plan/delegated-permissions (fn [_] nil)]
              (routed))))))
 
+;;; ---------------------------------------------------------------------------
+;;; Leveled membership search controls
+;;;
+;;; Document 10 has three parents: 11 through an edge until 500, whose reader
+;;; grant lasts until 800; 12 through a plain edge, whose reader grant lasts
+;;; until 200; and 14 through an edge until 900, with no grant. Its grant
+;;; therefore ends at 500, the widest witness, while the first level searched
+;;; below the plain one is 900. Document 13 is read only under a caveat. The
+;;; relationships' evidence comes from a table standing in for
+;;; qualification.
+
+(def ^:private leveled-control-schema
+  "definition user {}
+definition doc {
+  relation reader: user
+  relation parent: doc
+  permission view = reader + parent->view
+}")
+
+(def ^:private leveled-control-relationships
+  "Qualifier ids: 1 is the edge from 11 (until 500), 2 the edge from 14
+  (until 900), 3 and 4 the reader grants on 11 (until 800) and 12 (until
+  200), and 5 the caveated reader grant on 13."
+  #{[:doc 11 :parent :doc 10 1] [:doc 12 :parent :doc 10] [:doc 14 :parent :doc 10 2]
+    [:user 1 :reader :doc 11 3] [:user 1 :reader :doc 12 4] [:user 1 :reader :doc 13 5]})
+
+(defn- leveled-control-run
+  "`view` for user 1 on documents 10 and 13, batched, beside the point check
+  of 13."
+  []
+  (let [adapter (operator-probe-adapter leveled-control-schema
+                                        leveled-control-relationships)
+        table {1 (evidence/with-certificate true 500 true)
+               2 (evidence/with-certificate true 900 true)
+               3 (evidence/with-certificate true 800 true)
+               4 (evidence/with-certificate true 200 true)
+               5 (evidence/conditional [:leveled-control-caveat] ["flag"])}
+        options {:adapter adapter
+                 :plan (sealed-plan/seal-plan adapter [:doc :view])
+                 :subject-type :user :subject-eid 1 :qualification {:time 0}}]
+    (with-redefs [qualification/qualify
+                  (fn [_ _ compact-edge]
+                    (if (vector? compact-edge)
+                      (get table (second compact-edge))
+                      (some? compact-edge)))]
+      {:many (route/check-many-eids (assoc options :resource-eids [10 13]
+                                           :context (route/membership-context)))
+       :point (route/check-eids (assoc options :resource-eid 13))})))
+
+(defn- leveled-control-correct?
+  [{:keys [many point]}]
+  (and (= [500 (evidence/valid-until point)]
+          [(evidence/valid-until (first many)) (evidence/valid-until (second many))])
+       (evidence/has? (first many))
+       (= point (second many))))
+
+(defn- leveled-control-kills?
+  [mutated-run]
+  (and (leveled-control-correct? (leveled-control-run))
+       (not (leveled-control-correct? (mutated-run)))))
+
+(defn membership-level-below-latest-skip-killed?
+  []
+  (let [original route/search-level]
+    (leveled-control-kills?
+     #(with-redefs [route/search-level
+                    (fn [search entry level root-state]
+                      (let [outcome (original search entry level root-state)]
+                        (if (and (map? outcome) (:skipped outcome))
+                          (update outcome :skipped dec)
+                          outcome)))]
+        (leveled-control-run)))))
+
+(defn membership-first-level-certificate-killed?
+  []
+  (let [original route/decide-leveled]
+    (leveled-control-kills?
+     #(with-redefs [route/decide-leveled
+                    (fn [search entry resource-eid]
+                      (let [decision (original search entry resource-eid)
+                            first-level (first (get-in @(:skips entry)
+                                                       [:eacl.engine.stable-route/plain
+                                                        [(:root search) resource-eid]]))]
+                        (if (and (evidence/has? decision) (not (true? decision)) first-level)
+                          (evidence/with-certificate true first-level true)
+                          decision)))]
+        (leveled-control-run)))))
+
+(defn membership-conditional-answered-false-killed?
+  []
+  (let [original route/decide-leveled]
+    (leveled-control-kills?
+     #(with-redefs [route/decide-leveled
+                    (fn [search entry resource-eid]
+                      (let [decision (original search entry resource-eid)]
+                        (if (keyword? decision) false decision)))]
+        (leveled-control-run)))))
+
 (def controls
   {:wrong-arrow-direction wrong-arrow-direction-killed?
    :uuid-type-coercion uuid-type-coercion-killed?
@@ -2126,7 +2226,11 @@ definition folder {
    operator-delegation-admits-operator-cycle-killed?
    :operator-delegated-generator-wrong-operand
    operator-delegated-generator-wrong-operand-killed?
-   :operator-delegation-withheld operator-delegation-withheld-killed?})
+   :operator-delegation-withheld operator-delegation-withheld-killed?
+   :membership-level-below-latest-skip membership-level-below-latest-skip-killed?
+   :membership-first-level-certificate membership-first-level-certificate-killed?
+   :membership-conditional-answered-false
+   membership-conditional-answered-false-killed?})
 
 (deftest every-portable-production-mutant-is-killed-test
   (doseq [[id detector] controls]

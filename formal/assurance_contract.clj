@@ -98,6 +98,10 @@
    {:source "formal/dafny/MemoizedMembership.dfy"
     :claim :conditional-memoized-reachability-with-sound-retained-answers
     :minimum-proof-efforts 27}
+   :leveled-union-membership
+   {:source "formal/dafny/LeveledMembership.dfy"
+    :claim :conditional-widest-decisive-witness-with-exact-deadline
+    :minimum-proof-efforts 35}
    :ordered-merge
    {:source "formal/dafny/OrderedMerge.dfy"
     :minimum-proof-efforts 82}
@@ -663,15 +667,20 @@
     ;; operands: the operator nodes run on the acyclic vector evaluator and
     ;; each operand is decided through its own sealed union plan, by the
     ;; membership-probe check or, for many resources of one subject, by the
-    ;; memoized search MemoizedMembership.dfy models. Executable refinement:
-    ;; eacl.engine.memoized-membership-refinement-test runs the production
-    ;; search beside a transcription of the leaf's Search over random
-    ;; union-only programs and requires equal decisions, retained answers and
-    ;; possible nodes after every call; eacl.operator.delegation-refinement-test
-    ;; checks the delegation analysis against an oracle, and every engine
-    ;; answer against a stratified least fixed point and the tabled evaluator,
-    ;; over random operator schemas. The membership-* and operator-delegat*
-    ;; mutation controls are killed by them on both runtimes.
+    ;; memoized search MemoizedMembership.dfy models. Expiring evidence is
+    ;; decided level by level (LeveledMembership.dfy): the widest decisive
+    ;; witness, with its exact deadline; conditional and faulty evidence stay
+    ;; with the membership-probe check, and a conditional operator result is
+    ;; recomputed with point operands. Executable refinement:
+    ;; eacl.engine.memoized-membership-refinement-test and
+    ;; eacl.engine.leveled-membership-refinement-test run the production
+    ;; search beside transcriptions over random programs, the latter with
+    ;; expiring and caveated relationships and an independent widest-witness
+    ;; fixed point; eacl.operator.delegation-refinement-test checks the
+    ;; delegation analysis against an oracle, and every engine answer against
+    ;; a stratified least fixed point and the tabled evaluator, over random
+    ;; operator schemas. The membership-* and operator-delegat* mutation
+    ;; controls are killed by them on both runtimes.
     :entry-points
     ["eacl.operator.plan/delegated-permissions"
      "eacl.operator.plan/delegated-generator"
@@ -682,8 +691,13 @@
     [:exhausted-search-admits-only-negative-states
      :found-search-proves-its-root
      :node-outside-closed-possible-set-is-negative
-     :memoized-searches-equal-reachability-in-any-order]
+     :memoized-searches-equal-reachability-in-any-order
+     :no-witness-between-a-skipped-bound-and-its-level
+     :found-level-is-the-widest-decisive-witness
+     :certificate-is-the-exact-end-of-the-grant
+     :exhausted-without-skips-holds-at-no-level]
     :dafny ["formal/dafny/MemoizedMembership.dfy"
+            "formal/dafny/LeveledMembership.dfy"
             "formal/stable-discovery/MembershipProbeCheck.dfy"]
     :adapter-obligations
     [:immutable-snapshot
