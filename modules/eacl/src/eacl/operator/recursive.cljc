@@ -123,10 +123,21 @@
 (defn- question-subject-eid [q] (nth q 4))
 (defn- question-resource-eid [q] (nth q 5))
 
+(def ^:private ^:dynamic *question-keys*
+  "The printed keys of one evaluation's questions, or nil outside one."
+  nil)
+
 (defn- question-key [q]
   ;; pr-str is portable across the closed key domain and removes host map/set
-  ;; iteration from command, component, fact, and checkpoint order.
-  (pr-str q))
+  ;; iteration from command, component, fact, and checkpoint order. An
+  ;; evaluation prints each question once: its condensation, sorts and
+  ;; checkpoints compare the same strings many times.
+  (if-let [keys *question-keys*]
+    (or (get @keys q)
+        (let [key (pr-str q)]
+          (vswap! keys assoc q key)
+          key))
+    (pr-str q)))
 
 (defn- sorted-questions [questions]
   ;; Decorate-sort-undecorate: `sort-by question-key` re-runs `pr-str` on
@@ -448,10 +459,13 @@
 
                           :else
                           (let [children
-                                (vec
-                                 (reverse
-                                  (sort-by component-key
-                                           (get dependencies component))))]
+                                (into []
+                                      (map second)
+                                      (reverse
+                                       (sort-by first compare
+                                                (map (fn [dependency]
+                                                       [(component-key dependency) dependency])
+                                                     (get dependencies component)))))]
                             (recur
                              (into (conj (pop stack) [component true])
                                    (map #(vector % false)) children)
@@ -1042,7 +1056,14 @@
                                       attached (or (:attached-probe-count spec) 0)]
                                   (map-indexed (fn [i probe] [q probe (+ attached i)])
                                                (drop attached (:base-probes spec))))))
-                      (sorted-questions (keys nodes)))
+                      ;; Only questions with unattached probes contribute, in
+                      ;; the same sorted order.
+                      (sorted-questions
+                       (filter (fn [q]
+                                 (let [spec (get nodes q)]
+                                   (< (or (:attached-probe-count spec) 0)
+                                      (count (:base-probes spec)))))
+                               (keys nodes))))
         probe-count (count entries)
         next-probes (+ (:probes @counters) probe-count)]
     (limit-counter! limits counters :probes :maximum-probes next-probes)
@@ -1129,7 +1150,7 @@
                                  [(conj out [q encoded]) size]))
                              [[] 0] (sorted-questions (keys (:facts state)))))
                     (vec (sorted-questions (:facts state))))]
-        (cond-> {:version checkpoint-version :command-identity identity :completed? true :facts facts
+        (cond-> {:version checkpoint-version :command-identity (force identity) :completed? true :facts facts
                  :anchor-states (if qualified? []
                                     (mapv second (sort-by first compare
                                                         (map (fn [[key value]] [(question-key key) [key value]])
@@ -1181,9 +1202,7 @@
   (validate-many-options! plan candidates)
   (evaluate-many-validated (update options :limits normalize-limits)))
 
-(defn- evaluate-many-validated
-  "Trusted core of `evaluate-many`: options already validated and limits
-  normalized (each caller validates exactly once at its boundary)."
+(defn- evaluate-questions
   [{:keys [adapter plan candidates permission limits checkpoint
            scope-identity undelivered-boundary checkpoint? qualification]
     :or {checkpoint? true}}]
@@ -1191,13 +1210,14 @@
         permission (or permission (:root plan))
         root-questions (mapv #(candidate->root-question roots permission %)
                              candidates)
-        identity (command-identity plan root-questions
-                                   (if qualification
-                                     [:qualified evidence/format-version scope-identity
-                                      (qualification/exact-reuse-identity qualification)]
-                                     scope-identity))]
+        ;; Only a replay or a checkpoint reads the command identity.
+        identity (delay (command-identity plan root-questions
+                                          (if qualification
+                                            [:qualified evidence/format-version scope-identity
+                                             (qualification/exact-reuse-identity qualification)]
+                                            scope-identity)))]
     (if checkpoint
-      (let [result (replay-checkpoint checkpoint identity root-questions)]
+      (let [result (replay-checkpoint checkpoint (force identity) root-questions)]
         (when qualification (doseq [value (:decisions result)] (qualification/observe-evidence! qualification value)))
         result)
       (if (empty? candidates)
@@ -1348,6 +1368,13 @@
               :exact (:decisions result)}))
           (observe! @counters)
           result)))))
+
+(defn- evaluate-many-validated
+  "Trusted core of `evaluate-many`: options already validated and limits
+  normalized (each caller validates exactly once at its boundary)."
+  [options]
+  (binding [*question-keys* (volatile! {})]
+    (evaluate-questions options)))
 
 (defn- conditional-decision?
   "True for a residual-bearing value: neither Boolean, decisive, nor a
