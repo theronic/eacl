@@ -12,8 +12,11 @@
             [eacl.engine.portable-decisions :as portable]
             [eacl.client.range-reuse :as range-reuse]
             [eacl.engine.scan-cache :as scan-cache]
+            [eacl.engine.memoized-membership-refinement-test
+             :as membership-refinement]
             [eacl.engine.sealed-plan :as sealed-plan]
             [eacl.engine.stable-reducer :as stable-reducer]
+            [eacl.engine.stable-route :as route]
             [eacl.engine.v8 :as engine]
             [eacl.operator.evaluator :as operator-evaluator]
             [eacl.operator.lookup :as operator-lookup]
@@ -24,10 +27,10 @@
             [eacl.request.counters :as request-counters]
             [eacl.schema.expression :as expression]
             [eacl.schema.expression-graph :as expression-graph]
-            [eacl.schema.expression-persistence :as persistence]
             [eacl.schema.expression-resolver :as resolver]
             [eacl.spicedb.parser :as parser]
             [eacl.subproblem-cache :as subproblem]
+            [eacl.test-support.tuple-adapter :as tuple-adapter]
             [eacl.verified-kernel :as verified]))
 
 (defn- production-decision
@@ -744,122 +747,12 @@
 ;;; executed the mutated definition at least once.
 
 (defn- operator-probe-adapter-from-validated
-  "Builds a v8 adapter over `validated` schema whose relationship tuples are
-  exactly `relationships`: a set of
-  `[subject-type subject-eid relation-name resource-type resource-eid]`.
-  Relation names resolve to the deterministic relation ids the sealed plan
-  sees, and both scan directions honor strict eid order and exclusive or
-  inclusive bounds."
   [validated relationships]
-  (let [candidate (persistence/candidate-schema validated)
-        relation-key (juxt :eacl.relation/resource-type
-                           :eacl.relation/relation-name
-                           :eacl.relation/subject-type)
-        rows (->> (:relations candidate)
-                  (sort-by relation-key)
-                  (map-indexed
-                   (fn [index relation]
-                     {:relation-id (+ 100 index)
-                      :resource-type (:eacl.relation/resource-type relation)
-                      :relation-name (:eacl.relation/relation-name relation)
-                      :subject-type (:eacl.relation/subject-type relation)}))
-                  vec)
-        relation-ids (into {}
-                           (map (fn [row]
-                                  [[(:resource-type row)
-                                    (:relation-name row)]
-                                   (:relation-id row)]))
-                           rows)
-        relations (group-by (juxt :resource-type :relation-name) rows)
-        expressions (into {}
-                          (map (fn [entity]
-                                 [[(:eacl.permission/resource-type entity)
-                                   (:eacl.permission/permission-name entity)]
-                                  entity]))
-                          (:permissions candidate))
-        tuples (into #{}
-                     (map (fn [[subject-type subject-eid relation-name
-                                resource-type resource-eid]]
-                            [subject-type subject-eid
-                             (get relation-ids
-                                  [resource-type relation-name])
-                             resource-type resource-eid]))
-                     relationships)
-        scan (fn [match-fn extract-fn]
-               (fn [type-a eid-a relation-id type-b
-                    {:keys [direction bound-eid inclusive-bound?]}]
-                 (let [eids (->> tuples
-                                 (filter #(match-fn % type-a eid-a
-                                                    relation-id type-b))
-                                 (map extract-fn)
-                                 sort
-                                 vec)
-                       eids (if (= :desc direction)
-                              (vec (reverse eids))
-                              eids)]
-                   (cond->> eids
-                     (some? bound-eid)
-                     (filterv
-                      (fn [eid]
-                        (if (= :desc direction)
-                          (if inclusive-bound?
-                            (<= eid bound-eid)
-                            (< eid bound-eid))
-                          (if inclusive-bound?
-                            (>= eid bound-eid)
-                            (> eid bound-eid)))))))))]
-    (backend/make-adapter
-     {:id :operator-mutation-control
-      :capabilities backend/empty-capabilities
-      :operations
-      (merge
-       (operation-map)
-       {:snapshot-id (constantly {:snapshot :operator-mutation-control})
-        :basis-kind (constantly :ordinary)
-        :native-revision (constantly {:revision 1})
-        :order-hint (constantly 1)
-        :exact-locator (constantly nil)
-        :object-id->internal identity
-        :internal-id->object identity
-        :relation-defs
-        (fn [resource-type relation-name]
-          (mapv #(select-keys % [:relation-id :resource-type
-                                 :relation-name :subject-type])
-                (get relations [resource-type relation-name] [])))
-        :permission-expression
-        (fn [resource-type permission-name]
-          (get expressions [resource-type permission-name]))
-        :permission-defs
-        (fn [resource-type permission-name]
-          (when-let [entity (get expressions
-                                 [resource-type permission-name])]
-            (persistence/union-compatible-definitions
-             (:eacl/id entity)
-             (persistence/decode-entity entity))))
-        :subject->resources
-        (scan (fn [[subject-type subject-eid relation resource-type _]
-                   type-a eid-a relation-id type-b]
-                (and (= subject-type type-a) (= subject-eid eid-a)
-                     (= relation relation-id) (= resource-type type-b)))
-              (fn [[_ _ _ _ resource-eid]] resource-eid))
-        :resource->subjects
-        (scan (fn [[subject-type _ relation resource-type resource-eid]
-                   type-a eid-a relation-id type-b]
-                (and (= resource-type type-a) (= resource-eid eid-a)
-                     (= relation relation-id) (= subject-type type-b)))
-              (fn [[_ subject-eid _ _ _]] subject-eid))
-        :direct-match?
-        (fn [subject-type subject-eid relation-eid
-             resource-type resource-eid]
-          (contains? tuples [subject-type subject-eid relation-eid
-                             resource-type resource-eid]))
-        :all-permission-nodes (constantly (set (keys expressions)))})})))
+  (tuple-adapter/from-validated validated relationships))
 
 (defn- operator-probe-adapter
   [schema-source relationships]
-  (operator-probe-adapter-from-validated
-   (resolver/validate-schema schema-source)
-   relationships))
+  (tuple-adapter/from-schema schema-source relationships))
 
 (defn- operator-typed-or
   "Runs `probe`, returning its value or `{:typed <:eacl/error>}` when it
@@ -1988,6 +1881,162 @@ definition document {
                    (gate)))
          @invoked)))
 
+;;; ---------------------------------------------------------------------------
+;;; Memoized membership search controls
+;;;
+;;; Each mutant runs the executable refinement campaign of
+;;; `eacl.engine.memoized-membership-refinement-test`, which requires equal
+;;; decisions, retained answers and possible nodes to MemoizedMembership.dfy's
+;;; `Search` after every call. The last control cannot change a decision; only
+;;; the retained-state comparison sees it.
+
+(defn- membership-refinement-kills?
+  "The unmutated search refines the model on the control seeds, and the
+  mutated one diverges from it."
+  [mutated-campaign]
+  (and (nil? (:failure (membership-refinement/run-campaign 1 12)))
+       (some? (:failure (mutated-campaign)))))
+
+(defn membership-possible-node-dropped-killed?
+  []
+  (let [original route/possible-nodes]
+    (membership-refinement-kills?
+     #(with-redefs [route/possible-nodes
+                    (fn [reverse-rules subject-type holdings]
+                      (let [possible (original reverse-rules subject-type holdings)]
+                        (disj possible (first (sort-by pr-str possible)))))]
+        (membership-refinement/run-campaign 1 12)))))
+
+(defn membership-first-rule-skipped-killed?
+  []
+  (let [original route/push-successors]
+    (membership-refinement-kills?
+     #(with-redefs [route/push-successors
+                    (fn [stack rules eid subject-type holdings possible]
+                      (original stack (vec (rest rules)) eid subject-type
+                                holdings possible))]
+        (membership-refinement/run-campaign 1 12)))))
+
+(defn membership-found-root-retained-negative-killed?
+  []
+  (let [original route/decide-plainly]
+    (membership-refinement-kills?
+     #(with-redefs [route/decide-plainly
+                    (fn [search entry resource-eid]
+                      (let [decision (original search entry resource-eid)]
+                        (when (true? decision)
+                          (vswap! (:memo entry) assoc
+                                  [(:root search) resource-eid] false))
+                        decision))]
+        (membership-refinement/run-campaign 1 12)))))
+
+(defn membership-exhausted-root-forgotten-killed?
+  []
+  (let [original route/decide-plainly]
+    (membership-refinement-kills?
+     #(with-redefs [route/decide-plainly
+                    (fn [search entry resource-eid]
+                      (let [decision (original search entry resource-eid)]
+                        (when (false? decision)
+                          (vswap! (:memo entry) dissoc
+                                  [(:root search) resource-eid]))
+                        decision))]
+        (membership-refinement/run-campaign 1 12)))))
+
+;;; ---------------------------------------------------------------------------
+;;; Operator delegation controls
+;;;
+;;; 100 is the parent of 101, of 102, of 103; 104 and 105 are each other's
+;;; parent. User 300 deletes from 100 down, reads from 101 down, and is
+;;; eligible at 102, 104 and 105: `removable` is 101-103, `prune` is 100, and
+;;; `inherited`, whose operator recurses, is 101-102 (the 104-105 cycle grants
+;;; nothing).
+
+(def ^:private delegation-control-schema
+  "definition user {}
+definition folder {
+  relation parent: folder
+  relation reader: user
+  relation deleter: user
+  relation eligible: user
+  permission readable = reader + parent->readable
+  permission granted = deleter + parent->granted
+  permission removable = granted & readable
+  permission prune = granted - readable
+  permission inherited = reader + (parent->inherited & eligible)
+}")
+
+(def ^:private delegation-control-relationships
+  #{[:folder 100 :parent :folder 101] [:folder 101 :parent :folder 102]
+    [:folder 102 :parent :folder 103]
+    [:folder 104 :parent :folder 105] [:folder 105 :parent :folder 104]
+    [:user 300 :deleter :folder 100] [:user 300 :reader :folder 101]
+    [:user 300 :eligible :folder 102] [:user 300 :eligible :folder 104]
+    [:user 300 :eligible :folder 105]})
+
+(defn- delegation-control-lookup
+  [permission]
+  (operator-typed-or
+   #(mapv :id (:data (engine/lookup-resources
+                      (operator-probe-adapter delegation-control-schema
+                                              delegation-control-relationships)
+                      {:subject {:type :user :id 300} :permission permission
+                       :resource/type :folder :first 10})))))
+
+(defn operator-delegation-admits-operator-cycle-killed?
+  []
+  (let [original operator-plan/delegated-permissions
+        expected [101 102]]
+    (and
+     (= expected (delegation-control-lookup :inherited))
+     ;; Delegating a plan whose operator lies on a cycle hands a recursive
+     ;; operator to the acyclic evaluator.
+     (not= expected
+           (with-redefs [operator-plan/delegated-permissions
+                         (fn [plan]
+                           (or (original plan)
+                               (into (sorted-set)
+                                     (keep (fn [{:keys [permission dag]}]
+                                             (when-not (some #(contains? #{:intersection
+                                                                           :exclusion}
+                                                                         (first %))
+                                                             (:nodes dag))
+                                               permission)))
+                                     (:expressions plan))))]
+             (delegation-control-lookup :inherited))))))
+
+(defn operator-delegated-generator-wrong-operand-killed?
+  []
+  (let [original operator-plan/delegated-generator
+        expected [100]]
+    (and
+     (= expected (delegation-control-lookup :prune))
+     ;; Generating `granted - readable` from `readable` never offers a
+     ;; candidate the exclusion admits.
+     (not= expected
+           (with-redefs [operator-plan/delegated-generator
+                         (fn [plan permission delegated]
+                           (let [generator (original plan permission delegated)]
+                             (or (first (remove #{generator} delegated))
+                                 generator)))]
+             (delegation-control-lookup :prune))))))
+
+(defn operator-delegation-withheld-killed?
+  []
+  (let [routed (fn []
+                 (let [stats (atom {})
+                       ids (binding [operator-recursive/*recursive-stats* stats]
+                             (delegation-control-lookup :removable))]
+                   [ids (empty? @stats)]))
+        expected [[101 102 103] true]]
+    (and
+     (= expected (routed))
+     ;; Withholding delegation keeps every answer but routes the operands
+     ;; back through the tabled recursive evaluator.
+     (not= expected
+           (with-redefs [operator-plan/delegated-permissions (fn [_] nil)]
+             (routed))))))
+
 (def controls
   {:wrong-arrow-direction wrong-arrow-direction-killed?
    :uuid-type-coercion uuid-type-coercion-killed?
@@ -2066,7 +2115,18 @@ definition document {
    :range-window-past-segment-served-as-complete
    range-window-past-segment-served-as-complete-killed?
    :range-composition-order
-   range-composition-order-killed?})
+   range-composition-order-killed?
+   :membership-possible-node-dropped membership-possible-node-dropped-killed?
+   :membership-first-rule-skipped membership-first-rule-skipped-killed?
+   :membership-found-root-retained-negative
+   membership-found-root-retained-negative-killed?
+   :membership-exhausted-root-forgotten
+   membership-exhausted-root-forgotten-killed?
+   :operator-delegation-admits-operator-cycle
+   operator-delegation-admits-operator-cycle-killed?
+   :operator-delegated-generator-wrong-operand
+   operator-delegated-generator-wrong-operand-killed?
+   :operator-delegation-withheld operator-delegation-withheld-killed?})
 
 (deftest every-portable-production-mutant-is-killed-test
   (doseq [[id detector] controls]

@@ -508,7 +508,7 @@
                :rule-kind (:rule rule)
                :node (:node rule)}))))
 
-(defn- possible-nodes
+(defn ^:no-doc possible-nodes
   "Plan nodes the subject can hold on some entity at this basis: the least
   fixed point over the rule graph seeded by the relation slices in which the
   subject holds at least one tuple. A node outside it is false for every
@@ -535,7 +535,7 @@
         possible
         (recur grown)))))
 
-(defn- push-successors
+(defn ^:no-doc push-successors
   "Pushes a state's non-base successors so the frame of its first rule in
   sealed order is on top, skipping rules that cannot reach the subject. A
   state frame is [node eid]; an arrow frame is [rule eid], expanded when it
@@ -648,7 +648,7 @@
               :else ::qualified))
           (recur (inc index)))))))
 
-(defn- decide-plainly
+(defn ^:no-doc decide-plainly
   "Decides one resource by a depth-first search that admits only plain
   Boolean evidence, reusing and extending the entry's memo. Returns true,
   false, or ::qualified when a path meets conditional or temporal evidence;

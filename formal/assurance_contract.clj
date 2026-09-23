@@ -663,7 +663,15 @@
     ;; operands: the operator nodes run on the acyclic vector evaluator and
     ;; each operand is decided through its own sealed union plan, by the
     ;; membership-probe check or, for many resources of one subject, by the
-    ;; memoized search this leaf models.
+    ;; memoized search MemoizedMembership.dfy models. Executable refinement:
+    ;; eacl.engine.memoized-membership-refinement-test runs the production
+    ;; search beside a transcription of the leaf's Search over random
+    ;; union-only programs and requires equal decisions, retained answers and
+    ;; possible nodes after every call; eacl.operator.delegation-refinement-test
+    ;; checks the delegation analysis against an oracle, and every engine
+    ;; answer against a stratified least fixed point and the tabled evaluator,
+    ;; over random operator schemas. The membership-* and operator-delegat*
+    ;; mutation controls are killed by them on both runtimes.
     :entry-points
     ["eacl.operator.plan/delegated-permissions"
      "eacl.operator.plan/delegated-generator"
@@ -675,13 +683,14 @@
      :found-search-proves-its-root
      :node-outside-closed-possible-set-is-negative
      :memoized-searches-equal-reachability-in-any-order]
-    :dafny ["formal/dafny/MemoizedMembership.dfy"]
+    :dafny ["formal/dafny/MemoizedMembership.dfy"
+            "formal/stable-discovery/MembershipProbeCheck.dfy"]
     :adapter-obligations
     [:immutable-snapshot
      :strictly-ordered-unique-eid-scans]
     :runtime-targets [:clj-java :cljs-javascript]
     :remaining
-    [:production-search-to-model-refinement
+    [:mechanized-host-search-source-refinement
      :independent-review]}
    {:operation :cache-reuse
     :entry-points ['eacl.cache 'eacl.subproblem-cache]

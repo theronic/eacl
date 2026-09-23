@@ -3,7 +3,13 @@
  :introduced-after-historical-audit
  [:uuid-type-coercion :uuid-comparator-collision :uuid-dropped-high-half
   :uuid-dropped-low-half :uuid-number-truncation :uuid-noncanonical-alias
-  :uuid-scope :uuid-lifecycle :uuid-detached]
+  :uuid-scope :uuid-lifecycle :uuid-detached
+  :membership-possible-node-dropped :membership-first-rule-skipped
+  :membership-found-root-retained-negative
+  :membership-exhausted-root-forgotten
+  :operator-delegation-admits-operator-cycle
+  :operator-delegated-generator-wrong-operand
+  :operator-delegation-withheld]
  :historical-mutant-count 152
  :historical-clojure-mutant-count 138
  :historical-model-mutant-count 14
@@ -171,6 +177,72 @@
    :mutation :swap-the-segment-and-continuation-order-when-composing
    :target-symbol "range-reuse/compose"
    :detector "range-composition-order-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :membership-possible-node-dropped
+   :mechanism :executed-production
+   :mutation :drop-one-reachable-node-from-the-possible-set
+   :target-symbol "route/possible-nodes"
+   :detector "membership-possible-node-dropped-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :membership-first-rule-skipped
+   :mechanism :executed-production
+   :mutation :skip-every-state-first-sealed-rule
+   :target-symbol "route/push-successors"
+   :detector "membership-first-rule-skipped-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :membership-found-root-retained-negative
+   :mechanism :executed-production
+   :mutation :retain-a-found-root-as-negative
+   :target-symbol "route/decide-plainly"
+   :detector "membership-found-root-retained-negative-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :membership-exhausted-root-forgotten
+   :mechanism :executed-production
+   :mutation :forget-an-exhausted-root-answer
+   :target-symbol "route/decide-plainly"
+   :detector "membership-exhausted-root-forgotten-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :operator-delegation-admits-operator-cycle
+   :mechanism :executed-production
+   :mutation :delegate-a-plan-whose-operator-recurses
+   :target-symbol "operator-plan/delegated-permissions"
+   :consumer-symbol "engine/lookup-resources"
+   :detector "operator-delegation-admits-operator-cycle-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :operator-delegated-generator-wrong-operand
+   :mechanism :executed-production
+   :mutation :generate-an-exclusion-from-its-subtracted-operand
+   :target-symbol "operator-plan/delegated-generator"
+   :consumer-symbol "engine/lookup-resources"
+   :detector "operator-delegated-generator-wrong-operand-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :operator-delegation-withheld
+   :mechanism :executed-production
+   :mutation :withhold-delegation-from-a-delegable-plan
+   :target-symbol "operator-plan/delegated-permissions"
+   :consumer-symbol "engine/lookup-resources"
+   :detector "operator-delegation-withheld-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
     {:test

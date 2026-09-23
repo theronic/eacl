@@ -18,6 +18,13 @@
 // sequence of searches over the same graph. Conditional or temporal evidence
 // never enters this model: production routes such a point to the exact
 // membership-probe check (MembershipProbeCheck.dfy) and retains nothing.
+//
+// Executable refinement: eacl.engine.memoized-membership-refinement-test
+// builds this graph from a sealed plan's rules and relationship tuples (an
+// arrow rule's expansion is a state of its own), checks the ConsistentNodes
+// premise on every reachable state, and runs a transcription of Search beside
+// the production search, requiring equal decisions, equal retained answers
+// and the least possible-node set after every call.
 module MemoizedMembership {
   datatype Graph = Graph(succ: seq<seq<nat>>, grants: set<nat>)
 

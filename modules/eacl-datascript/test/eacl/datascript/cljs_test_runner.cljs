@@ -75,6 +75,8 @@
             [eacl.operator.feature-gate-test]
             [eacl.operator.recursive-test]
             [eacl.operator.delegated-recursion-test]
+            [eacl.operator.delegation-refinement-test]
+            [eacl.engine.memoized-membership-refinement-test]
             [eacl.operator.recursive-intersection-differential-test]
             [eacl.relationships.endpoint-pair-test]
             [eacl.relationships.edge-test]
@@ -191,6 +193,8 @@
                'eacl.operator.feature-gate-test
                'eacl.operator.recursive-test
                'eacl.operator.delegated-recursion-test
+               'eacl.operator.delegation-refinement-test
+               'eacl.engine.memoized-membership-refinement-test
                'eacl.operator.recursive-intersection-differential-test
                'eacl.relationships.endpoint-pair-test
                'eacl.relationships.edge-test

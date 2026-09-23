@@ -149,6 +149,24 @@ are enabled by default. CI executes the exact evidence and writes current
 source digests to the ignored generated manifest; operational semantics and
 measured limits are in [Permission set algebra](permission-set-algebra.md).
 
+Recursive operator plans whose recursion lies inside union-only operands
+decide those operands with the union engine. `MemoizedMembership.dfy` proves
+the memoized search that decides many resources for one subject exact, and
+proves its retained answers sound. Two campaigns connect the production code
+to that model and to the set-algebra semantics:
+
+- `eacl.engine.memoized-membership-refinement-test` runs the production
+  search beside a transcription of the model's `Search` over random
+  union-only programs. After every call it compares the decisions, the
+  retained answers and the possible nodes.
+- `eacl.operator.delegation-refinement-test` covers random operator schemas.
+  It checks the delegation analysis against an independent oracle. It checks
+  every lookup, count, check and reverse lookup against a stratified least
+  fixed point, and against the tabled evaluator.
+
+Registered mutation controls run both campaigns on the JVM and in
+ClojureScript. The Clojure search itself has no mechanized proof.
+
 ### Permission-tree assurance boundary
 
 `PermissionTree.dfy` contributes 62 locked obligations. The theorem map covers
