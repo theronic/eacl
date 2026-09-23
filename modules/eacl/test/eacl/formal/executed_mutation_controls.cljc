@@ -1954,6 +1954,9 @@ definition document {
 ;;; eligible at 102, 104 and 105: `removable` is 101-103, `prune` is 100,
 ;;; `either_top`, a union at an operator's root, is 101-105, and `inherited`,
 ;;; whose operator recurses, is 101-102 (the 104-105 cycle grants nothing).
+;;; 300 is blocked at 102, so `pruned` is 101, and views at 101 and 104, so
+;;; `seen_top` is 100, 102, 104 and 105. `shared` recurses through two
+;;; operands of one intersection and is 101-103.
 
 (def ^:private delegation-control-schema
   "definition user {}
@@ -1962,12 +1965,19 @@ definition folder {
   relation reader: user
   relation deleter: user
   relation eligible: user
+  relation blocked: user
+  relation viewer: user
   permission readable = reader + parent->readable
   permission granted = deleter + parent->granted
   permission removable = granted & readable
   permission prune = granted - readable
   permission either_top = eligible + (granted & readable)
   permission inherited = reader + (parent->inherited & eligible)
+  permission pruned = reader + (parent->pruned - blocked)
+  permission seen = viewer + parent->seen
+  permission seen_top = deleter + (seen & eligible)
+  permission shared = reader + (parent->shared & gate)
+  permission gate = eligible + parent->shared
 }")
 
 (def ^:private delegation-control-relationships
@@ -1976,7 +1986,8 @@ definition folder {
     [:folder 104 :parent :folder 105] [:folder 105 :parent :folder 104]
     [:user 300 :deleter :folder 100] [:user 300 :reader :folder 101]
     [:user 300 :eligible :folder 102] [:user 300 :eligible :folder 104]
-    [:user 300 :eligible :folder 105]})
+    [:user 300 :eligible :folder 105] [:user 300 :blocked :folder 102]
+    [:user 300 :viewer :folder 101] [:user 300 :viewer :folder 104]})
 
 (defn- delegation-control-lookup
   [permission]
@@ -1987,12 +1998,18 @@ definition folder {
                       {:subject {:type :user :id 300} :permission permission
                        :resource/type :folder :first 10})))))
 
+(defn- delegation-control-set
+  "The lookup's resources as a set; a typed error unchanged."
+  [permission]
+  (let [ids (delegation-control-lookup permission)]
+    (if (vector? ids) (set ids) ids)))
+
 (defn operator-delegation-admits-operator-cycle-killed?
   []
   (let [original operator-plan/delegated-permissions
-        expected [101 102]]
+        expected #{101 102}]
     (and
-     (= expected (delegation-control-lookup :inherited))
+     (= expected (delegation-control-set :inherited))
      ;; Delegating a plan whose operator lies on a cycle hands a recursive
      ;; operator to the acyclic evaluator.
      (not= expected
@@ -2007,7 +2024,7 @@ definition folder {
                                                              (:nodes dag))
                                                permission)))
                                      (:expressions plan))))]
-             (delegation-control-lookup :inherited))))))
+             (delegation-control-set :inherited))))))
 
 (defn operator-delegated-generator-wrong-operand-killed?
   []
@@ -2062,6 +2079,71 @@ definition folder {
                                               relation-eid resource-type)
                                     :complete? true))]
                (answer)))))))
+
+(defn operator-guard-ignored-killed?
+  []
+  (let [check #(operator-typed-or
+                (fn []
+                  (engine/can? (operator-probe-adapter delegation-control-schema
+                                                       delegation-control-relationships)
+                               {:type :user :id 300} :inherited {:type :folder :id 103})))]
+    (and
+     (false? (check))
+     ;; 300 holds `inherited` on 103's parent but is not eligible at 103.
+     ;; Without the guard, the check follows the parent anyway. (A lookup
+     ;; would not show it: its generator, `reader + eligible`, never offers
+     ;; 103.)
+     (not (false? (with-redefs [route/guards-outcome
+                                (fn [_ _ _ _ _] :eacl.engine.stable-route/kept)]
+                    (check)))))))
+
+(defn operator-subtracted-guard-flipped-killed?
+  []
+  (let [original route/guards-outcome
+        expected #{101}]
+    (and
+     (= expected (delegation-control-set :pruned))
+     ;; Read as a positive guard, `blocked` admits 102 instead of removing it.
+     (not= expected
+           (with-redefs [route/guards-outcome
+                         (fn [search notes level guards eid]
+                           (original search notes level
+                                     (mapv #(update % :sign {:negative :positive
+                                                             :positive :negative})
+                                           guards)
+                                     eid))]
+             (delegation-control-set :pruned))))))
+
+(defn operator-nonlinear-recursion-guarded-killed?
+  []
+  (let [routed (fn []
+                 (let [stats (atom {})
+                       ids (binding [operator-recursive/*recursive-stats* stats]
+                             (delegation-control-set :shared))]
+                   [ids (pos? (:questions @stats 0))]))
+        expected [#{101 102 103} true]]
+    (and
+     (= expected (routed))
+     ;; Taking the first of two recursive operands as the only one lets the
+     ;; other become a guard, so a non-linear component leaves the tabled
+     ;; evaluator it needs.
+     (not= expected
+           (with-redefs [operator-plan/recursive-operand
+                         (fn [depends? children] (first (filter depends? children)))]
+             (routed))))))
+
+(defn membership-truncated-holdings-beyond-bound-killed?
+  []
+  (let [expected #{100 102 104 105}]
+    (with-redefs [route/holdings-limit 1]
+      (and
+       (= expected (delegation-control-set :seen_top))
+       ;; 300 views 101 and 104. A scan truncated at 101 does not decide 104;
+       ;; reading it as absent loses `seen` there and at its cycle partner.
+       (not= expected
+             (with-redefs [route/held-edge
+                           (fn [held _ _ _ _ eid _] (get (:edges held) eid))]
+               (delegation-control-set :seen_top)))))))
 
 (defn operator-delegation-withheld-killed?
   []
@@ -2271,6 +2353,12 @@ definition doc {
    operator-generator-drops-union-term-killed?
    :operator-holdings-truncated-as-complete
    operator-holdings-truncated-as-complete-killed?
+   :operator-guard-ignored operator-guard-ignored-killed?
+   :operator-subtracted-guard-flipped operator-subtracted-guard-flipped-killed?
+   :operator-nonlinear-recursion-guarded
+   operator-nonlinear-recursion-guarded-killed?
+   :membership-truncated-holdings-beyond-bound
+   membership-truncated-holdings-beyond-bound-killed?
    :membership-level-below-latest-skip membership-level-below-latest-skip-killed?
    :membership-first-level-certificate membership-first-level-certificate-killed?
    :membership-conditional-answered-false

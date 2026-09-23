@@ -1444,7 +1444,7 @@
   entirely inside union-only permissions, otherwise the tabled evaluator."
   [{:keys [plan delegate checkpoint] :as options}]
   (if-let [delegated (when (and delegate (nil? checkpoint))
-                       (operator-plan/delegated-permissions plan))]
+                       (operator-plan/delegation plan))]
     (evaluate-delegated options delegated)
     (evaluate-many-validated options)))
 

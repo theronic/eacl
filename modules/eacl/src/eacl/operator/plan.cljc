@@ -40,7 +40,7 @@
     :witness-programs :predicate-programs :specializations
     :capability-identity :compatibility-formats :versions :order-contract
     :fingerprint :expression-roots :certificate-acyclic?
-    :delegated-permissions})
+    :delegated-permissions :guarded-delegation})
 
 (defn- compile-error! [reason message data]
   (throw
@@ -78,6 +78,49 @@
 (defn- operator-free-dag? [dag]
   (not-any? #(contains? #{:intersection :exclusion} (first %)) (:nodes dag)))
 
+(defn- closure-analysis
+  "The operator-reaching permissions of a plan's closure, its recursive
+  components that contain them, and the permissions that reach no operator.
+  Everything that reaches an operator permission carries its operators."
+  [plan]
+  (let [certificate (:dependency-certificate plan)
+        edges (:edges certificate)
+        operator-permissions
+        (into #{}
+              (keep (fn [{:keys [permission dag]}]
+                      (when-not (operator-free-dag? dag) permission)))
+              (:expressions plan))
+        consumers (reduce (fn [index {:keys [from to]}]
+                            (update index to (fnil conj []) from))
+                          {} edges)
+        operator-reaching
+        (loop [pending (vec operator-permissions)
+               reached operator-permissions]
+          (if-let [permission (peek pending)]
+            (let [fresh (remove reached (get consumers permission))]
+              (recur (into (pop pending) fresh) (into reached fresh)))
+            reached))
+        self-loops (into #{}
+                         (keep (fn [{:keys [from to]}] (when (= from to) from)))
+                         edges)]
+    {:operator-reaching operator-reaching
+     :recursive-operator-components
+     (filterv (fn [component]
+                (and (some operator-reaching component)
+                     (or (> (count component) 1)
+                         (contains? self-loops (first component)))))
+              (:components certificate))
+     :union-only (into (sorted-set)
+                       (remove operator-reaching)
+                       (:vertices certificate))}))
+
+(defn ^:no-doc union-only-permissions
+  "The permissions of an operator plan's closure that reach no intersection
+  or exclusion permission. Each one's denotation is exactly the union
+  engine's."
+  [plan]
+  (:union-only (closure-analysis plan)))
+
 (defn ^:no-doc delegated-permissions
   "The union-only permissions of an operator plan's closure, or nil when some
   intersection or exclusion permission lies on a positive dependency cycle.
@@ -94,38 +137,175 @@
   [plan]
   (if (contains? plan :delegated-permissions)
     (:delegated-permissions plan)
-    (let [certificate (:dependency-certificate plan)
-          edges (:edges certificate)
-          operator-permissions
-          (into #{}
-                (keep (fn [{:keys [permission dag]}]
-                        (when-not (operator-free-dag? dag) permission)))
-                (:expressions plan))
-          consumers (reduce (fn [index {:keys [from to]}]
-                              (update index to (fnil conj []) from))
-                            {} edges)
-          ;; Everything that reaches an operator permission carries its
-          ;; operators; walk the reversed dependency edges from each one.
-          operator-reaching
-          (loop [pending (vec operator-permissions)
-                 reached operator-permissions]
-            (if-let [permission (peek pending)]
-              (let [fresh (remove reached (get consumers permission))]
-                (recur (into (pop pending) fresh) (into reached fresh)))
-              reached))
-          self-loops (into #{}
-                           (keep (fn [{:keys [from to]}] (when (= from to) from)))
-                           edges)
-          recursive-operator?
-          (some (fn [component]
-                  (and (some operator-reaching component)
-                       (or (> (count component) 1)
-                           (contains? self-loops (first component)))))
-                (:components certificate))]
-      (when-not recursive-operator?
-        (into (sorted-set)
-              (remove operator-reaching)
-              (:vertices certificate))))))
+    (let [{:keys [recursive-operator-components union-only]}
+          (closure-analysis plan)]
+      (when (empty? recursive-operator-components)
+        union-only))))
+
+(def ^:private leaf-instructions
+  #{:direct-membership :permission-membership :arrow-membership})
+
+(defn- leaf-rules
+  "The search rules of one leaf of `member`'s expression at resource type
+  `resource-type`: relation grants, and permission targets that are
+  component members (`internal?`) or decided by the oracle (`decidable?`).
+  Nil when a target is neither."
+  [predicate member resource-type internal? decidable?]
+  (let [common {:node member :resource-type resource-type}
+        target (fn [rule kind target-node]
+                 (cond
+                   (internal? target-node) (assoc rule :rule kind :target-node target-node)
+                   (decidable? target-node)
+                   (assoc rule
+                          :rule (if (= :self-permission kind) :oracle :arrow-oracle)
+                          :target-node target-node)))
+        rules
+        (case (:instruction predicate)
+          :direct-membership
+          (mapv (fn [{:keys [subject-type relation-id]}]
+                  (assoc common :rule :relation :relation-eid relation-id
+                         :subject-type subject-type))
+                (get-in predicate [:descriptor :partitions]))
+
+          :permission-membership
+          [(target common :self-permission (:target-node predicate))]
+
+          :arrow-membership
+          (vec
+           (mapcat
+            (fn [{:keys [intermediate-type via-relation-eid target-kind
+                         target-node target-relation]}]
+              (let [arrow (assoc common :via-relation-eid via-relation-eid
+                                 :intermediate-type intermediate-type)]
+                (if (= :permission target-kind)
+                  [(target arrow :arrow-permission target-node)]
+                  (mapv (fn [{:keys [subject-type relation-id]}]
+                          (assoc arrow :rule :arrow-relation
+                                 :target-relation-eid relation-id
+                                 :target-subject-type subject-type))
+                        (:partitions target-relation)))))
+            (get-in predicate [:descriptor :partitions]))))]
+    (when (every? some? rules) rules)))
+
+(defn ^:no-doc recursive-operand
+  "The one operand of an intersection that depends on its component, or nil
+  when none or several do. Linearity is decided here alone."
+  [depends? children]
+  (let [[recursive & more] (filter depends? children)]
+    (when (and recursive (empty? more))
+      recursive)))
+
+(defn- member-rules
+  "The rules of `member`'s expression for the guarded membership search, or
+  nil when the expression is not linearly guarded.
+
+  A union contributes every child. An intersection must have exactly one
+  child that depends on the component; every other child must be a leaf
+  outside it, and becomes a guard on the rules of the recursive child. An
+  exclusion's left operand must depend on the component and its right
+  operand must be a leaf outside it, which becomes a subtracted guard. Each
+  guard is the vector of rules of its leaf, one of which must hold."
+  [plan component decidable? member]
+  (let [programs (get-in plan [:predicate-programs member])
+        resource-type (first member)
+        internal? (set component)
+        depends? (memoize
+                  (fn depends? [node-id]
+                    (let [{:keys [instruction] :as predicate} (get programs node-id)]
+                      (case instruction
+                        :direct-membership false
+                        :permission-membership (internal? (:target-node predicate))
+                        :arrow-membership (boolean
+                                           (some #(internal? (:target-node %))
+                                                 (get-in predicate [:descriptor :partitions])))
+                        (:any-true :all-true) (boolean (some depends? (:children predicate)))
+                        :left-and-not-right (or (depends? (:left predicate))
+                                                (depends? (:right predicate)))))))
+        guard (fn [sign node-id]
+                (let [predicate (get programs node-id)]
+                  (when (contains? leaf-instructions (:instruction predicate))
+                    (when-let [alternatives (leaf-rules predicate member resource-type
+                                                        (constantly false) decidable?)]
+                      {:sign sign :key [member node-id] :alternatives alternatives}))))
+        walk (fn walk [node-id guards]
+               (let [{:keys [instruction] :as predicate} (get programs node-id)]
+                 (case instruction
+                   :any-true
+                   (reduce (fn [rules child]
+                             (if-let [child-rules (walk child guards)]
+                               (into rules child-rules)
+                               (reduced nil)))
+                           [] (:children predicate))
+
+                   :all-true
+                   (let [recursive (recursive-operand depends? (:children predicate))
+                         added (mapv #(guard :positive %)
+                                     (remove #{recursive} (:children predicate)))]
+                     (when (and recursive (every? some? added))
+                       (walk recursive (into guards added))))
+
+                   :left-and-not-right
+                   (let [subtracted (when-not (depends? (:right predicate))
+                                      (guard :negative (:right predicate)))]
+                     (when (and (depends? (:left predicate)) subtracted)
+                       (walk (:left predicate) (conj guards subtracted))))
+
+                   (when-let [rules (leaf-rules predicate member resource-type
+                                                internal? decidable?)]
+                     (mapv #(cond-> % (seq guards) (assoc :guards guards)) rules)))))]
+    (walk (get (expression-roots plan) member) [])))
+
+(defn ^:no-doc guarded-delegation
+  "The guarded delegation of a plan that recurses through an operator, or
+  nil. Derived outside the plan fingerprint from sealed fields alone.
+
+  It exists when every recursive component that carries an operator is
+  linearly guarded (`member-rules`) and every permission such a component
+  references outside itself is union-only or a member of another such
+  component. Then each member is decided by a guarded membership search over
+  its rules, and each union-only permission by the union engine. Returns
+  `{:members members :union-only permissions :rules {member rules}}`."
+  [plan]
+  (if (contains? plan :guarded-delegation)
+    (:guarded-delegation plan)
+    (let [{:keys [recursive-operator-components union-only]} (closure-analysis plan)
+          members (into (sorted-set) (mapcat identity) recursive-operator-components)
+          decidable? #(or (contains? union-only %) (contains? members %))]
+      (when (seq recursive-operator-components)
+        (let [rules (reduce
+                     (fn [result component]
+                       (reduce (fn [result member]
+                                 (if-let [rules (member-rules plan component decidable? member)]
+                                   (assoc result member rules)
+                                   (reduced nil)))
+                               result component))
+                     {} recursive-operator-components)]
+          (when (and rules (= (count rules) (count members)))
+            {:members members
+             :union-only union-only
+             :rules (into (sorted-map) rules)}))))))
+
+(defn ^:no-doc delegation
+  "The permissions an evaluator of `plan` hands to oracles, or nil: every
+  union-only permission when no operator permission lies on a cycle
+  (`delegated-permissions`); otherwise, when the plan is guarded
+  (`guarded-delegation`), its union-only permissions and guarded members."
+  [plan]
+  (or (delegated-permissions plan)
+      (when-let [{:keys [members union-only]} (guarded-delegation plan)]
+        (into union-only members))))
+
+(defn ^:no-doc guarded-program
+  "The guarded membership search's program for `member`: the rules of the
+  members of its component, rooted at `member`. Other permissions its rules
+  name are decided by the oracle."
+  [plan member]
+  (let [{:keys [rules]} (guarded-delegation plan)
+        certificate (:dependency-certificate plan)
+        component (get-in certificate [:components (get-in certificate [:component-of member])])]
+    {:root member
+     :fingerprint [::guarded-program (:fingerprint plan) member]
+     :indexes {:reverse-rules (select-keys rules component)}}))
 
 (defn ^:no-doc delegated-generator
   "The delegated union-only permission whose own sealed union plan generates
@@ -621,7 +801,7 @@
   ;; These projections are recomputed from authenticated fields; fresh-compile
   ;; validation also checks them. The complete remaining plan is authenticated.
   (dissoc plan :fingerprint :expression-roots :certificate-acyclic?
-          :delegated-permissions))
+          :delegated-permissions :guarded-delegation))
 
 (defn- compile-operator-plan [adapter root collected]
   (when-not (expression-closure-has-operator? collected)
@@ -729,7 +909,8 @@
     (assoc plan
            :expression-roots (expression-roots plan)
            :certificate-acyclic? (certificate-acyclic? plan)
-           :delegated-permissions (delegated-permissions plan))))
+           :delegated-permissions (delegated-permissions plan)
+           :guarded-delegation (guarded-delegation plan))))
 
 (defn seal-plan
   "Returns the existing union-only sealed plan unchanged, or compiles an

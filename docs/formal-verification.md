@@ -159,7 +159,18 @@ the level sequence finds the widest decisive witness, and that the
 certificate ending at that witness's first expiry is the exact end of the
 grant.
 
-Three campaigns connect the production code to these models and to the
+`GuardedMembership.dfy` covers recursion through linearly guarded operators.
+It proves three things:
+
+- flattening a member's expression into guarded rules preserves its
+  denotation;
+- reachability in the guarded graph equals the component's least fixed
+  point, defined independently as membership in every pre-fixed point;
+- a guarded rule lasts at a level exactly when all its evidence does.
+
+The first two models therefore apply to the guarded graph unchanged.
+
+Four campaigns connect the production code to these models and to the
 set-algebra semantics:
 
 - `eacl.engine.memoized-membership-refinement-test` runs the production
@@ -170,9 +181,14 @@ set-algebra semantics:
   expiring and caveated relationships. It compares per-level memos and
   retained skip bounds, and checks every certificate against an independent
   widest-witness fixed point.
+- `eacl.engine.guarded-membership-refinement-test` runs the guarded search
+  beside a transcription over random guarded programs with qualified
+  relationships. It compares decisions, memos, skips and deferrals, checks
+  certificates against an independent widest witness, and checks every
+  permissionship against the tabled evaluator.
 - `eacl.operator.delegation-refinement-test` covers random operator schemas.
-  It checks the delegation analysis against an independent oracle. It
-  evaluates each flattened generator's rows with its own semantics and
+  It checks the delegation and guarded analyses against independent oracles.
+  It evaluates each flattened generator's rows with its own semantics and
   requires them to cover the root. It checks every lookup, count, check and
   reverse lookup against a stratified least fixed point, and against the
   tabled evaluator.

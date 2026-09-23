@@ -334,3 +334,72 @@
     (is (= [:folder :granted] (generator :cleared_readable))
         "through an operator permission to its own left operand")
     (is (nil? (generator :either)) "a union anchor fans in")))
+
+(def ^:private guarded-schema
+  "definition user {}
+   definition folder {
+     relation parent: folder
+     relation reader: user
+     relation deleter: user
+     relation eligible: user
+     relation blocked: user
+     permission readable = reader + parent->readable
+     permission granted = deleter + parent->granted
+     permission removable = granted & readable
+     permission inherited = reader + (parent->inherited & eligible)
+     permission pruned = reader + (parent->pruned - blocked)
+     permission arrowguard = reader + (parent->arrowguard & parent->readable)
+     permission outer = deleter + (parent->outer & inherited)
+     permission top = inherited & readable
+     permission opguard = reader + (parent->opguard & removable)
+     permission shared = reader + (parent->shared & gate)
+     permission gate = eligible + parent->shared
+   }")
+
+(defn- rule-shape
+  "A guarded rule without relation ids: its kind, its target permission, and
+  each guard's sign with its alternatives' kinds and targets."
+  [rule]
+  [(:rule rule) (:target-node rule)
+   (mapv (fn [{:keys [sign alternatives]}]
+           [sign (mapv (juxt :rule :target-node) alternatives)])
+         (:guards rule))])
+
+(deftest linearly-guarded-recursion-is-classified-test
+  (let [adapter (adapter guarded-schema :guarded)
+        seal #(plan/seal-plan adapter [:folder %])
+        guarded #(plan/guarded-delegation (seal %))
+        shapes #(update-vals (:rules (guarded %)) (partial mapv rule-shape))]
+    (testing "an intersection guard becomes a condition on the recursive edge"
+      (is (= #{[:folder :inherited]} (:members (guarded :inherited))))
+      (is (= {[:folder :inherited]
+              [[:relation nil []]
+               [:arrow-permission [:folder :inherited] [[:positive [[:relation nil]]]]]]}
+             (shapes :inherited))))
+    (testing "an exclusion's right operand becomes a subtracted guard"
+      (is (= {[:folder :pruned]
+              [[:relation nil []]
+               [:arrow-permission [:folder :pruned] [[:negative [[:relation nil]]]]]]}
+             (shapes :pruned))))
+    (testing "a guard may reach a union-only permission through an arrow"
+      (is (= [:positive [[:arrow-oracle [:folder :readable]]]]
+             (get-in (shapes :arrowguard) [[:folder :arrowguard] 1 2 0]))))
+    (testing "a lower guarded component is a guard of a higher one"
+      (is (= #{[:folder :inherited] [:folder :outer]} (:members (guarded :outer))))
+      (is (= [:positive [[:oracle [:folder :inherited]]]]
+             (get-in (shapes :outer) [[:folder :outer] 1 2 0]))))
+    (testing "an operator above a guarded component delegates to it"
+      (is (= #{[:folder :inherited]} (:members (guarded :top))))
+      (is (= #{[:folder :inherited] [:folder :readable]}
+             (plan/delegation (seal :top)))))
+    (testing "other shapes are not guarded"
+      (is (nil? (guarded :opguard)) "a guard that is an operator permission")
+      (is (nil? (guarded :shared)) "an intersection with two recursive children")
+      (is (nil? (guarded :removable)) "no operator on a cycle")
+      (is (some? (plan/delegated-permissions (seal :removable)))))
+    (testing "the sealed derived field matches a recomputation and stays
+              outside the fingerprint"
+      (let [sealed (seal :outer)]
+        (is (= (:guarded-delegation sealed)
+               (plan/guarded-delegation (dissoc sealed :guarded-delegation))))
+        (is (= sealed (plan/validate-plan adapter sealed)))))))

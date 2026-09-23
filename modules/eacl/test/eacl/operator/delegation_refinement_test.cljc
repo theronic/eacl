@@ -11,6 +11,8 @@
   - `delegated-permissions` equal to an oracle computed from the generated
     expressions alone: nil when a permission that reaches an operator lies on
     a cycle, else the root closure's permissions that reach no operator;
+  - otherwise the guarded members of `guarded-delegation` equal to an oracle
+    of linear guardedness computed from the same expressions;
   - the delegated generator, when the root's anchor chain ends at one of those
     permissions, to be that permission and to cover the root on the data;
   - otherwise (a union at the root or as an anchor, say) the flattened
@@ -235,6 +237,57 @@
     (when-not (some #(contains? (reach dependencies %) %) operator-reaching)
       (into (sorted-set) (remove operator-reaching) closure))))
 
+(defn- oracle-guarded
+  "The members of the root closure's cyclic components that reach an
+  operator, when each is linearly guarded: every intersection in a member's
+  expression has exactly one operand that names the component, and an
+  exclusion's left operand does; every other operand is a single term naming
+  no member of the component; every permission named outside the component
+  is union-only or such a member. Nil otherwise."
+  [bodies root]
+  (let [dependencies (into {} (for [[permission body] bodies]
+                                [permission (references (first permission) body)]))
+        closure (conj (reach dependencies root) root)
+        operators (set (filter #(operator-expression? (get bodies %)) closure))
+        operator-reaching (set (filter #(or (contains? operators %)
+                                            (some operators (reach dependencies %)))
+                                       closure))
+        members (set (filter #(contains? (reach dependencies %) %) operator-reaching))
+        union-only (set (remove operator-reaching closure))
+        component (fn [member]
+                    (conj (set (filter #(contains? (reach dependencies %) member)
+                                       (reach dependencies member)))
+                          member))
+        linear? (fn [member]
+                  (let [resource-type (first member)
+                        inside (component member)
+                        names (fn [expression] (references resource-type expression))
+                        depends? #(some inside (names %))
+                        named-ok? (fn [expression]
+                                    (every? #(or (inside %) (union-only %) (members %))
+                                            (names expression)))
+                        guard? (fn [expression]
+                                 (and (not (contains? #{:union :intersection :exclusion}
+                                                      (first expression)))
+                                      (not (depends? expression))
+                                      (named-ok? expression)))
+                        walk (fn walk [expression]
+                               (case (first expression)
+                                 :union (every? walk (rest expression))
+                                 :intersection
+                                 (let [operands (rest expression)
+                                       recursive (filter depends? operands)]
+                                   (and (= 1 (count recursive))
+                                        (every? guard? (remove #{(first recursive)} operands))
+                                        (walk (first recursive))))
+                                 :exclusion
+                                 (let [[_ left right] expression]
+                                   (and (depends? left) (guard? right) (walk left)))
+                                 (named-ok? expression)))]
+                    (walk (get bodies member))))]
+    (when (and (seq members) (every? linear? members))
+      members)))
+
 (defn- denotation
   "Stratified least fixed point of every permission: {permission {eid
   #{subject}}}. Strongly connected permissions iterate together once the
@@ -440,8 +493,15 @@
         delegating? (and recursive? (some? delegated))
         generator (when delegating?
                     (operator-plan/delegated-generator plan root delegated))
-        flattened (when (and delegating? (nil? generator))
-                    (flattened-generator plan root delegated))
+        guarded (when (and recursive? (nil? delegated))
+                  (operator-plan/guarded-delegation plan))
+        expected-guarded (when (and recursive? (nil? expected-delegated))
+                           (oracle-guarded bodies root))
+        flattened (cond
+                    (and delegating? (nil? generator))
+                    (flattened-generator plan root delegated)
+                    guarded
+                    (flattened-generator plan root (:union-only guarded)))
         fail (fn [what detail]
                (assoc counters :failure
                       (merge {:seed seed :what what :root root :schema schema
@@ -449,8 +509,10 @@
                              detail)))
         expected (expected-answers values (second root) data)
         delegated-answers (outcome #(answers adapter (second root) data))
-        tabled-answers (when delegating?
+        tabled-answers (when (or delegating? guarded)
                          (outcome #(with-redefs [operator-plan/delegated-permissions
+                                                 (constantly nil)
+                                                 operator-plan/guarded-delegation
                                                  (constantly nil)]
                                      (answers adapter (second root) data))))
         covers? (fn [values generator]
@@ -463,6 +525,9 @@
 
       (not= expected-delegated delegated)
       (fail :delegated-permissions {:expected expected-delegated :actual delegated})
+
+      (not= expected-guarded (:members guarded))
+      (fail :guarded-members {:expected expected-guarded :actual (:members guarded)})
 
       ;; A root whose anchor chain ends at no delegated permission (a union
       ;; at the root, say) is generated by the flattened generator.
@@ -487,7 +552,7 @@
       ;; route's order. Other walks may order their results differently: the
       ;; generator changed, and recursive operator cursors authenticate its
       ;; fingerprint.
-      (and delegating?
+      (and (or delegating? guarded)
            (not= (comparable-across-routes delegated-answers (some? generator))
                  (comparable-across-routes tabled-answers (some? generator))))
       (fail :tabled-evaluator-disagrees {:delegated delegated-answers
@@ -497,6 +562,7 @@
       (-> counters
           (update :roots inc)
           (update (cond delegating? :delegated-roots
+                        guarded :guarded-roots
                         recursive? :tabled-roots
                         :else :acyclic-roots)
                   (fnil inc 0))
@@ -511,8 +577,8 @@
         schema (render-schema folder-permissions)
         data (random-tuples state)
         adapter (outcome #(tuple-adapter/from-schema schema (:tuples data)))
-        counters {:roots 0 :delegated-roots 0 :tabled-roots 0 :acyclic-roots 0
-                  :members 0}]
+        counters {:roots 0 :delegated-roots 0 :guarded-roots 0 :tabled-roots 0
+                  :acyclic-roots 0 :members 0}]
     (if (:thrown adapter)
       (assoc counters :rejected-schemas 1)
       (let [bodies (permission-bodies folder-permissions)

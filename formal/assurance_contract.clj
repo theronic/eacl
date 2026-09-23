@@ -102,6 +102,10 @@
    {:source "formal/dafny/LeveledMembership.dfy"
     :claim :conditional-widest-decisive-witness-with-exact-deadline
     :minimum-proof-efforts 35}
+   :guarded-union-membership
+   {:source "formal/dafny/GuardedMembership.dfy"
+    :claim :linearly-guarded-reachability-is-the-stratified-least-fixed-point
+    :minimum-proof-efforts 21}
    :ordered-merge
    {:source "formal/dafny/OrderedMerge.dfy"
     :minimum-proof-efforts 82}
@@ -671,25 +675,32 @@
     ;; decided level by level (LeveledMembership.dfy): the widest decisive
     ;; witness, with its exact deadline; conditional and faulty evidence stay
     ;; with the membership-probe check, and a conditional operator result is
-    ;; recomputed with point operands. Candidates come from the delegated
-    ;; operand's own plan or else from the flattened generator, one synthetic
-    ;; union node per operator permission. A batched evaluation decides a
-    ;; relation leaf from the subject's holdings, read once per request, with
-    ;; the edge a probe returns. Executable refinement:
+    ;; recomputed with point operands. A plan that recurses through linearly
+    ;; guarded operators flattens each member into guarded rules decided by
+    ;; the same search (GuardedMembership.dfy); a subtracted guard that is not
+    ;; plainly absent or present defers to the tabled evaluator. Candidates
+    ;; come from the delegated operand's own plan or else from the flattened
+    ;; generator, one synthetic union node per operator permission. A batched
+    ;; evaluation decides a relation leaf from the subject's holdings, read
+    ;; once per request, with the edge a probe returns. Executable refinement:
     ;; eacl.engine.memoized-membership-refinement-test and
     ;; eacl.engine.leveled-membership-refinement-test run the production
     ;; search beside transcriptions over random programs, the latter with
     ;; expiring and caveated relationships and an independent widest-witness
-    ;; fixed point; eacl.operator.delegation-refinement-test checks the
+    ;; fixed point; eacl.engine.guarded-membership-refinement-test does so for
+    ;; random guarded programs, checking every answer against the tabled
+    ;; evaluator too; eacl.operator.delegation-refinement-test checks the
     ;; delegation analysis against an oracle, each flattened generator's rows
     ;; for covering their root, and every engine answer against a stratified
     ;; least fixed point and the tabled evaluator, over random operator
-    ;; schemas. The membership-*, operator-delegat*, operator-generator-* and
-    ;; operator-holdings-* mutation controls are killed by them on both
+    ;; schemas. The membership-*, operator-delegat*, operator-generator-*,
+    ;; operator-holdings-*, operator-guard-*, operator-subtracted-guard-* and
+    ;; operator-nonlinear-* mutation controls are killed by them on both
     ;; runtimes.
     :entry-points
     ["eacl.operator.plan/delegated-permissions"
      "eacl.operator.plan/delegated-generator"
+     "eacl.operator.plan/guarded-delegation"
      "eacl.operator.cover-plan/seal-generator"
      "eacl.operator.recursive/evaluate-cached-many"
      "eacl.operator.vector-evaluator/check-many-trusted"
@@ -703,9 +714,13 @@
      :no-witness-between-a-skipped-bound-and-its-level
      :found-level-is-the-widest-decisive-witness
      :certificate-is-the-exact-end-of-the-grant
-     :exhausted-without-skips-holds-at-no-level]
+     :exhausted-without-skips-holds-at-no-level
+     :flattening-preserves-the-denotation
+     :guarded-reachability-is-the-least-fixed-point
+     :guarded-rule-lasts-when-all-its-evidence-lasts]
     :dafny ["formal/dafny/MemoizedMembership.dfy"
             "formal/dafny/LeveledMembership.dfy"
+            "formal/dafny/GuardedMembership.dfy"
             "formal/stable-discovery/MembershipProbeCheck.dfy"]
     :adapter-obligations
     [:immutable-snapshot
