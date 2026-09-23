@@ -47,7 +47,7 @@
 ;; Deterministic cases
 ;; ---------------------------------------------------------------------------
 
-(defn- random-qualifier
+(defn ^:no-doc random-qualifier
   "Nil (plain), an already expired deadline, or one of three later ones;
   a reader may instead be caveated."
   [state reader? caveat]
@@ -117,7 +117,7 @@
 ;; The search's graph, from the rules and the written relationships alone
 ;; ---------------------------------------------------------------------------
 
-(defn- class-of
+(defn ^:no-doc class-of
   "A written relationship's evidence at `now`: :absent, :conditional, or
   [:decisive deadline]."
   [qualifiers key]
@@ -129,12 +129,12 @@
         caveat :conditional
         :else [:decisive valid-until-ms]))))
 
-(defn- lasts? [deadline level]
+(defn ^:no-doc lasts? [deadline level]
   (or (nil? deadline) (and (not= :plain level) (<= level deadline))))
 
-(defn- later [a b] (cond (nil? a) b (nil? b) a :else (max a b)))
+(defn ^:no-doc later [a b] (cond (nil? a) b (nil? b) a :else (max a b)))
 
-(defn- joined [via held]
+(defn ^:no-doc joined [via held]
   (cond
     (or (= :absent via) (= :absent held)) :absent
     (or (= :conditional via) (= :conditional held)) :conditional
@@ -188,7 +188,7 @@
 ;; Transcription of the leveled search
 ;; ---------------------------------------------------------------------------
 
-(defn- note [{:keys [skipped conditional?] :as notes} level class]
+(defn ^:no-doc note [{:keys [skipped conditional?] :as notes} level class]
   (cond
     (= :absent class) [notes :absent]
     (= :conditional class) [(assoc notes :conditional? true) :absent]
@@ -288,10 +288,10 @@
 ;; Independent semantics: the widest decisive witness, by a fixed point
 ;; ---------------------------------------------------------------------------
 
-(defn- wider [a b]
+(defn ^:no-doc wider [a b]
   (cond (nil? a) b (nil? b) a (= :forever a) a (= :forever b) b :else (max a b)))
 
-(defn- narrower [a b]
+(defn ^:no-doc narrower [a b]
   (cond (or (nil? a) (nil? b)) nil (= :forever a) b (= :forever b) a :else (min a b)))
 
 (defn- widest-witness
@@ -333,16 +333,16 @@
 ;; One case
 ;; ---------------------------------------------------------------------------
 
-(defn- production-state [context plan subject]
+(defn ^:no-doc production-state [context plan subject]
   (let [entry (get @context [:subject (:fingerprint plan) :user subject])]
     {:memos (into {} (for [[level memo] (some-> entry :memos deref)] [level @memo]))
      :skips (some-> entry :skips deref)}))
 
-(defn- normalized-memos [memos]
+(defn ^:no-doc normalized-memos [memos]
   (into {} (for [[level memo] memos :when (seq memo)]
              [(if (keyword? level) :plain level) memo])))
 
-(defn- normalized-skips [skips]
+(defn ^:no-doc normalized-skips [skips]
   (into {} (for [[level entries] skips :when (seq entries)]
              [(if (keyword? level) :plain level) entries])))
 

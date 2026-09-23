@@ -1,9 +1,11 @@
 (ns eacl.operator.delegated-recursion-test
   "Routing of recursive operator plans whose recursion lies inside union-only
-  operands: the operands are decided by the union engine, and candidates come
-  from the delegated operand's own sealed plan or else from the flattened
-  generator. Cursors minted under any other generator are rejected. Plans that
-  recurse through an operator keep the tabled recursive evaluator."
+  operands, or passes through linearly guarded operators: operands are
+  decided by the union engine and guarded members by the guarded search, and
+  candidates come from the delegated operand's own sealed plan or else from
+  the flattened generator. Cursors minted under any other generator are
+  rejected. Plans that recurse through a non-linear operator keep the tabled
+  recursive evaluator."
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is testing]]
             [datascript.core :as ds]
             [eacl.authorization.evidence :as evidence]
@@ -201,16 +203,60 @@
                                 :resource/type :folder})))))
     (is (empty? @recursive-stats))))
 
-(deftest recursion-through-an-operator-keeps-the-tabled-evaluator-test
+(deftest guarded-recursion-uses-the-guarded-search-test
   (let [{:keys [adapter client]} (fixture)
         alice (eacl/spice-object :user "alice")
-        recursive-stats (atom {})]
+        recursive-stats (atom {})
+        membership-stats (atom {})
+        folders (mapv #(eacl/spice-object :folder %) ["f0" "f1" "f2" "f3"])]
     (is (nil? (plan/delegated-permissions (plan/seal-plan adapter [:folder :inherited]))))
+    (is (= #{[:folder :inherited]}
+           (:members (plan/guarded-delegation (plan/seal-plan adapter [:folder :inherited])))))
+    (binding [recursive/*recursive-stats* recursive-stats
+              stable-route/*membership-stats* membership-stats]
+      (is (= #{"f1" "f2"}
+             (set (map :id (:data (eacl/lookup-resources
+                                   client {:subject alice :permission :inherited
+                                           :resource/type :folder :first 10}))))))
+      (is (= [false true true false]
+             (mapv #(eacl/can? client {:subject alice :permission :inherited :resource %})
+                   folders)))
+      (is (= 2 (:count (eacl/count-resources
+                        client {:subject alice :permission :inherited
+                                :resource/type :folder})))))
+    (testing "the guarded search decides it; the tabled evaluator is never entered"
+      (is (empty? @recursive-stats))
+      (is (pos? (:decided @membership-stats))))))
+
+(deftest non-linear-recursion-keeps-the-tabled-evaluator-test
+  ;; `shared`'s intersection has two children in its component, so it is not
+  ;; linearly guarded.
+  (let [conn (datascript/create-conn)
+        client (datascript/make-client conn {})
+        alice (eacl/spice-object :user "alice")
+        folders (mapv #(eacl/spice-object :folder %) ["f0" "f1" "f2"])
+        recursive-stats (atom {})]
+    (eacl/write-schema!
+     client
+     "definition user {}
+      definition folder {
+        relation parent: folder
+        relation reader: user
+        relation eligible: user
+        permission shared = reader + (parent->shared & gate)
+        permission gate = eligible + parent->shared
+      }")
+    (ds/transact! conn (mapv #(hash-map :eacl/id %) ["alice" "f0" "f1" "f2"]))
+    (eacl/create-relationships!
+     client
+     [(eacl/->Relationship (folders 0) :parent (folders 1))
+      (eacl/->Relationship (folders 1) :parent (folders 2))
+      (eacl/->Relationship alice :reader (folders 0))])
     (binding [recursive/*recursive-stats* recursive-stats]
-      (is (= ["f1" "f2"]
-             (mapv :id (:data (eacl/lookup-resources
-                               client {:subject alice :permission :inherited
-                                       :resource/type :folder :first 10}))))))
+      (is (= #{"f0" "f1" "f2"}
+             (set (map :id (:data (eacl/lookup-resources
+                                   client {:subject alice :permission :shared
+                                           :resource/type :folder :first 10})))))))
     (is (pos? (:questions @recursive-stats 0)))))
 
 (defn- meet
@@ -344,6 +390,120 @@
             (if (= 1 limit)
               (is (pos? probes) "incomplete holdings fall back to probes")
               (is (zero? probes) "the leaf reads alice's holdings once"))))))))
+
+(def ^:private guarded-schema
+  "caveat enabled(flag bool) { flag }
+   definition user {}
+   definition folder {
+     relation parent: folder
+     relation reader: user
+     relation eligible: user
+     relation blocked: user
+     permission inherited = reader + (parent->inherited & eligible)
+     permission pruned = reader + (parent->pruned - blocked)
+   }")
+
+(deftest guarded-members-carry-conditional-and-temporal-evidence-test
+  ;; f0 is the root of f0 -> f1 -> f2 -> f3, and alice reads f0. Her
+  ;; `eligible` guard is plain on f1, expires at 200 on f2 and is caveated
+  ;; on f3. Her `blocked` guard, which `pruned` subtracts, expires at 300 on
+  ;; f1 and is caveated on f2; either makes the guarded search defer to the
+  ;; exact evaluation. Every check and detailed lookup item must equal the
+  ;; tabled evaluator's.
+  (let [conn (datascript/create-conn)
+        now (atom 100)
+        client (datascript/make-client
+                conn {:clock #(deref now)
+                      :caveat-evaluator (qualification-fixtures/portable-evaluator (atom 0))})
+        alice (eacl/spice-object :user "alice")
+        folders (mapv #(eacl/spice-object :folder %) ["f0" "f1" "f2" "f3"])]
+    (eacl/write-schema! client guarded-schema)
+    (ds/transact! conn (mapv #(hash-map :eacl/id %) ["alice" "f0" "f1" "f2" "f3"]))
+    (eacl/create-relationships!
+     client
+     [(eacl/->Relationship (folders 0) :parent (folders 1))
+      (eacl/->Relationship (folders 1) :parent (folders 2))
+      (eacl/->Relationship (folders 2) :parent (folders 3))
+      (eacl/->Relationship alice :reader (folders 0))
+      (eacl/->Relationship alice :eligible (folders 1))])
+    (let [db (ds/db conn)
+          eid #(ds/entid db [:eacl/id %])
+          relation (fn [name]
+                     (ds/entid db [:eacl.relation/resource-type+relation-name+subject-type
+                                   [:folder name :user]]))
+          caveat (ds/entid db [:eacl.caveat/name "enabled"])
+          writer (qualifiers/writer conn)]
+      (ds/transact! conn (vec (for [name [:eligible :blocked]]
+                                {:db/id (relation name) :eacl.relation/caveats [caveat]
+                                 :eacl.relation/allows-unqualified? true})))
+      (staged/write! writer :create [:user (eid "alice") (relation :eligible) :folder (eid "f2")]
+                     {:valid-until-ms 200})
+      (staged/write! writer :create [:user (eid "alice") (relation :eligible) :folder (eid "f3")]
+                     {:caveat caveat})
+      (staged/write! writer :create [:user (eid "alice") (relation :blocked) :folder (eid "f1")]
+                     {:valid-until-ms 300})
+      (staged/write! writer :create [:user (eid "alice") (relation :blocked) :folder (eid "f2")]
+                     {:caveat caveat}))
+    (testing "the guarded search certifies the widest witness through its guards"
+      (let [db (ds/db conn)
+            eid #(ds/entid db [:eacl/id %])
+            adapter (datascript-backend/basis-adapter db {})
+            operator-plan (plan/seal-plan adapter [:folder :inherited])]
+        (is (= [true 200]
+               (mapv #(if (true? %) true (evidence/valid-until %))
+                     (stable-route/check-many-eids
+                      {:adapter adapter
+                       :plan (plan/guarded-program operator-plan [:folder :inherited])
+                       :subject-type :user :subject-eid (eid "alice")
+                       :resource-eids [(eid "f1") (eid "f2")]
+                       :qualification (evaluator-fixtures/qualified-request db 100 {})
+                       :context (stable-route/membership-context)}))))))
+    (testing "the fixture exercises conditional results and deferred resources"
+      (is (= :conditional-permission
+             (:permissionship (eacl/check-permission
+                               client {:subject alice :permission :inherited
+                                       :resource (folders 3) :caveat-context {}
+                                       :cache? false}))))
+      (let [stats (atom {})]
+        (binding [stable-route/*membership-stats* stats]
+          (eacl/lookup-resources client {:subject alice :permission :pruned
+                                         :resource/type :folder :first 10
+                                         :caveat-context {} :cache? false}))
+        (is (pos? (:fallbacks @stats 0))
+            "a subtracted guard that expires or is caveated defers")))
+    (doseq [time [100 250 350]
+            context [{} {"flag" true} {"flag" false}]
+            permission [:inherited :pruned]]
+      (reset! now time)
+      (testing (str permission " at " time ", context " context)
+        (let [answers
+              (fn []
+                {:checks (into {}
+                               (map (fn [folder]
+                                      [folder (select-keys
+                                               (eacl/check-permission
+                                                client {:subject alice :permission permission
+                                                        :resource folder :caveat-context context
+                                                        :cache? false})
+                                               [:permissionship :missing-fields :residual])]))
+                               folders)
+                 :items (into {}
+                              (map (fn [item]
+                                     [(:object item)
+                                      (select-keys item [:permissionship :missing-fields
+                                                         :residual])]))
+                              (:data (eacl/lookup-resources
+                                      client {:subject alice :permission permission
+                                              :resource/type :folder :first 10
+                                              :caveat-context context :result-policy :detailed
+                                              :cache? false})))})
+              guarded (answers)
+              tabled (with-redefs [plan/guarded-delegation (constantly nil)] (answers))]
+          (is (= tabled guarded))
+          (is (= (into {} (remove #(= :no-permission (:permissionship (val %))))
+                       (:checks guarded))
+                 (:items guarded))))))))
+
 
 (deftest conditional-results-carry-the-point-checks-residual-test
   ;; `granted` holds on f0 through a direct deleter grant until 200 and

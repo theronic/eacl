@@ -78,9 +78,24 @@ EACL generates `delete_top`'s candidates from `deleter` and from
 `delete_granted`'s own traversal. It decides `deleter` for a whole page from
 the subject's `deleter` grants, read once per request.
 
-A permission that recurses through the operator itself, such as
-`view = reader + (parent->view & eligible)`, needs stratified recursive
-evaluation, which costs more per result.
+A permission that recurses through the operator itself costs about what its
+union twin costs, as long as the recursion is linearly guarded:
+
+```zed
+permission inherited = reader + (parent->inherited & eligible)
+```
+
+Linearly guarded means each intersection in the recursion has one recursive
+operand, and its other operands are relations, arrows, or permissions outside
+the recursion. An exclusion's subtracted operand qualifies the same way.
+EACL follows `parent->inherited` only where `eligible` holds, so it decides
+`inherited` with the same memoized search as `reader + parent->inherited`.
+
+A subtracted operand that expires or is caveated could let access appear
+later, so EACL decides that resource exactly instead. Other recursion
+through an operator uses stratified recursive evaluation, which costs more
+per result. Examples are an intersection with two recursive operands, or an
+operand that is itself an intersection or exclusion.
 
 EACL supports one-hop arrows. A target permission can contain another arrow,
 but a directly chained expression such as `a->b->c` is not supported.

@@ -39,21 +39,22 @@
 
 ## 4. Guarded recursion through operators (PR 3)
 
-- [ ] 4.1 Classify linearly guarded components and their members (design D3), derived outside the plan fingerprint. Verify plan tests:
-  - `inherited` is guarded;
-  - an intersection with two recursive children is not;
-  - an exclusion with a recursive right operand is not;
-  - a guard that is itself an operator is not.
-- [ ] 4.2 Implement the guarded memoized search over member expression states:
+- [x] 4.1 Classify linearly guarded components and their members (design D3), derived outside the plan fingerprint. Verify plan tests:
+  - `inherited` is guarded, with its guard on the recursive edge;
+  - an exclusion's right operand becomes a subtracted guard;
+  - a guard may reach a union-only permission through an arrow, or be a member of a lower guarded component;
+  - an operator above a guarded component delegates to it;
+  - an intersection with two recursive children is not guarded, nor is a guard that is itself an operator permission. (Recursion through an exclusion's right operand is rejected by stratification.)
+- [x] 4.2 Implement the guarded memoized search over member rules:
   - guards are decided exactly from holdings, the oracle and intermediates;
   - positive evidence follows D1;
-  - a subtracted guard opens only when plainly false;
+  - a subtracted guard opens only when plainly absent;
   - anything uncertain falls back to the tabled point evaluation.
 
-  Verify unit tests on cyclic `inherited`-style fixtures with plain, expiring and caveated guards.
-- [ ] 4.3 Route guarded plans through a delegated view whose guarded members use batched and point guarded oracles, for lookups, counts, checks and reverse operations. Candidates come from the D2 generator. Verify the delegated-recursion and differential tests.
-- [ ] 4.4 Prove in Dafny that reachability in the guarded graph equals the stratified least fixed point of a linearly guarded component. Verify `dafny format` and `bin/formal verify`.
-- [ ] 4.5 Add a guarded refinement campaign: random guarded programs, with a transcription of the guarded search run beside production. Extend the delegation campaign with guarded roots, checked against the stratified semantics and the tabled route. Verify on the JVM and in ClojureScript.
-- [ ] 4.6 Register mutation controls: an ignored guard, a flipped subtracted guard, and a non-linear component classified as guarded. Verify each is killed.
-- [ ] 4.7 Apply the tabled evaluator's constant-factor changes (design D4): memoized printed question keys, decorated sorts, unsorted per-round condensation, attachment of pending probes only, and lazy command identity. Keep every decision, certificate, checkpoint, digest and counter identical. Verify the recursive evaluator tests, counters and mutation controls, and profile the gain on a non-linear fixture.
-- [ ] 4.8 Verify the gate's guarded cases are within budget. Update docs and the assurance contract, run the battery, the ClojureScript suite and the formal gates, then open PR 3 stacked on PR 2.
+  Decide truncated holdings up to their bound and extend the scan on demand. Verify that guarded checks and detailed lookup items equal the tabled evaluator's with plain, expiring and caveated guards and subtracted guards, and that truncated holdings decide every resource exactly.
+- [x] 4.3 Route guarded plans through a delegated view whose guarded members use the guarded oracle, for lookups, counts, checks and reverse operations. Candidates come from the D2 generator. Verify the delegated-recursion and differential tests.
+- [x] 4.4 Prove in Dafny that flattening preserves the denotation, that reachability in the guarded graph equals the least fixed point of a linearly guarded component, and that a guarded rule's deadline is the earliest of its evidence. Verify `dafny format` and `bin/formal verify`.
+- [x] 4.5 Add `eacl.engine.guarded-membership-refinement-test`. It generates random guarded programs with qualified relationships and runs a transcription of the guarded search beside production. It checks decisions, memos, skips and deferrals, certificates against an independent widest witness, and permissionship against the tabled evaluator. Extend the delegation campaign with guarded roots, checked against an independent guardedness oracle, the stratified semantics and the tabled route. Verify on the JVM, in ClojureScript and with a 1,000-seed sweep.
+- [x] 4.6 Register mutation controls: an ignored guard, a flipped subtracted guard, a non-linear component classified as guarded, and truncated holdings decided beyond their bound. Verify each is killed.
+- [x] 4.7 Apply the tabled evaluator's constant-factor changes (design D4): memoized printed question keys, a decorated component sort, attachment of pending probes only, and lazy command identity. Keep every decision, certificate, checkpoint, digest and counter identical. Verify the recursive evaluator tests, and profile the gain on the tabled route.
+- [x] 4.8 Verify the gate's guarded cases are within budget. Update docs and the assurance contract, run the battery, the ClojureScript suite and the formal gates, then open PR 3 stacked on PR 2.

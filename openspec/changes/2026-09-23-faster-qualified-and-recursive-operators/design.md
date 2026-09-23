@@ -241,6 +241,25 @@ a linearly guarded component.
 `reader + eligible`. Where an anchor recurses, the member's synthetic node
 recurses as well.
 
+**Holdings.** A relation guard is decided at every state the search admits,
+so its cost scales with the states. A subject with more than 256 grants of
+the guard's relation had one probe per state. Holdings scans are strictly
+ordered by endpoint, which gives two exact improvements:
+
+- a truncated scan still decides every endpoint up to its last;
+- past that, once a slice has needed 16 probes, the scan continues from its
+  last endpoint with twice as many edges, and the threshold doubles.
+
+The scanning therefore stays linear in the probes it replaces, and every
+decision is still the stored edge.
+
+**Routing.** `operator-plan/delegation` names every permission an evaluator
+delegates: the union-only permissions, plus the guarded members of a guarded
+plan. The oracle dispatches guarded members to the guarded search, whose
+guards and witnesses ask the same oracle for the permissions they name.
+Guarded plans move from the per-node cover to the flattened generator, so
+`:recursive-generator` becomes `:flattened-guarded-generator-v1`.
+
 *Alternatives considered:*
 
 - **Guarded rules inside the stable reducer.** This changes the certified
@@ -259,8 +278,9 @@ that feed checkpoints and digests, so they stay. The changes are:
   same.
 - **Decorated sorts.** Sorts by component key compute each key once per
   sort.
-- **Condensation.** Each demand round condenses the question graph without
-  sorting it. Only the condensation that is observable, at exit, is sorted.
+- **Condensation.** Each demand round keeps its canonical sort, now over
+  memoized keys. Leaving its order unsorted would change nothing measurable
+  after memoization, and it risks counter and checkpoint identity.
 - **Probe attachment.** Only questions with unattached probes are visited,
   in the same sorted order.
 - **Command identity.** It is computed only when a command is emitted.

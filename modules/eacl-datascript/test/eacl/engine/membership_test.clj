@@ -14,7 +14,8 @@
             [eacl.engine.stable-reducer :as reducer]
             [eacl.engine.stable-route :as route]
             [eacl.operator.evaluator-test :as fixtures]
-            [eacl.relationships.staged :as staged]))
+            [eacl.relationships.staged :as staged]
+            [eacl.request.counters :as counters]))
 
 (defn- seeded
   [fixture-key]
@@ -255,3 +256,50 @@
                   (is (and (false? value) (nil? want)) (str resource))))
               (is (= 1 (:fallbacks @stats)) "only the caveat-only resource falls back")
               (is (pos? (:levels @stats 0)) "expiring witnesses are found below the plain level"))))))))
+
+(deftest truncated-holdings-decide-up-to-their-bound-test
+  ;; The subject reads 40 of 60 docs. A holdings limit below 40 truncates
+  ;; the scan: every doc up to its last endpoint is decided from it, the rest
+  ;; are probed until the slice has needed enough probes, and then the scan
+  ;; continues with twice as many edges. Every decision equals the point
+  ;; check's.
+  (let [conn (schema/create-conn {})]
+    (schema/write-schema! conn
+                          "definition user {}
+                           definition doc {
+                             relation reader: user
+                             permission view = reader
+                           }")
+    (ds/transact! conn (mapv #(hash-map :eacl/id %)
+                             (cons "user" (map #(str "d" %) (range 60)))))
+    (let [eid #(ds/entid (ds/db conn) [:eacl/id %])
+          reader (ds/entid (ds/db conn)
+                           [:eacl.relation/resource-type+relation-name+subject-type
+                            [:doc :reader :user]])
+          writer (qualifiers/writer conn)
+          user (eid "user")]
+      (doseq [i (range 60) :when (pos? (mod i 3))]
+        (staged/write! writer :create [:user user reader :doc (eid (str "d" i))] nil))
+      (let [db (ds/db conn)
+            adapter (datascript-backend/basis-adapter db {})
+            plan (sealed-plan/seal-plan adapter [:doc :view])
+            resources (mapv #(eid (str "d" %)) (range 60))
+            options {:adapter adapter :plan plan :subject-type :user :subject-eid user}
+            points (mapv #(route/check-eids (assoc options :resource-eid %)) resources)
+            decide (fn [limit]
+                     (with-redefs [route/holdings-limit limit]
+                       (let [ledger (counters/make-ledger)
+                             values (counters/call-with-ledger
+                                     ledger
+                                     #(route/check-many-eids
+                                       (assoc options :resource-eids resources
+                                              :context (route/membership-context))))]
+                         [values (:commands (counters/snapshot ledger))])))
+            [complete complete-commands] (decide 256)
+            [truncated truncated-commands] (decide 16)
+            [tiny] (decide 1)]
+        (is (= 40 (count (filter true? points))))
+        (is (= points complete truncated tiny))
+        (is (= 1 complete-commands) "one scan decides every doc")
+        (is (< truncated-commands 20)
+            "the truncated scan decides up to its bound and then extends")))))
