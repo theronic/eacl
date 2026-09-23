@@ -86,8 +86,11 @@
                                     [:root]
                                     (:root resolved-expression))))
        distinct
-       (sort-by edge-sort-key)
-       vec))
+       ;; Each edge's key once, not once per comparison: the key canonically
+       ;; encodes the edge's path and via. `sort-by` is stable either way.
+       (map (fn [edge] [(edge-sort-key edge) edge]))
+       (sort-by first)
+       (mapv second)))
 
 (defn- adjacency
   [vertices edges direction]

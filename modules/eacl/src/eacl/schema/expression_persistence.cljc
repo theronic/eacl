@@ -1,6 +1,7 @@
 (ns eacl.schema.expression-persistence
   "Canonical expression-only storage values and strict read validation."
   (:require [eacl.cache.derived-schema :as derived-schema]
+            [eacl.cache.standard-lru :as lru]
             [eacl.schema.expression :as expression]
             [eacl.schema.expression-limits :as limits]
             [eacl.schema.expression-policy :as policy]))
@@ -116,7 +117,7 @@
                           :reason reason}
                          data))))
 
-(defn- decode-entity-with-metadata-uncached
+(defn- decode-entity-with-metadata-computed
   "Validates authoritative stored fields and derives exact bounded metrics.
 
    Retired experimental metric datoms are intentionally ignored: the
@@ -163,6 +164,38 @@
                 :normalized-dag dag
                 :normalized-metrics metrics}}))
 
+(def ^:dynamic *content-decodes*
+  "Process-wide memo of completed stored-expression decodes, or nil.
+
+   The key is the one `*structural-cache*` entries use: every stored field the
+   decode reads (present or absent) plus the effective limits. The decode is
+   a pure function of that key, reading no adapter, request, or clock, so a
+   completed value is exact for any client, store, or request presenting the
+   same key. Failures are never published. The bound keeps a process whose
+   clients open many schemas from retaining all of them."
+  (lru/store 1024))
+
+(defn- content-key [entity]
+  [(select-keys entity (into expression-attributes legacy-flat-attributes))
+   (effective-expression-limits)])
+
+(defn- decode-entity-with-metadata-uncached
+  "The decode without a request or schema-generation cache: a completed
+   content-addressed value when one exists, otherwise a fresh decode that is
+   then published for later clients. A fresh client decodes each stored
+   expression of an unchanged schema once per process instead of once per
+   client."
+  [entity]
+  (if-let [store *content-decodes*]
+    (let [key (content-key entity)
+          found (lru/lookup! store key)]
+      (if (:found? found)
+        (:value found)
+        (let [value (decode-entity-with-metadata-computed entity)]
+          (lru/put-if-absent! store key value)
+          value)))
+    (decode-entity-with-metadata-computed entity)))
+
 (defn- structural-decode?
   [value]
   (and (map? value)
@@ -179,10 +212,7 @@
   [entity]
   (if-not *structural-cache*
     (decode-entity-with-metadata-uncached entity)
-    (let [key [(select-keys
-                entity
-                (into expression-attributes legacy-flat-attributes))
-               (effective-expression-limits)]]
+    (let [key (content-key entity)]
       (if (derived-schema/partition? *structural-cache*)
         (let [found
               (derived-schema/lookup! *structural-cache* key)]
