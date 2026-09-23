@@ -204,14 +204,17 @@
         strict (assoc policy/default-client-limits :maximum-source-nodes 1)]
     (binding [persistence/*content-decodes* (lru/store 2)]
       (with-redefs [expression/decode
-                    ;; The one-argument entry delegates to the two-argument
-                    ;; var; count each codec invocation once. Both arities are
-                    ;; explicit because optimized ClojureScript calls a
-                    ;; multi-arity var through its arity entry points.
-                    (fn ([encoded] (decode encoded))
+                    ;; Count each codec invocation. Both arities are explicit,
+                    ;; because optimized ClojureScript calls a multi-arity var
+                    ;; through its arity entry points. Both reach the original's
+                    ;; two-argument arity through `apply`: its dispatcher and its
+                    ;; one-argument arity call back through the redefined var.
+                    (fn ([encoded]
+                         (swap! computed inc)
+                         (apply decode [encoded {}]))
                       ([encoded options]
                        (swap! computed inc)
-                       (decode encoded options)))]
+                       (apply decode [encoded options])))]
         (let [first-view (persistence/decode-entity-with-metadata view)]
           (testing "a completed decode serves the same stored fields"
             (is (= first-view (persistence/decode-entity-with-metadata view)))
