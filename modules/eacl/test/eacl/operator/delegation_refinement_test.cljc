@@ -13,13 +13,18 @@
     a cycle, else the root closure's permissions that reach no operator;
   - the delegated generator, when the root's anchor chain ends at one of those
     permissions, to be that permission and to cover the root on the data;
+  - otherwise (a union at the root or as an anchor, say) the flattened
+    generator's rows, evaluated by this campaign's own semantics, to cover
+    the root on the data;
   - every lookup walk (page sizes 1, 2, 5 and 100), count, check, reverse
     lookup and reverse count equal to an independent stratified least-fixed-
-    point evaluation of the generated expressions;
+    point evaluation of the generated expressions, with each walk's order
+    independent of its page size;
   - the same answers when delegation is disabled and the tabled recursive
-    evaluator answers instead: forward walks in the same order, reverse walks
-    as the same sets (a reverse walk's order follows its generator, which
-    recursive operator cursors authenticate).
+    evaluator answers instead. Forward walks under a delegated operand's plan
+    keep the same order; other walks are compared as sets, because a walk's
+    order follows its generator, which recursive operator cursors
+    authenticate.
 
   The operator-delegat* mutation controls in
   `eacl.formal.executed-mutation-controls` pin the same obligations on a fixed
@@ -28,6 +33,7 @@
             [clojure.set :as set]
             [clojure.string :as str]
             [eacl.engine.v8 :as engine]
+            [eacl.operator.cover-plan :as cover-plan]
             [eacl.operator.plan :as operator-plan]
             [eacl.operator.recursive :as operator-recursive]
             [eacl.test-support.tuple-adapter :as tuple-adapter]))
@@ -391,13 +397,37 @@
                       (str error))})))
 
 (defn- comparable-across-routes
-  "Answers two routes must share exactly: forward walks in order, reverse
-  walks as sets, every count and check."
-  [answers]
-  (if (:thrown answers)
-    answers
-    (update answers :subject-walks
-            #(into {} (for [[k ids] %] [k (set ids)])))))
+  "Answers two routes must share exactly: every count and check, reverse
+  walks as sets, and forward walks in order when `ordered?`, else as sets."
+  [answers ordered?]
+  (let [as-sets (fn [walks] (into {} (for [[k ids] walks] [k (set ids)])))]
+    (if (:thrown answers)
+      answers
+      (cond-> (update answers :subject-walks as-sets)
+        (not ordered?) (update :walks as-sets)))))
+
+(defn- row-term
+  "One flattened generator row in this campaign's expression form."
+  [{:keys [source-relation-name target-type target-name]}]
+  (cond
+    (and (= :self source-relation-name) (= :relation target-type))
+    [:relation target-name]
+    (= :self source-relation-name) [:self target-name]
+    (= :relation target-type) [:arrow-relation source-relation-name target-name]
+    :else [:arrow source-relation-name target-name]))
+
+(defn- flattened-generator
+  "The flattened generator of a delegating plan as extra permission bodies,
+  one per generator node, and the root's node."
+  [plan root delegated]
+  (let [nodes (for [{:keys [permission]} (:expressions plan)
+                    :when (not (contains? delegated permission))
+                    :let [rows (cover-plan/generator-definitions plan delegated permission)]]
+                [permission
+                 [(first permission) (:permission-name (first rows))]
+                 (into [:union] (map row-term) rows)])]
+    {:bodies (into {} (map (fn [[_ node body]] [node body])) nodes)
+     :root (some (fn [[permission node]] (when (= root permission) node)) nodes)}))
 
 (defn- run-root
   [counters {:keys [seed schema adapter bodies data values root]}]
@@ -410,6 +440,8 @@
         delegating? (and recursive? (some? delegated))
         generator (when delegating?
                     (operator-plan/delegated-generator plan root delegated))
+        flattened (when (and delegating? (nil? generator))
+                    (flattened-generator plan root delegated))
         fail (fn [what detail]
                (assoc counters :failure
                       (merge {:seed seed :what what :root root :schema schema
@@ -421,7 +453,7 @@
                          (outcome #(with-redefs [operator-plan/delegated-permissions
                                                  (constantly nil)]
                                      (answers adapter (second root) data))))
-        covers? (fn [generator]
+        covers? (fn [values generator]
                   (let [generator-members (get values generator)]
                     (every? (fn [[eid subjects]]
                               (set/subset? subjects (get generator-members eid #{})))
@@ -433,12 +465,17 @@
       (fail :delegated-permissions {:expected expected-delegated :actual delegated})
 
       ;; A root whose anchor chain ends at no delegated permission (a union
-      ;; at the root, say) keeps the synthetic operator cover.
+      ;; at the root, say) is generated by the flattened generator.
       (and generator (not (contains? delegated generator)))
       (fail :generator-not-delegated {:generator generator :delegated delegated})
 
-      (and generator (not (covers? generator)))
+      (and generator (not (covers? values generator)))
       (fail :generator-does-not-cover-root {:generator generator})
+
+      (and flattened
+           (not (covers? (denotation (merge bodies (:bodies flattened)) data)
+                         (:root flattened))))
+      (fail :flattened-generator-does-not-cover-root {:generator (:bodies flattened)})
 
       (:thrown delegated-answers)
       (fail :engine-error {:error (:thrown delegated-answers)})
@@ -446,12 +483,13 @@
       (answer-divergence expected delegated-answers)
       (fail :answers (answer-divergence expected delegated-answers))
 
-      ;; Forward walks keep the tabled route's order. A reverse walk may
-      ;; order subjects differently: its generator changed, and recursive
-      ;; operator cursors authenticate the generator's fingerprint.
+      ;; Forward walks under a delegated operand's plan keep the tabled
+      ;; route's order. Other walks may order their results differently: the
+      ;; generator changed, and recursive operator cursors authenticate its
+      ;; fingerprint.
       (and delegating?
-           (not= (comparable-across-routes delegated-answers)
-                 (comparable-across-routes tabled-answers)))
+           (not= (comparable-across-routes delegated-answers (some? generator))
+                 (comparable-across-routes tabled-answers (some? generator))))
       (fail :tabled-evaluator-disagrees {:delegated delegated-answers
                                          :tabled tabled-answers})
 
@@ -463,6 +501,7 @@
                         :else :acyclic-roots)
                   (fnil inc 0))
           (update :operand-generators (fnil + 0) (if generator 1 0))
+          (update :flattened-generators (fnil + 0) (if flattened 1 0))
           (update :members + (reduce + (map count (vals (get values root)))))))))
 
 (defn- run-case
@@ -512,4 +551,7 @@
     (testing "the campaign reaches delegated and tabled plans"
       (is (pos? (:delegated-roots report)))
       (is (pos? (:tabled-roots report)))
-      (is (pos? (:members report))))))
+      (is (pos? (:members report))))
+    (testing "and both generators of delegated plans"
+      (is (pos? (:operand-generators report)))
+      (is (pos? (:flattened-generators report))))))

@@ -167,6 +167,18 @@ always one. Rows are deduplicated.
   retires completed answers keyed to the old generator.
 - **Filtering.** Delegated plans keep the delegated evaluation; guarded plans
   (D3) use the guarded one.
+- **Relation leaves.** A union root filters every candidate through its
+  other terms. Profiled after flattening, a relation term such as `deleter`
+  cost one probe per candidate, and on qualified requests one adapter
+  command per candidate. That was most of the gap to `delete`.
+  - In a batched delegated evaluation, the vector evaluator decides a
+    relation leaf for forward candidates of one subject from that subject's
+    grants of the relation slice (`stable-route/subject-holdings`).
+  - The grants come from one forward scan of at most 256 edges per request:
+    the scan the membership search already makes. When the scan is
+    incomplete, the evaluator probes as before.
+  - A decision is the same stored compact edge a probe returns, qualified
+    on the same request, so every value and certificate is unchanged.
 
 *Alternatives considered:*
 
@@ -274,11 +286,14 @@ The functions that registered mutation controls redefine stay var-called.
     roots. Its answers are compared with the stratified semantics and the
     tabled route, and each generator must cover its root.
 - **Mutation controls.**
-  - the minimum skipped deadline taken as the next level;
-  - the first level's deadline reported;
+  - the next level set below the latest skipped deadline;
+  - the first level's deadline reported as the certificate;
+  - a conditional-only resource answered false;
+  - a union term dropped from the flattened generator;
+  - truncated holdings taken as complete;
   - a guard ignored;
   - a subtracted guard's polarity flipped;
-  - a union term dropped from the flattened generator.
+  - a non-linear component classified as guarded.
 - **Gate.** `eacl.bench.operator-shapes-test`, with the spec's budgets
   authored before sampling.
 

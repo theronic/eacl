@@ -24,11 +24,18 @@
 
 ## 3. Flattened generators (PR 2)
 
-- [ ] 3.1 Derive flattened generator rows along anchor chains (design D2), with one synthetic node per non-delegated permission reached. Verify plan tests for `delete_top`, `prune_top`, `(a + b) & c`, a relation anchor, and single-operand plans that keep their operand's plan.
-- [ ] 3.2 Seal the synthetic generator through a wrapper adapter. It needs its own memo key, a read-scope check against the plan's relation closure, and a new `stable-cover-plan` branch. Bump `:recursive-generator` to `:flattened-union-generator-v1`. Verify that recursive operator cursors authenticate the new cover fingerprint and that a cursor minted under the per-node cover is rejected as invalid.
-- [ ] 3.3 Extend `eacl.operator.delegation-refinement-test`: union roots and union anchors get generators, each generator covers its root, and answers and forward orders match across page sizes and against the tabled route. Verify the campaign and a 200-case sweep.
-- [ ] 3.4 Register a mutation control that drops one union term from the flattened generator. Verify it is killed on both runtimes.
-- [ ] 3.5 Verify the gate's union-root cases are within budget. Run the battery, the ClojureScript suite and the formal gates, then open PR 2 stacked on PR 1.
+- [x] 3.1 Derive flattened generator rows along covers (design D2), with one synthetic node per non-delegated permission reached. Verify plan tests for a union root over an intersection and over an exclusion, a union anchor, a relation anchor, an arrow to an operator permission, and single-operand plans that keep their operand's plan.
+- [x] 3.2 Seal the synthetic generator through a wrapper adapter. It needs its own memo key, a read-scope check against the plan's relation closure, and a new `stable-cover-plan` branch. Bump `:recursive-generator` to `:flattened-union-generator-v1`. Verify that recursive operator cursors authenticate the new cover fingerprint and that a cursor minted under the per-node cover is rejected as invalid.
+- [x] 3.3 Decide the relation leaves of batched delegated evaluations from the subject's holdings (design D2): one bounded forward scan per subject and relation slice per request, and probes when the scan is incomplete. Verify that detailed lookup items equal `check-permission` for expiring and caveated grants, with complete and with incomplete holdings.
+- [x] 3.4 Extend `eacl.operator.delegation-refinement-test`:
+  - flattened generators' rows, evaluated by the campaign's own semantics, cover their roots;
+  - answers match the stratified semantics and the tabled route;
+  - walk orders are independent of page size;
+  - forward orders under a delegated operand's plan match the tabled route.
+
+  Verify the campaign and a 200-case sweep.
+- [x] 3.5 Register mutation controls: a union term dropped from the flattened generator, and truncated holdings taken as complete. Verify each is killed on both runtimes.
+- [x] 3.6 Verify the gate's union-root cases are within budget. Run the battery, the ClojureScript suite and the formal gates, then open PR 2 stacked on PR 1.
 
 ## 4. Guarded recursion through operators (PR 3)
 

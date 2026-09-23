@@ -155,6 +155,30 @@
                     :subject-type (:subject-type candidate)}
        :candidate [(:subject-type candidate) (:subject-eid candidate)]})))
 
+(defn- held-decisions
+  "Decisions for direct probes from the subject's retained holdings
+  (`holdings`, see `stable-route/subject-holdings`), or nil to probe. Only
+  forward probes of one subject and relation slice qualify, and only when
+  the subject's holdings of that slice are complete. Each decision is the
+  one the probe gives: the stored compact edge, qualified on the request."
+  [holdings qualification probes]
+  (when holdings
+    (let [{:keys [direction descriptor]} (first probes)]
+      (when (and (= :forward direction)
+                 (every? #(and (= :forward (:direction %))
+                               (= descriptor (:descriptor %)))
+                         probes))
+        (let [{:keys [subject-type subject-eid relation-eid resource-type]} descriptor
+              {:keys [complete? edges]}
+              (holdings subject-type subject-eid relation-eid resource-type)]
+          (when complete?
+            (mapv (fn [{[_ resource-eid] :candidate}]
+                    (let [compact-edge (get edges resource-eid)]
+                      (if qualification
+                        (qualification/qualify qualification relation-eid compact-edge)
+                        (some? compact-edge))))
+                  probes)))))))
+
 (defn- root-masks
   "Observation-only aligned masks for one resolved row, derived from the memo
   when a `*vector-stats*` observer asks for them. The production path keeps
@@ -226,7 +250,7 @@
   "Trusted core of `check-many-eids`: the candidate vector is already
   normalized (each caller normalizes exactly once at its boundary)."
   [{:keys [adapter plan candidates cache-lookup cache-publish-many!
-           limits permission node-id qualification delegate]}]
+           limits permission node-id qualification delegate holdings]}]
   (let [width (count candidates)]
     (if (zero? width)
       []
@@ -317,13 +341,14 @@
                                   probes (mapv second indexed-probes)
                                   decisions
                                   (if (seq probes)
-                                    (if qualification
-                                      (mapv (fn [probe compact-edge]
-                                              (qualification/qualify qualification
-                                                                     (get-in probe [:descriptor :relation-eid])
-                                                                     compact-edge))
-                                            probes (direct/dispatch-edges adapter probes))
-                                      (direct/dispatch adapter probes cache-lookup))
+                                    (or (held-decisions holdings qualification probes)
+                                        (if qualification
+                                          (mapv (fn [probe compact-edge]
+                                                  (qualification/qualify qualification
+                                                                         (get-in probe [:descriptor :relation-eid])
+                                                                         compact-edge))
+                                                probes (direct/dispatch-edges adapter probes))
+                                          (direct/dispatch adapter probes cache-lookup)))
                                     [])]
                               ;; Retain exact leaf decisions privately until
                               ;; every demanded subgroup in the vector has
