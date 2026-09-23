@@ -32,11 +32,14 @@
     (eacl/create-relationship! writer (eacl/->Relationship alice :reader doc))
     (binding [persistence/*content-decodes* (lru/store 16)]
       (with-redefs [expression/decode
-                    (fn [& args]
-                      ;; The one-argument entry delegates to the two-argument
-                      ;; var; count each codec invocation once.
-                      (when (= 2 (count args)) (swap! computed inc))
-                      (apply decode args))]
+                    ;; The one-argument entry delegates to the two-argument
+                    ;; var; count each codec invocation once. Both arities are
+                    ;; explicit because optimized ClojureScript calls a
+                    ;; multi-arity var through its arity entry points.
+                    (fn ([encoded] (decode encoded))
+                      ([encoded options]
+                       (swap! computed inc)
+                       (decode encoded options)))]
         (is (true? (eacl/can? (datascript/make-client conn {}) query)))
         (let [first-client @computed]
           (is (pos? first-client) "the first client decodes the schema")
