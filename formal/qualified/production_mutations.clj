@@ -87,6 +87,7 @@
         inspection-window inspection/window-options
         plan-schema datascript-schema/plan-schema-replacement
         qualify qualification/qualify identity qualification/exact-reuse-identity
+        certified-scope qualification/certified-denotation-scope
         fetch reducer/adapter-fetch-fn descriptor scan-cache/descriptor-key
         snapshot-opts @#'orchestration/snapshot-opts
         head-evidence @#'seekable/head-evidence
@@ -143,9 +144,14 @@
      :qualified-object-delete-loses-selected-basis-guard
      {:gate #'public-write-test/qualified-object-deletion-is-atomic-and-bounded
       :redefs {#'staged/plan-retraction-batch (fn [& args] (let [tx (apply plan-retractions args)] (if (seq tx) (subvec tx 1) tx)))}}
-     :qualified-shared-denotation-identity-omits-time
+     ;; Shared point decisions are keyed without their evaluation time; their
+     ;; certified interval alone decides whether a later request may reuse one.
+     :qualified-shared-denotation-reuse-ignores-certificate
      {:gate #'cache-trace-test/qualified-cache-traces-match-uncached-authorization
-      :redefs {#'qualification/exact-reuse-identity (fn [request] (assoc (identity request) 2 99))}}
+      :redefs {#'temporal/reusable-point
+               (fn [answer _]
+                 (when (and (map? answer) (= temporal/point-format (:format answer)))
+                   (evidence/decode (:value answer))))}}
      :qualified-answer-identity-omits-request-context
      {:gate #'cache-trace-test/qualified-cache-traces-match-uncached-authorization
       :redefs {#'qualification/exact-reuse-identity (fn [request] (assoc (identity request) 3 :omitted))}}
@@ -423,9 +429,10 @@
      :public-context-validation-bypassed
      {:gate #'public-context-test/invalid-context-fails-before-selection-even-on-warm-or-empty-requests
       :redefs {#'context/prepare (let [empty-context (context/prepare {})] (constantly empty-context))}}
-     :time-omitted-from-exact-point-scope
+     :certified-point-scope-keeps-the-time
      {:gate #'vector-test/qualified-vectors-retain-alignment-and-exact-cache-scope
-      :redefs {#'qualification/exact-reuse-identity (fn [request] (assoc (identity request) 2 nil))}}
+      :redefs {#'qualification/certified-denotation-scope
+               (fn [request] (conj (certified-scope request) (:time request)))}}
      :evidence-witness-validation-bypassed
      {:gate #'vector-test/exact-evidence-witnesses-avoid-rechecking-proven-nodes
       :redefs {#'vector/validate-evidence-witnesses! (fn [& _] nil)}}
