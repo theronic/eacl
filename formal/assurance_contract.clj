@@ -106,6 +106,10 @@
    {:source "formal/dafny/GuardedMembership.dfy"
     :claim :linearly-guarded-reachability-is-the-stratified-least-fixed-point
     :minimum-proof-efforts 21}
+   :certified-point-reuse
+   {:source "formal/dafny/CertifiedPointReuse.dfy"
+    :claim :reused-certified-decision-is-the-fresh-decision
+    :minimum-proof-efforts 14}
    :ordered-merge
    {:source "formal/dafny/OrderedMerge.dfy"
     :minimum-proof-efforts 82}
@@ -728,6 +732,51 @@
     :runtime-targets [:clj-java :cljs-javascript]
     :remaining
     [:mechanized-host-search-source-refinement
+     :independent-review]}
+   {:operation :set-algebra-result-reuse
+    ;; Operand and operator point decisions are reused across the requests of
+    ;; one client, across evaluation times within their certificates, and
+    ;; across an exported and restored cache on the same basis. A qualified
+    ;; decision is keyed by its certified scope, the exact reuse identity
+    ;; without its time or basis (the storage key carries the exact basis),
+    ;; and stored with the interval its evidence certifies. Reuse requires
+    ;; that interval to admit the request's time and observes it on the
+    ;; request's qualification (CertifiedPointReuse.dfy); a restored value must
+    ;; agree with its key's kind and its own evidence. Executable refinement:
+    ;; eacl.datascript.set-algebra-reuse-differential-test compares every
+    ;; cached answer with the same request under :cache? false at the same
+    ;; time, over random operator and guarded schemas, plain, expiring and
+    ;; caveated relationships, an advancing clock and a mid-run export and
+    ;; restore. The reuse-* mutation controls are killed by the controls
+    ;; suite on both runtimes.
+    :entry-points
+    ["eacl.authorization.point-reuse/reuse!"
+     "eacl.authorization.point-reuse/publish!"
+     "eacl.authorization.point-reuse/stored-value-valid?"
+     "eacl.authorization.qualification/certified-denotation-scope"
+     "eacl.subproblem-cache/lookup-denotations!"
+     "eacl.subproblem-cache/publish-denotations!"
+     "eacl.engine.stable-route/check-eids"
+     "eacl.engine.stable-route/check-many-eids"
+     "eacl.operator.recursive/evaluate-cached-many"
+     "eacl.operator.vector-evaluator/check-cached-many-eids"]
+    :theorems
+    [:keys-ignore-only-the-time
+     :reused-decision-is-the-fresh-decision
+     :incomplete-certificate-is-reused-only-at-its-time
+     :no-reuse-at-or-after-the-end
+     :no-reuse-before-the-computation
+     :replaced-entry-has-no-later-reuse
+     :observed-certificate-bounds-the-answer
+     :admitted-entry-is-decided]
+    :dafny ["formal/dafny/CertifiedPointReuse.dfy"
+            "formal/dafny/QualifiedTemporal.dfy"]
+    :adapter-obligations
+    [:immutable-snapshot
+     :deterministic-evaluation-at-one-basis-and-time]
+    :runtime-targets [:clj-java :cljs-javascript]
+    :remaining
+    [:mechanized-host-cache-source-refinement
      :independent-review]}
    {:operation :cache-reuse
     :entry-points ['eacl.cache 'eacl.subproblem-cache]

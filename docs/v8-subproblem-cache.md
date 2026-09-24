@@ -6,7 +6,8 @@ Each EACL client owns three flat, independently bounded retention tiers:
   permission trees;
 - `:rendered-page` stores complete exact-basis transport pages for complete raw
   requests when cursor expiry is disabled;
-- `:denotation` stores completed Boolean denotations.
+- `:denotation` stores completed point decisions: an operator permission's
+  decision for one candidate resource, and each operand decision it combined.
 
 Two further client-private tiers sit beside them and answer no request on
 their own: the scan-response tier keeps exact adapter scan prefixes per read
@@ -30,6 +31,22 @@ proof-managed key, then independent computation. A managed answer hit may be
 promoted under the exact key. Denotations are exact-basis only. Historical
 bases use identical exact keys only. Speculative requests may read one
 disjoint committed managed answer but publish nothing.
+
+A denotation key names the decision (the sealed plan's fingerprint, the
+subject and the resource) under the exact basis. An unqualified decision is a
+Boolean. A qualified one is keyed by its certified scope: the request's
+qualification identity without its evaluation time, which the value's
+certificate replaces, and without its basis, which the exact storage key
+carries. Its value records the computation time, the certificate's end and
+completeness, the permissionship and the canonical evidence. A later request
+reuses it only while `start <= time < end` and the certificate is complete (an
+incomplete certificate only at its own time), and observes that interval on
+its own qualification, so an answer built from reused decisions is certified
+no longer than they are. A later computation replaces an entry it could not
+reuse; an older one never replaces a newer one. The evaluators look up and
+publish a batch of candidates at once, and the requests of one client on an
+unchanged basis share one key constructor, so a later request matches a
+resident key by identity.
 
 Managed envelopes record the revision at which the value was computed. Reuse
 requires both equal complete proof identity and
@@ -90,7 +107,10 @@ Portable export is a deterministic flat entry sequence. It excludes
 Caffeine/`cljs-cache` admission, priority, and recency state. Restore validates
 complete keys, managed-answer proof keys, revisions, operation-specific completed value
 contracts, duplicate keys, and count capacity before constructing fresh cache tiers
-off-side and installing them atomically. Process-local exact promotions are
+off-side and installing them atomically. A denotation's value must agree with
+its key: a qualified key holds a point answer whose permissionship,
+certificate end and completeness agree with its decoded evidence, and any
+other key a Boolean. Process-local exact promotions are
 not exported without their live validating transition; the corresponding
 managed mapping remains portable.
 
@@ -104,7 +124,9 @@ v2 values are rejected without changing the live lifecycle.
 arbitrary eviction, independent computation, completed-only publication, page
 retention eligibility, and lifecycle detachment. Causal and ordinary-only
 managed eligibility are proved in `CurrentCache.dfy` and
-`ScalarFrontierCoherence.dfy`. The TLA model treats keys and validated values as
+`ScalarFrontierCoherence.dfy`. `CertifiedPointReuse.dfy` proves that a
+qualified decision reused within its certificate is the decision a fresh
+evaluation makes at the later time. The TLA model treats keys and validated values as
 opaque mappings and checks publication, eviction, expiry, and orphaned
 lifecycle interleavings.
 

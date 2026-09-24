@@ -11,6 +11,7 @@
             [eacl.authorization.result-test]
             [eacl.authorization.qualification-test]
             [eacl.authorization.qualifier-cache-test]
+            [eacl.authorization.point-reuse-test]
             [eacl.authorization.temporal-test]
             [eacl.datascript.qualifier-cache-test]
             [eacl.cache.derived-schema-test]
@@ -117,6 +118,8 @@
             [eacl.datascript.impl-test]
             [eacl.datascript.safe-retraction-test]
             [eacl.datascript.snapshot-lifecycle-test]
+            [eacl.datascript.set-algebra-reuse-test]
+            [eacl.datascript.set-algebra-reuse-differential-test]
             [eacl.datascript.storage-test]))
 
 (nodejs/enable-util-print!)
@@ -141,6 +144,7 @@
                'eacl.authorization.result-test
                'eacl.authorization.qualification-test
                'eacl.authorization.qualifier-cache-test
+               'eacl.authorization.point-reuse-test
                'eacl.authorization.temporal-test
                'eacl.datascript.qualifier-cache-test
                'eacl.cache.derived-schema-test
@@ -246,6 +250,8 @@
                'eacl.datascript.impl-test
                'eacl.datascript.safe-retraction-test
                'eacl.datascript.snapshot-lifecycle-test
+               'eacl.datascript.set-algebra-reuse-test
+               'eacl.datascript.set-algebra-reuse-differential-test
                'eacl.datascript.storage-test))
 
 (set! *main-cli-fn* -main)

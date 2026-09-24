@@ -24,12 +24,14 @@
     silent cap. An order-insensitive specialization remains permitted only
     behind an independent denotation-equivalence proof (none exists yet)."
   (:require [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.point-reuse :as point-reuse]
             [eacl.authorization.qualification :as qualification]
             [eacl.execution :as execution]
             [eacl.backend.v8 :as backend]
             [eacl.engine.stable-reducer :as reducer]
             [eacl.relationships.edge :as edge]
-            [eacl.request.counters :as request-counters]))
+            [eacl.request.counters :as request-counters]
+            [eacl.subproblem-cache :as subproblem]))
 
 (def exhaustion-target
   "Alias of `eacl.engine.stable-reducer/exhaustion-target`: exhaustive routes
@@ -446,6 +448,25 @@
                                          :staged (count outcome)}))
                       (recur stack visited @answer))))))))))))
 
+(declare add-membership-stats!)
+
+;; ---------------------------------------------------------------------------
+;; Membership decisions in the client cache
+;; ---------------------------------------------------------------------------
+
+(def ^:private membership-point-version 1)
+
+(defn- membership-key
+  "The subproblem key of one subject's membership in the root of the plan
+  (a sealed union plan or a guarded program) fingerprinted `fingerprint`, at
+  one resource. `scope` is the request's certified qualification scope, or
+  nil; a qualified value records the interval its evidence certifies."
+  [fingerprint scope subject-type subject-eid resource-eid]
+  (point-reuse/scoped-key
+   [:membership-point membership-point-version fingerprint
+    subject-type subject-eid resource-eid]
+   scope))
+
 (defn check-eids
   "Anchored point check over pre-resolved internal ids: does the subject
   hold the plan's root permission on the resource? Decided by the
@@ -453,20 +474,35 @@
   With `:qualification`, returns conditional/temporal Evidence or a plain
   timeless Boolean; callers must project through evidence/has?. A scoped
   `:known-witness` contributes one rule or arrow binding; the same search
-  completes all remaining alternatives without repeating that path."
-  [{:keys [subject-eid resource-eid] :as options}]
+  completes all remaining alternatives without repeating that path.
+
+  With a subproblem store bound, a decision this client cached for the same
+  plan, subject and resource is reused while its certificate admits the
+  request's time, and a computed decision is published for later requests."
+  [{:keys [plan subject-type subject-eid resource-eid qualification] :as options}]
   (if (or (nil? subject-eid) (nil? resource-eid))
     false
-    (probe-check-eids options)))
+    (let [key (when subproblem/*store*
+                (membership-key (:fingerprint plan) (point-reuse/scope qualification)
+                                subject-type subject-eid resource-eid))
+          cached (if key (first (point-reuse/reuse! qualification [key] ::miss)) ::miss)]
+      (if (not= ::miss cached)
+        (do (add-membership-stats! {:reused 1})
+            cached)
+        (do (add-membership-stats! {:searched 1})
+            (let [value (probe-check-eids options)]
+              (when key (point-reuse/publish! qualification [[key value]]))
+              value))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Memoized membership of one subject
 ;; ---------------------------------------------------------------------------
 
 (def ^:dynamic *membership-stats*
-  "Optional observation-only atom for `check-many-eids`: resources decided,
-  memoized root answers, exact point-check fallbacks, and subject-holding
-  scans."
+  "Optional observation-only atom for `check-eids` and `check-many-eids`:
+  resources decided, resources searched, resources reused from the client
+  cache, exact point-check fallbacks, extra evidence levels, and
+  subject-holding scans."
   nil)
 
 (defn- add-membership-stats! [deltas]
@@ -1137,6 +1173,22 @@
                                        {:max-admissions max-admissions
                                         :staged 1}))
                      (aset counts 0 (inc (aget counts 0))))}
+          searched (volatile! 0)
+          reused (volatile! 0)
+          computed (volatile! #{})
+          cache? (some? subproblem/*store*)
+          key-of (when cache?
+                   (let [fingerprint (:fingerprint plan)
+                         scope (point-reuse/scope qualification)]
+                     #(membership-key fingerprint scope subject-type subject-eid %)))
+          ;; One client-cache lookup for the distinct resources this request
+          ;; has not answered yet.
+          unknown (when cache?
+                    (into [] (comp (remove nil?) (remove #(contains? @answers %)) (distinct))
+                          resource-eids))
+          stored (if (seq unknown)
+                   (zipmap unknown (point-reuse/reuse! qualification (mapv key-of unknown) ::miss))
+                   {})
           decided
           (mapv (fn [resource-eid]
                   (if (nil? resource-eid)
@@ -1144,10 +1196,17 @@
                     (let [known (get @answers resource-eid ::unknown)]
                       (if (not= ::unknown known)
                         known
-                        (let [value (decide-leveled search entry resource-eid)]
-                          (when-not (= ::qualified value)
-                            (vswap! answers assoc resource-eid value))
-                          value)))))
+                        (let [cached (get stored resource-eid ::miss)]
+                          (if (not= ::miss cached)
+                            (do (vswap! reused inc)
+                                (vswap! answers assoc resource-eid cached)
+                                cached)
+                            (let [value (decide-leveled search entry resource-eid)]
+                              (vswap! searched inc)
+                              (vswap! computed conj resource-eid)
+                              (when-not (= ::qualified value)
+                                (vswap! answers assoc resource-eid value))
+                              value)))))))
                 resource-eids)
           fallbacks (count (filter #{::qualified} decided))]
       (request-counters/add-commands! (aget counts 2))
@@ -1160,19 +1219,35 @@
           :queued-work (aget counts 1)
           :fetched-values (aget counts 3)}))
       (add-membership-stats! {:decided (count resource-eids)
+                              :searched (+ @searched fallbacks)
+                              :reused @reused
                               :fallbacks fallbacks})
-      (if (zero? fallbacks)
-        decided
-        (mapv (fn [resource-eid value]
-                (if (= ::qualified value)
-                  (if fallback
-                    (fallback resource-eid)
-                    (probe-check-eids (-> options
-                                          (dissoc :resource-eids :context)
-                                          (assoc :fetch-fn fetch-fn
-                                                 :resource-eid resource-eid))))
-                  value))
-              resource-eids decided)))))
+      (let [values
+            (if (zero? fallbacks)
+              decided
+              (mapv (fn [resource-eid value]
+                      (if (= ::qualified value)
+                        (if fallback
+                          (fallback resource-eid)
+                          (probe-check-eids (-> options
+                                                (dissoc :resource-eids :context)
+                                                (assoc :fetch-fn fetch-fn
+                                                       :resource-eid resource-eid))))
+                        value))
+                    resource-eids decided))]
+        ;; Every decision is complete once the call has succeeded: publish
+        ;; each computed one, including exact fallback values, once.
+        (when (and cache? (seq @computed))
+          (point-reuse/publish!
+           qualification
+           (vals (reduce (fn [entries [resource-eid value]]
+                           (if (and (contains? @computed resource-eid)
+                                    (not (contains? entries resource-eid)))
+                             (assoc entries resource-eid [(key-of resource-eid) value])
+                             entries))
+                         {}
+                         (map vector resource-eids values)))))
+        values))))
 
 (defn derives-from-node?
   "The membership-probe point check anchored at an arbitrary plan node:

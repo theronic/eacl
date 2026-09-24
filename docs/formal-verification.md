@@ -196,6 +196,19 @@ set-algebra semantics:
 Registered mutation controls run the campaigns' obligations on the JVM and
 in ClojureScript. The Clojure search itself has no mechanized proof.
 
+A client reuses these decisions across its requests. `CertifiedPointReuse.dfy`
+proves that a decision computed at one time and reused at a later time within
+its certificate, on the same basis and caveat context, equals the decision a
+fresh evaluation makes then; that an incomplete certificate is reused only at
+its own time; and that a replaced entry had no reuse left.
+`eacl.datascript.set-algebra-reuse-differential-test` compares every cached
+answer with the same request under `:cache? false` at the same time, over
+random operator and guarded schemas, plain, expiring and caveated
+relationships, an advancing clock, and a cache exported and restored midway.
+Four mutation controls cover reuse at a certificate's end, a key without the
+caveat context, an incomplete certificate reused later, and a reused
+certificate left unobserved.
+
 ### Permission-tree assurance boundary
 
 `PermissionTree.dfy` contributes 62 locked obligations. The theorem map covers

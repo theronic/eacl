@@ -110,6 +110,19 @@
                     (select-keys (evaluator/descriptor engine)
                                  [:profile :profile-fingerprint :fingerprint :capability-version])))))
 
+(defn certified-denotation-scope
+  "The qualification scope of a subproblem denotation that stores the
+   interval its evidence certifies: `exact-reuse-identity` without its
+   evaluation time, which reuse checks against that interval, and without its
+   basis. Every denotation storage key already carries the evaluated
+   snapshot's exact basis as its reuse identity, derived from the same
+   semantic snapshot identity this request records as its basis. One value
+   per request, so its hash is computed once."
+  [request]
+  (memo! request [:certified-denotation-scope]
+         #(let [[format _ _ context evaluator] (exact-reuse-identity request)]
+            [:certified-point evidence/format-version format context evaluator])))
+
 (defn- allowed! [request relation-id caveat-id]
   (let [allowed (memo! request [:relation relation-id]
                        #(let [relation (:entity (entity-data request relation-id))]

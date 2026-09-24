@@ -1,9 +1,10 @@
 (ns eacl.operator.vector-evaluator-test
   (:require [#?(:clj clojure.test :cljs cljs.test)
-             :refer [deftest is]]
+             :refer [deftest is testing]]
             [clojure.string :as str]
             [datascript.core :as ds]
             [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.temporal :as temporal]
             [eacl.authorization.qualification :as qualification]
             [eacl.authorization.evidence-test :as evidence-fixtures]
             [eacl.backend.direct-membership :as direct]
@@ -522,7 +523,11 @@
             fault (run 100 {"flag" "wrong-type"})]
         (is (= (:result before) (:result warm)))
         (is (= 8 (get-in warm [:stats :point-cache-hits])))
-        (is (= 8 (get-in after [:stats :point-cache-misses])))
+        (testing "a later time reuses exactly the decisions whose certificates admit it"
+          (let [reusable (count (filter #(temporal/reusable? (temporal/point-answer 99 %) 100 true)
+                                        (:result before)))]
+            (is (< 0 reusable 8))
+            (is (= (- 8 reusable) (get-in after [:stats :point-cache-misses])))))
         (is (= [:no-permission :no-permission :conditional-permission :conditional-permission
                 :conditional-permission :no-permission :conditional-permission :no-permission]
                (mapv evidence/permissionship (:result before))))

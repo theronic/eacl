@@ -18,7 +18,11 @@
   :operator-guard-ignored
   :operator-subtracted-guard-flipped
   :operator-nonlinear-recursion-guarded
-  :membership-truncated-holdings-beyond-bound]
+  :membership-truncated-holdings-beyond-bound
+  :reuse-past-certificate-end
+  :reuse-key-without-caveat-context
+  :reuse-incomplete-certificate-later
+  :reused-certificate-unobserved]
  :historical-mutant-count 152
  :historical-clojure-mutant-count 138
  :historical-model-mutant-count 14
@@ -338,6 +342,46 @@
    :mutation :answer-a-conditional-only-resource-false
    :target-symbol "route/decide-leveled"
    :detector "membership-conditional-answered-false-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :reuse-past-certificate-end
+   :mechanism :executed-production
+   :mutation :reuse-at-the-certificate-end
+   :target-symbol "temporal/reusable?"
+   :consumer-symbol "point-reuse/reuse!"
+   :detector "reuse-past-certificate-end-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :reuse-key-without-caveat-context
+   :mechanism :executed-production
+   :mutation :drop-the-caveat-context-from-the-certified-scope
+   :target-symbol "qualification/certified-denotation-scope"
+   :consumer-symbol "point-reuse/reuse!"
+   :detector "reuse-key-without-caveat-context-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :reuse-incomplete-certificate-later
+   :mechanism :executed-production
+   :mutation :reuse-an-incomplete-certificate-at-a-later-time
+   :target-symbol "temporal/reusable?"
+   :consumer-symbol "point-reuse/reuse!"
+   :detector "reuse-incomplete-certificate-later-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :reused-certificate-unobserved
+   :mechanism :executed-production
+   :mutation :reuse-without-observing-the-certificate
+   :target-symbol "qualification/observe-evidence!"
+   :consumer-symbol "point-reuse/reuse!"
+   :detector "reused-certificate-unobserved-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
     {:test
