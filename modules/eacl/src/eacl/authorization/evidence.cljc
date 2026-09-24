@@ -3,6 +3,7 @@
    Timeless definite values are plain booleans. Only qualified/conditional
    values allocate evidence; no evaluator or database is invoked here."
   (:require [clojure.set :as set]
+            [clojure.string :as str]
             [eacl.caveats.values :as values]))
 
 (def format-version 1)
@@ -223,16 +224,60 @@
           (values/encode-bounded [:eacl.authorization/evidence format-version (value e)
                                   (valid-until e) (complete? e)] wire-limits))))))
 
+(def ^:private scalar-wire-prefix
+  (str "[:eacl.authorization/evidence " format-version " "))
+
+(defn- boolean-token [token]
+  (case token "true" true "false" false nil))
+
+(defn- decimal-token
+  "The integer a token spells, or nil. Host leniency (a sign, leading zeros)
+   is harmless: `decode` keeps a candidate only when it re-encodes to the
+   same payload."
+  [token]
+  #?(:clj (try (Long/parseLong token) (catch NumberFormatException _ nil))
+     :cljs (let [n (js/parseInt token 10)] (when-not (js/isNaN n) n))))
+
+(defn- scalar-candidate
+  "Reads a closed scalar envelope, `[:eacl.authorization/evidence 1 value end
+   complete]`, without the generic reader. Nil for any other payload. The
+   result is only a candidate: `decode` keeps it exactly when it re-encodes to
+   the payload, the same canonicality check the generic read must pass."
+  [payload]
+  (when (and (string? payload)
+             (str/starts-with? payload scalar-wire-prefix)
+             (str/ends-with? payload "]"))
+    (let [start (count scalar-wire-prefix)
+          value-end (str/index-of payload " " start)
+          end-end (when value-end (str/index-of payload " " (inc value-end)))]
+      (when end-end
+        (let [v (boolean-token (subs payload start value-end))
+              end-token (subs payload (inc value-end) end-end)
+              end (when-not (= "nil" end-token) (decimal-token end-token))
+              complete (boolean-token (subs payload (inc end-end) (dec (count payload))))]
+          (when (and (some? v) (some? complete) (or (some? end) (= "nil" end-token)))
+            (try (with-certificate (->Evidence v nil true) end complete)
+                 (catch #?(:clj Throwable :cljs :default) _ nil))))))))
+
+(defn- decode-generic [payload]
+  (let [wire (values/decode-bounded payload wire-limits)]
+    (when-not (and (vector? wire) (= 5 (count wire))
+                   (= :eacl.authorization/evidence (first wire)) (= format-version (second wire)))
+      (error! :wire-shape))
+    (let [[_ _ v end complete] wire
+          result (with-certificate (->Evidence (validate-value! v) nil true) end complete)]
+      (when-not (= payload (encode result)) (error! :noncanonical-wire))
+      result)))
+
 (defn decode [payload]
   (cond
     (= true-wire payload) true
     (= false-wire payload) false
     :else
-    (let [wire (values/decode-bounded payload wire-limits)]
-      (when-not (and (vector? wire) (= 5 (count wire))
-                     (= :eacl.authorization/evidence (first wire)) (= format-version (second wire)))
-        (error! :wire-shape))
-      (let [[_ _ v end complete] wire
-            result (with-certificate (->Evidence (validate-value! v) nil true) end complete)]
-        (when-not (= payload (encode result)) (error! :noncanonical-wire))
-        result))))
+    ;; Certified definite answers are the common resident values, and every
+    ;; reuse decodes one. Their closed envelope needs no generic reader: a
+    ;; candidate that re-encodes to the payload is the generic read.
+    (let [candidate (scalar-candidate payload)]
+      (if (and (some? candidate) (= payload (encode candidate)))
+        candidate
+        (decode-generic payload)))))

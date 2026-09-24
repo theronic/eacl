@@ -287,3 +287,21 @@
                      {:start-ms 100 :valid-until-ms nil}]]
       (is (some? (try (q/observe-interval! request invalid) nil
                       (catch #?(:clj Exception :cljs :default) e (ex-data e))))))))
+
+(deftest certified-denotation-scope-omits-time-and-basis
+  (let [original (request {:context {"flag" true} :time 100})
+        later (request {:context {"flag" true} :time 150})
+        rebased (request {:context {"flag" true} :time 100
+                          :basis {:source "s" :lifecycle "l" :revision 2}})
+        changed (request {:context {"flag" false} :time 100})
+        unevaluated (request {:context {"flag" true} :time 100 :evaluator nil})]
+    (is (not= (q/exact-reuse-identity original) (q/exact-reuse-identity later)))
+    (is (not= (q/exact-reuse-identity original) (q/exact-reuse-identity rebased)))
+    (is (= (q/certified-denotation-scope original) (q/certified-denotation-scope later)))
+    (is (= (q/certified-denotation-scope original) (q/certified-denotation-scope rebased)))
+    (is (not= (q/certified-denotation-scope original) (q/certified-denotation-scope changed)))
+    (is (not= (q/certified-denotation-scope original) (q/certified-denotation-scope unevaluated)))
+    (is (= :certified-point (first (q/certified-denotation-scope original))))
+    (is (identical? (q/certified-denotation-scope original)
+                    (q/certified-denotation-scope original))
+        "one value per request")))

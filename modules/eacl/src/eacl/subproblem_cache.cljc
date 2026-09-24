@@ -238,9 +238,11 @@
   ([]
    (record-avoided-backend-operation! *store*))
   ([store]
-   (when store
+   (record-avoided-backend-operation! store 1))
+  ([store n]
+   (when (and store (pos? n))
      (record-metrics!
-      store update :avoided-backend-operations (fnil inc 0)))
+      store update :avoided-backend-operations (fnil + 0) n))
    nil))
 
 (defn- validate-publication-options!
@@ -248,9 +250,12 @@
   (when-not (map? options)
     (invalid-config! "Subproblem cache publication options must be a map."
                      {:options options}))
-  ;; The engine's constant `{:valid? f}` maps cannot carry an unknown key;
-  ;; every other shape takes the diagnostic scan in its original order.
-  (when-not (and (== 1 (count options)) (contains? options :valid?))
+  ;; The engine's constant `{:valid? f}` and `{:valid? f :replace? g}` maps
+  ;; cannot carry an unknown key; every other shape takes the diagnostic scan
+  ;; in its original order.
+  (when-not (and (contains? options :valid?)
+                 (or (== 1 (count options))
+                     (and (== 2 (count options)) (contains? options :replace?))))
     (when-let [unknown
                (seq (sort-by pr-str
                              (remove publication-option-keys (keys options))))]
@@ -421,6 +426,28 @@
   (record-metrics! store update :publication-rejections inc)
   {:published? false :reason reason})
 
+(defn- insert!
+  "Inserts one validated value into `tier-store`: :published,
+  :compatible-winner when a different resident value keeps the key, or
+  :store-error."
+  [tier-store storage-key options value]
+  (try
+    (if (or (lru/put-if-absent! tier-store storage-key value)
+            (let [prior (lru/peek-entry tier-store storage-key)]
+              ;; A fresh computation may supersede an ineligible import.
+              ;; Imported inputs cannot reach this publication branch.
+              ;; Compare outside the atomic replacement and preserve a
+              ;; concurrent publisher's different expected identity.
+              (and (:found? prior)
+                   (or (imports/imported? (:value prior))
+                       (when-let [replace? (:replace? options)]
+                         (replace? (:value prior) value)))
+                   (lru/replace-if! tier-store storage-key (:value prior) value))))
+      :published
+      :compatible-winner)
+    (catch #?(:clj Throwable :cljs :default) _
+      :store-error)))
+
 (defn publish!
   "Publishes one already-computed value under an opaque storage key.
 
@@ -457,29 +484,18 @@
       :else
       (if-let [final-rejection (request-publication-rejection)]
         (reject-publication! store final-rejection)
-        (try
-          (let [tier-store (get (:tiers store) tier)
-                published?
-                (or (lru/put-if-absent! tier-store storage-key value)
-                    (let [prior (lru/peek-entry tier-store storage-key)]
-                      ;; A fresh computation may supersede an ineligible import.
-                      ;; Imported inputs cannot reach this publication branch.
-                      ;; Compare outside the atomic replacement and preserve a
-                      ;; concurrent publisher's different expected identity.
-                      (and (:found? prior)
-                           (or (imports/imported? (:value prior))
-                               (when-let [replace? (:replace? options)]
-                                 (replace? (:value prior) value)))
-                           (lru/replace-if! tier-store storage-key (:value prior) value))))]
-            (if published?
-              (do
-                (record-metrics! store update :puts inc)
-                (record-content-change! store)
-                {:published? true :reason :published})
-              (do
-                (record-metrics! store update :publication-races inc)
-                {:published? false :reason :compatible-winner})))
-          (catch #?(:clj Throwable :cljs :default) _
+        (case (insert! (get (:tiers store) tier) storage-key options value)
+          :published
+          (do
+            (record-metrics! store update :puts inc)
+            (record-content-change! store)
+            {:published? true :reason :published})
+          :compatible-winner
+          (do
+            (record-metrics! store update :publication-races inc)
+            {:published? false :reason :compatible-winner})
+          :store-error
+          (do
             (record-metrics!
              store #(-> %
                         (update :store-errors inc)
@@ -508,6 +524,74 @@
     (if-let [storage-key (exact-denotation-storage-key semantic-key)]
       (publish! *store* :denotation storage-key options value)
       {:published? false :reason :incomplete-key})))
+
+(defn lookup-denotations!
+  "Looks up many denotation keys in the dynamically selected exact store.
+  Returns a vector aligned with `semantic-keys`: each resident value, or
+  `absent` for a key without one. Each key is looked up, touched and counted
+  exactly as `lookup-denotation!` would; one request-stage check covers the
+  batch."
+  [semantic-keys absent]
+  (let [store *store*]
+    (if (and store *exact-denotation-key-fn* (execution/cache-stage-available?))
+      (mapv (fn [semantic-key]
+              (if-let [resident (some->> (exact-denotation-storage-key semantic-key)
+                                         (resident! store :denotation))]
+                (do (when (:imported? resident) (imports/consumed!))
+                    (record-lookup-metric! store :denotation-hits)
+                    (:value resident))
+                absent))
+            semantic-keys)
+      (vec (repeat (count semantic-keys) absent)))))
+
+(defn publish-denotations!
+  "Publishes many `[semantic-key value]` entries under one publication option
+  map into the dynamically selected exact store. Each entry is keyed,
+  validated, inserted and counted exactly as `publish-denotation!` would; the
+  options, the request stage and the content revision are checked or
+  recorded once for the batch. Returns the number of entries published."
+  [options entries]
+  (let [store *store*
+        keyed (when store
+                (into []
+                      (keep (fn [[semantic-key value]]
+                              (when-let [storage-key (exact-denotation-storage-key semantic-key)]
+                                [storage-key value])))
+                      entries))]
+    (if (empty? keyed)
+      0
+      (do
+        (validate-publication-options! options)
+        (if (or (imports/derived?) (request-publication-rejection))
+          (do (record-metrics! store update :publication-rejections + (count keyed))
+              0)
+          (let [valid? (:valid? options)
+                admitted (filterv (fn [[_ value]] (valid-value? valid? value)) keyed)
+                invalid (- (count keyed) (count admitted))]
+            (when (pos? invalid)
+              (record-metrics!
+               store #(-> %
+                          (update :invalid-results + invalid)
+                          (update :publication-rejections + invalid))))
+            (if (request-publication-rejection)
+              (do (record-metrics! store update :publication-rejections + (count admitted))
+                  0)
+              (let [tier-store (get (:tiers store) :denotation)
+                    outcomes (reduce (fn [outcomes [storage-key value]]
+                                       (let [outcome (insert! tier-store storage-key options value)]
+                                         (assoc outcomes outcome (inc (get outcomes outcome)))))
+                                     {:published 0 :compatible-winner 0 :store-error 0}
+                                     admitted)
+                    published (:published outcomes)
+                    errors (:store-error outcomes)]
+                (record-metrics!
+                 store #(-> %
+                            (update :puts + published)
+                            (update :publication-races + (:compatible-winner outcomes))
+                            (update :store-errors + errors)
+                            (update :publication-rejections + errors)))
+                (when (pos? published) (record-content-change! store))
+                published))))))))
 
 (defn- canonical-entry-sort-key
   [{:keys [tier key]}]
@@ -608,23 +692,30 @@
   [value expected-keys]
   (and (map? value) (= expected-keys (set (keys value)))))
 
+(defn- same-keyword?
+  [a b]
+  #?(:clj (identical? a b) :cljs (keyword-identical? a b)))
+
 (defn- complete-storage-key?
   [tier key]
+  ;; Every lookup and publication checks one key: index the vectors directly
+  ;; rather than through seqs. JVM keywords are interned, so identity is
+  ;; keyword equality there.
   (and (vector? key)
-       (= 3 (count key))
-       (= cache-key/key-format (first key))
-       (= (if (= :answer tier)
-            :authorization-answer
-            :authorization-subproblem)
-          (second key))
+       (== 3 (count key))
+       (same-keyword? cache-key/key-format (nth key 0))
+       (same-keyword? (if (same-keyword? :answer tier)
+                        :authorization-answer
+                        :authorization-subproblem)
+                      (nth key 1))
        (let [identity (nth key 2)]
          (and (vector? identity)
-              (= 6 (count identity))
-              (= tier (nth identity 0))
-              (contains? (if (= :answer tier)
-                           #{:exact :managed}
-                           #{:exact})
-                         (nth identity 1))
+              (== 6 (count identity))
+              (same-keyword? tier (nth identity 0))
+              (let [mode (nth identity 1)]
+                (or (same-keyword? :exact mode)
+                    (and (same-keyword? :answer tier)
+                         (same-keyword? :managed mode))))
               (some? (nth identity 2))
               (some? (nth identity 3))
               (some? (nth identity 4))

@@ -1,6 +1,7 @@
 (ns eacl.operator.vector-evaluator
   "Aligned mask-driven predicates for bounded acyclic candidate vectors."
   (:require [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.point-reuse :as point-reuse]
             [eacl.authorization.qualification :as qualification]
             [eacl.backend.direct-membership :as direct]
             [eacl.backend.v8 :as backend]
@@ -477,11 +478,6 @@
               (add-stat! :failed-vectors 1)
               (throw error))))))))
 
-(def ^:private point-cache-options
-  {:valid? boolean?})
-
-(def ^:private qualified-point-cache-options {:valid? string?})
-
 (defn- point-cache-key
   [plan permission node-id scope-identity candidate]
   [:operator-acyclic-point 1
@@ -506,56 +502,36 @@
         options (assoc options :candidates candidates
                        :permission permission :node-id node-id)
         store subproblem/*store*
-        scope-identity (if (and store qualification)
-                         [:qualified-point evidence/format-version scope-identity
-                          (qualification/exact-reuse-identity qualification)]
-                         scope-identity)]
+        ;; A qualified decision is keyed without its evaluation time and
+        ;; stored with its certified interval, so a later request reuses it
+        ;; while that interval admits the later time.
+        scope (when store (point-reuse/scope qualification))]
     (if (or (nil? store) (empty? candidates))
       (check-many-normalized options)
-      (let [looked-up
-            (mapv
-             (fn [candidate]
-               (let [key (point-cache-key
-                          plan permission node-id scope-identity candidate)]
-                 (if-let [resolved
-                          (when-not (demanded-witness-fault candidate)
-                            (subproblem/lookup-denotation! key))]
-                   (do
-                     (subproblem/record-avoided-backend-operation! store)
-                     {:candidate candidate :key key
-                      :decision (if qualification (qualification/observe-evidence! qualification (evidence/decode (:value resolved))) (:value resolved))
-                      :cached? true})
-                   {:candidate candidate :key key :cached? false})))
-             candidates)
-            miss-records (filterv (complement :cached?) looked-up)
-            misses (mapv :candidate miss-records)
-            ;; Miss decisions align positionally with `miss-records`, so the
-            ;; scatter back into candidate order walks one miss index rather
-            ;; than hashing each candidate's semantic identity twice.
+      (let [indexes (range (count candidates))
+            keys (mapv #(point-reuse/scoped-key
+                         (point-cache-key plan permission node-id scope-identity %) scope)
+                       candidates)
+            ;; A candidate with a demanded witness fault is never looked up.
+            probed (filterv #(not (demanded-witness-fault (nth candidates %))) indexes)
+            found (zipmap probed (point-reuse/reuse! qualification (mapv keys probed) ::miss))
+            reused (mapv #(get found % ::miss) indexes)
+            miss-indexes (filterv #(= ::miss (nth reused %)) indexes)
+            misses (mapv candidates miss-indexes)
             miss-decisions
             (if (seq misses)
               (check-many-normalized (assoc options :candidates misses))
               [])
             decisions
-            (loop [index 0 miss-index 0 decisions (transient [])]
-              (if (= index (count looked-up))
-                (persistent! decisions)
-                (let [{:keys [decision cached?]} (nth looked-up index)]
-                  (if cached?
-                    (recur (inc index) miss-index (conj! decisions decision))
-                    (recur (inc index) (inc miss-index)
-                           (conj! decisions
-                                  (nth miss-decisions miss-index)))))))]
+            (persistent!
+             (reduce (fn [decisions [index decision]] (assoc! decisions index decision))
+                     (transient reused)
+                     (map vector miss-indexes miss-decisions)))]
         ;; The full miss vector and its leaf subgroups have succeeded before
         ;; any completed point becomes externally reusable.
-        (when (and subproblem/*populate?* (not-any? evidence/fault? miss-decisions))
-          (dotimes [miss-index (count miss-records)]
-            (let [decision (nth miss-decisions miss-index)]
-              (when-not (evidence/fault? decision)
-                (subproblem/publish-denotation!
-                 (:key (nth miss-records miss-index))
-                 (if qualification qualified-point-cache-options point-cache-options)
-                 (if qualification (evidence/encode decision) decision))))))
-        (add-stat! :point-cache-hits (- (count looked-up) (count misses)))
+        (when (not-any? evidence/fault? miss-decisions)
+          (point-reuse/publish! qualification (map (fn [index decision] [(nth keys index) decision])
+                                                   miss-indexes miss-decisions)))
+        (add-stat! :point-cache-hits (- (count candidates) (count misses)))
         (add-stat! :point-cache-misses (count misses))
         decisions))))

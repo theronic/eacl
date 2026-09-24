@@ -97,3 +97,31 @@
                                           {:maximum-size 4194304 :maximum-entries 16384 :maximum-depth 80})]
       (is (= expected (e/encode proof)))
       (is (= proof (e/decode expected))))))
+
+(defn- outcome [f]
+  (try [:value (f)]
+       (catch #?(:clj Throwable :cljs :default) error [:error (:reason (ex-data error))])))
+
+(deftest scalar-envelopes-decode-exactly-as-the-generic-reader-does
+  (let [generic #(outcome (fn [] (#'e/decode-generic %)))
+        payloads (for [value [false true]
+                       end [nil -62135596800000 -1 0 7 100 1790240461782 253402300799999]
+                       complete? [false true]]
+                   (e/encode (e/with-certificate value end complete?)))
+        edits (fn [payload]
+                (concat
+                 (for [i (range (count payload))]
+                   (str (subs payload 0 i) (subs payload (inc i))))
+                 (for [i (range (inc (count payload))) c [" " "0" "1" "-" "+" "]" "e" "N" "."]]
+                   (str (subs payload 0 i) c (subs payload i)))
+                 (for [i (range (count payload)) c [" " "0" "9" "-" "]" "x"]]
+                   (str (subs payload 0 i) c (subs payload (inc i))))
+                 ["" "[:eacl.authorization/evidence 1 " "[:eacl.authorization/evidence 1 true 1 true 1]"
+                  "[:eacl.authorization/evidence 1 true 253402300800000 true]"
+                  "[:eacl.authorization/evidence 1 true 9223372036854775808 true]"
+                  "[:eacl.authorization/evidence 1 true 1e3 true]"]))]
+    (doseq [payload payloads]
+      (is (= [:value (e/decode payload)] (generic payload)))
+      (is (= payload (e/encode (e/decode payload))))
+      (doseq [edited (edits payload)]
+        (is (= (outcome #(e/decode edited)) (generic edited)) edited)))))

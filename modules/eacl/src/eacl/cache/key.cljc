@@ -107,3 +107,20 @@
   "Builds an exact denotation key for an exact basis."
   [identity]
   (authorization-key :authorization-subproblem :exact identity))
+
+(defn exact-denotation-key-builder
+  "Returns a constructor equal to `exact-denotation-key` for identities that
+  share every field but `:semantic`, which it takes as its argument. The
+  shared fields are validated once, here; each call validates only its
+  semantic identity. A request builds one key per candidate decision."
+  [shared-identity]
+  (exact-denotation-key (assoc shared-identity :semantic ::shared-fields))
+  (let [{:keys [tier source-lifecycle abi reuse]} shared-identity]
+    (fn [semantic]
+      (when (nil? semantic)
+        (invalid-key! "Authorization cache identity field must be present."
+                      {:storage-domain :authorization-subproblem
+                       :reuse-mode :exact
+                       :field :semantic}))
+      [key-format :authorization-subproblem
+       [tier :exact source-lifecycle abi semantic reuse]])))

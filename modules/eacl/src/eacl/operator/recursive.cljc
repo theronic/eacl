@@ -8,6 +8,7 @@
   may consume absence only after their dependency component is complete."
   (:require [eacl.authorization.evidence :as evidence]
             [eacl.authorization.evidence-index :as evidence-index]
+            [eacl.authorization.point-reuse :as point-reuse]
             [eacl.authorization.qualification :as qualification]
             [eacl.relationships.edge :as edge]
             [eacl.backend.direct-membership :as direct]
@@ -1448,11 +1449,6 @@
     (evaluate-delegated options delegated)
     (evaluate-many-validated options)))
 
-(def ^:private point-cache-options
-  {:valid? boolean?})
-
-(def ^:private qualified-point-cache-options {:valid? string?})
-
 (defn- point-cache-key
   [plan permission scope-identity candidate]
   [:operator-recursive-point checkpoint-version
@@ -1470,56 +1466,42 @@
     (if (or checkpoint (nil? subproblem/*store*))
       (evaluate-fresh options)
       (let [permission (or permission (:root plan))
-            store subproblem/*store*
-            scope-identity (if qualification
-                             [:qualified-point evidence/format-version scope-identity
-                              (qualification/exact-reuse-identity qualification)]
-                             scope-identity)
-            looked-up
-            (mapv
-             (fn [candidate]
-               (let [key (point-cache-key
-                          plan permission scope-identity candidate)]
-                 (if-let [resolved
-                          (subproblem/lookup-denotation! key)]
-                   (do
-                     (subproblem/record-avoided-backend-operation! store)
-                     {:candidate candidate :key key
-                      :decision (if qualification (qualification/observe-evidence! qualification (evidence/decode (:value resolved))) (:value resolved))
-                      :cached? true})
-                   {:candidate candidate :key key :cached? false})))
-             candidates)
+            ;; A qualified decision is keyed without its evaluation time and
+            ;; stored with its certified interval, so a later request reuses
+            ;; it while that interval admits the later time.
+            scope (point-reuse/scope qualification)
+            keys (mapv #(point-reuse/scoped-key
+                         (point-cache-key plan permission scope-identity %) scope)
+                       candidates)
+            reused (point-reuse/reuse! qualification keys ::miss)
             misses
-            (->> looked-up
-                 (remove :cached?)
-                 (map :candidate)
-                 distinct
-                 vec)
+            (into [] (comp (keep (fn [[candidate decision]]
+                                   (when (= ::miss decision) candidate)))
+                           (distinct))
+                  (map vector candidates reused))
             evaluated
             (if (seq misses)
               (evaluate-fresh (assoc options :candidates misses))
               {:decisions [] :counters {}})
             miss-decisions (zipmap misses (:decisions evaluated))
             decisions
-            (mapv (fn [{:keys [candidate decision cached?]}]
-                    (if cached? decision (get miss-decisions candidate)))
-                  looked-up)]
-        (when (and subproblem/*populate?* (not-any? evidence/fault? (:decisions evaluated)))
+            (mapv (fn [candidate decision]
+                    (if (= ::miss decision) (get miss-decisions candidate) decision))
+                  candidates reused)]
+        (when (not-any? evidence/fault? (:decisions evaluated))
           ;; Duplicate candidates share one key; publish each key once.
-          (reduce (fn [published {:keys [candidate key cached?]}]
-                    (if (or cached? (contains? published key))
-                      published
-                      (do (subproblem/publish-denotation!
-                           key (if qualification qualified-point-cache-options point-cache-options)
-                           (let [value (get miss-decisions candidate)]
-                             (if qualification (evidence/encode value) value)))
-                          (conj published key))))
-                  #{}
-                  looked-up))
+          (point-reuse/publish!
+           qualification
+           (vals (reduce (fn [entries [candidate key decision]]
+                           (if (or (not= ::miss decision) (contains? entries key))
+                             entries
+                             (assoc entries key [key (get miss-decisions candidate)])))
+                         {}
+                         (map vector candidates keys reused)))))
         {:decisions decisions
          :counters
          (assoc (:counters evaluated)
-                :point-cache-hits (- (count looked-up) (count misses))
+                :point-cache-hits (- (count candidates) (count misses))
                 :point-cache-misses (count misses))
          :replayed? false
          :point-cached? (empty? misses)}))))

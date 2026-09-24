@@ -3,7 +3,11 @@
              :refer [deftest is testing]]
             [clojure.string :as str]
             [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.point-reuse :as point-reuse]
             [eacl.authorization.qualification :as qualification]
+            [eacl.authorization.qualification-test :as qualification-fixtures]
+            [eacl.authorization.temporal :as temporal]
+            [eacl.cache.key :as cache-key]
             [eacl.backend.v8 :as backend]
             [eacl.backend.direct-membership :as direct]
             [eacl.authorization.batch :as batch]
@@ -2259,6 +2263,94 @@ definition doc {
                         (if (keyword? decision) false decision)))]
         (leveled-control-run)))))
 
+;;; Set-algebra result reuse. A request at 100 publishes its decisions under
+;;; certified point keys; a later request looks them up under its own
+;;; certified scope. `expiring` is certified until 200 and `incomplete` has an
+;;; incomplete certificate.
+
+(defn- reuse-control-storage-key
+  [semantic]
+  (cache-key/exact-denotation-key
+   {:tier :denotation
+    :source-lifecycle #uuid "7f3c62e4-51b2-4c43-9a8e-2f0c7d5e1a90"
+    :abi :reuse-control-v1
+    :semantic semantic
+    :reuse [:basis 1]}))
+
+(defn- reuse-control
+  "Publishes `decision` at 100 under `computed-context`; returns the decision
+  a request at `time` under `context` reuses (or ::miss) and that request's
+  certificate."
+  [decision computed-context time context]
+  (binding [subproblem/*store* (subproblem/store {:denotation-max-entries 4
+                                                  :answer-max-entries 1})
+            subproblem/*exact-denotation-key-fn* reuse-control-storage-key]
+    (let [key-of #(point-reuse/scoped-key [:reuse-control] (point-reuse/scope %))
+          computed (qualification-fixtures/request {:time 100 :context computed-context})
+          later (qualification-fixtures/request {:time time :context context})]
+      (point-reuse/publish! computed [[(key-of computed) decision]])
+      {:reused (first (point-reuse/reuse! later [(key-of later)] ::miss))
+       :certificate (qualification/certificate later)})))
+
+(defn reuse-past-certificate-end-killed?
+  []
+  (let [expiring (evidence/with-certificate true 200 true)
+        observe #(:reused (reuse-control expiring {} 200 {}))]
+    (and (= expiring (:reused (reuse-control expiring {} 199 {})))
+         (= ::miss (observe))
+         ;; Admitting the certificate's end reuses a grant at the instant it
+         ;; expires; observing it then fails the request as invalid evidence.
+         (not= ::miss
+               (operator-typed-or
+                #(with-redefs [temporal/reusable?
+                               (fn [answer time _]
+                                 (and (<= (:start-ms answer) time)
+                                      (let [end (:valid-until-ms answer)]
+                                        (or (nil? end) (<= time end)))
+                                      (:complete? answer)))]
+                   (observe)))))))
+
+(defn reuse-key-without-caveat-context-killed?
+  []
+  (let [observe #(:reused (reuse-control true {"flag" true} 150 {"flag" false}))]
+    (and (true? (:reused (reuse-control true {"flag" true} 150 {"flag" true})))
+         (= ::miss (observe))
+         ;; A scope without the caveat context shares one key across
+         ;; contexts, so a decision made under one is reused under another.
+         (not= ::miss
+               (with-redefs [qualification/certified-denotation-scope
+                             (fn [request]
+                               (let [[format _ _ _ evaluator]
+                                     (qualification/exact-reuse-identity request)]
+                                 [:certified-point evidence/format-version format evaluator]))]
+                 (observe))))))
+
+(defn reuse-incomplete-certificate-later-killed?
+  []
+  (let [incomplete (evidence/with-certificate true nil false)
+        observe #(:reused (reuse-control incomplete {} 150 {}))]
+    (and (= incomplete (:reused (reuse-control incomplete {} 100 {})))
+         (= ::miss (observe))
+         ;; Ignoring completeness reuses a certificate that does not cover
+         ;; any later time.
+         (not= ::miss
+               (with-redefs [temporal/reusable?
+                             (fn [answer time _]
+                               (and (<= (:start-ms answer) time)
+                                    (evidence/before? time (:valid-until-ms answer))))]
+                 (observe))))))
+
+(defn reused-certificate-unobserved-killed?
+  []
+  (let [expiring (evidence/with-certificate true 200 true)
+        observe #(get-in (reuse-control expiring {} 150 {}) [:certificate :valid-until-ms])]
+    (and (= 200 (observe))
+         ;; Without observing it, a request answered from a reused decision
+         ;; claims a certificate beyond that decision's own.
+         (not= 200
+               (with-redefs [qualification/observe-evidence! (fn [_ value] value)]
+                 (observe))))))
+
 (def controls
   {:wrong-arrow-direction wrong-arrow-direction-killed?
    :uuid-type-coercion uuid-type-coercion-killed?
@@ -2362,7 +2454,11 @@ definition doc {
    :membership-level-below-latest-skip membership-level-below-latest-skip-killed?
    :membership-first-level-certificate membership-first-level-certificate-killed?
    :membership-conditional-answered-false
-   membership-conditional-answered-false-killed?})
+   membership-conditional-answered-false-killed?
+   :reuse-past-certificate-end reuse-past-certificate-end-killed?
+   :reuse-key-without-caveat-context reuse-key-without-caveat-context-killed?
+   :reuse-incomplete-certificate-later reuse-incomplete-certificate-later-killed?
+   :reused-certificate-unobserved reused-certificate-unobserved-killed?})
 
 (deftest every-portable-production-mutant-is-killed-test
   (doseq [[id detector] controls]
