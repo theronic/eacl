@@ -204,6 +204,23 @@
           {:cases 0}
           (range first-seed (+ first-seed cases))))
 
+(deftest conditional-result-keeps-the-fresh-point-certificate-test
+  ;; Seed 386 first exposed a batched operand with a wider decisive
+  ;; certificate being reused by the point reconstruction of a conditional
+  ;; operator result.  Permissionship stayed conditional, but the cached
+  ;; public residual lost its 1300 deadline and differed from cache-free
+  ;; execution on the very first request.
+  (let [result (run-case 386)]
+    (is (nil? (:failure result)) (pr-str (:failure result)))))
+
+(deftest cached-check-reconstructs-the-fresh-point-certificate-test
+  ;; Seed 3217 reaches a point check after a prior walk cached a different,
+  ;; still-sound certificate for one recursive operand.  The public check
+  ;; must reconstruct the point evaluator's residual instead of exposing the
+  ;; walk evaluator's certificate.
+  (let [result (run-case 3217)]
+    (is (nil? (:failure result)) (pr-str (:failure result)))))
+
 (deftest cached-results-equal-fresh-results-test
   (let [report (run-campaign 1 #?(:clj 40 :cljs 8))]
     (is (nil? (:failure report)) (pr-str (:failure report)))

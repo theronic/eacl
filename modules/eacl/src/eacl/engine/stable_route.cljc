@@ -460,11 +460,17 @@
   "The subproblem key of one subject's membership in the root of the plan
   (a sealed union plan or a guarded program) fingerprinted `fingerprint`, at
   one resource. `scope` is the request's certified qualification scope, or
-  nil; a qualified value records the interval its evidence certifies."
-  [fingerprint scope subject-type subject-eid resource-eid]
+  nil; a qualified value records the interval its evidence certifies.
+
+  `exact-certificate?` selects a separate lane for the point check's ordered
+  first-witness certificate. The shared lane may contain a batched search's
+  wider certificate, which proves the same permissionship but cannot replace
+  the point certificate inside a conditional operator residual."
+  [fingerprint scope subject-type subject-eid resource-eid exact-certificate?]
   (point-reuse/scoped-key
-   [:membership-point membership-point-version fingerprint
-    subject-type subject-eid resource-eid]
+   (cond-> [:membership-point membership-point-version fingerprint
+            subject-type subject-eid resource-eid]
+     exact-certificate? (conj :exact-certificate))
    scope))
 
 (defn check-eids
@@ -478,20 +484,34 @@
 
   With a subproblem store bound, a decision this client cached for the same
   plan, subject and resource is reused while its certificate admits the
-  request's time, and a computed decision is published for later requests."
-  [{:keys [plan subject-type subject-eid resource-eid qualification] :as options}]
+  request's time, and a computed decision is published for later requests.
+  Internal conditional-operator reconstruction sets `:exact-certificate?`
+  to exclude wider certificates produced by batched membership search."
+  [{:keys [plan subject-type subject-eid resource-eid qualification
+           exact-certificate?]
+    :as options}]
   (if (or (nil? subject-eid) (nil? resource-eid))
     false
-    (let [key (when subproblem/*store*
-                (membership-key (:fingerprint plan) (point-reuse/scope qualification)
-                                subject-type subject-eid resource-eid))
+    (let [cache? (some? subproblem/*store*)
+          scope (when cache? (point-reuse/scope qualification))
+          shared-key (when cache?
+                       (membership-key (:fingerprint plan) scope
+                                       subject-type subject-eid resource-eid false))
+          exact-key (when cache?
+                      (membership-key (:fingerprint plan) scope
+                                      subject-type subject-eid resource-eid true))
+          key (if exact-certificate? exact-key shared-key)
           cached (if key (first (point-reuse/reuse! qualification [key] ::miss)) ::miss)]
       (if (not= ::miss cached)
         (do (add-membership-stats! {:reused 1})
             cached)
         (do (add-membership-stats! {:searched 1})
             (let [value (probe-check-eids options)]
-              (when key (point-reuse/publish! qualification [[key value]]))
+              ;; A point computation is valid in both lanes. A widened batch
+              ;; computation is published only to the shared lane below.
+              (when key
+                (point-reuse/publish! qualification
+                                      [[shared-key value] [exact-key value]]))
               value))))))
 
 ;; ---------------------------------------------------------------------------
@@ -1180,7 +1200,11 @@
           key-of (when cache?
                    (let [fingerprint (:fingerprint plan)
                          scope (point-reuse/scope qualification)]
-                     #(membership-key fingerprint scope subject-type subject-eid %)))
+                     #(membership-key fingerprint scope subject-type subject-eid % false)))
+          exact-key-of (when cache?
+                         (let [fingerprint (:fingerprint plan)
+                               scope (point-reuse/scope qualification)]
+                           #(membership-key fingerprint scope subject-type subject-eid % true)))
           ;; One client-cache lookup for the distinct resources this request
           ;; has not answered yet.
           unknown (when cache?
@@ -1236,17 +1260,27 @@
                         value))
                     resource-eids decided))]
         ;; Every decision is complete once the call has succeeded: publish
-        ;; each computed one, including exact fallback values, once.
+        ;; each computed one once. Exact fallback values also populate the
+        ;; point-only certificate lane; leveled values populate only the
+        ;; shared lane because their wider certificate is not substitutable
+        ;; inside a conditional operator residual.
         (when (and cache? (seq @computed))
           (point-reuse/publish!
            qualification
-           (vals (reduce (fn [entries [resource-eid value]]
-                           (if (and (contains? @computed resource-eid)
-                                    (not (contains? entries resource-eid)))
-                             (assoc entries resource-eid [(key-of resource-eid) value])
-                             entries))
-                         {}
-                         (map vector resource-eids values)))))
+           (vals
+            (reduce (fn [entries [resource-eid value original]]
+                      (if (contains? @computed resource-eid)
+                        (reduce (fn [entries key]
+                                  (if (contains? entries key)
+                                    entries
+                                    (assoc entries key [key value])))
+                                entries
+                                (cond-> [(key-of resource-eid)]
+                                  (= ::qualified original)
+                                  (conj (exact-key-of resource-eid))))
+                        entries))
+                    {}
+                    (map vector resource-eids values decided)))))
         values))))
 
 (defn derives-from-node?

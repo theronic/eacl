@@ -1899,7 +1899,25 @@
                                   :subject-eid (:subject-eid candidate)
                                   :resource-eid (:resource-eid candidate))))
                         candidates)))
+        exact-point
+        ;; A batched membership decision may carry the widest witness's
+        ;; certificate. Conditional operator reconstruction needs the point
+        ;; check's first-witness certificate, so it uses the exact membership
+        ;; cache lane rather than the shared batched lane.
+        (fn [permission candidates]
+          (let [options (assoc options :plan (stable-plan db permission))]
+            (mapv (fn [candidate]
+                    (stable-route/check-eids
+                     (assoc options
+                            :exact-certificate? true
+                            :subject-type (:subject-type candidate)
+                            :subject-eid (:subject-eid candidate)
+                            :resource-eid (:resource-eid candidate))))
+                  candidates)))
         tabled (fn [permission subject-type subject-eid resource-eid]
+                 ;; Guarded search defers conditional/faulting resources to
+                 ;; the tabled evaluator, whose recursive point cache already
+                 ;; contains only exact reconstructed decisions.
                  (operator-recursive/check-cached-eids
                   {:adapter db :plan (stable-plan db permission)
                    :qualification *qualification*
@@ -1949,7 +1967,13 @@
                          (union-delegate permission candidates)))
                      union-delegate))]
     {:attempts attempts
-     :point-delegate (dispatch point)
+     :point-delegate
+     (fn [permission candidates]
+       (if (contains? guarded permission)
+         (mapv (fn [{:keys [subject-type subject-eid resource-eid]}]
+                 (tabled permission subject-type subject-eid resource-eid))
+               candidates)
+         (exact-point permission candidates)))
      :holdings (when context
                  (fn [subject-type subject-eid relation-eid resource-type]
                    (stable-route/subject-holdings
@@ -2419,6 +2443,7 @@
                          :scope-identity scope-identity
                          :limits (recursive-operator-limits)
                          :delegate (:delegate oracle)
+                         :point-delegate (:point-delegate oracle)
                          :checkpoint? false})]
                    (report-adapter-attempts! (:attempts oracle))
                    decision)
