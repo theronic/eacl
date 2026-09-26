@@ -19,6 +19,7 @@
   :operator-subtracted-guard-flipped
   :operator-nonlinear-recursion-guarded
   :membership-truncated-holdings-beyond-bound
+  :membership-consulted-false-until-absent
   :reuse-past-certificate-end
   :reuse-key-without-caveat-context
   :reuse-incomplete-certificate-later
@@ -342,6 +343,16 @@
    :mutation :answer-a-conditional-only-resource-false
    :target-symbol "route/decide-leveled"
    :detector "membership-conditional-answered-false-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :membership-consulted-false-until-absent
+   :mechanism :executed-production
+   :mutation :take-a-consulted-permissions-deadline-bound-false-as-absent
+   :target-symbol "route/oracle-class"
+   :consumer-symbol "route/check-many-eids"
+   :detector "membership-consulted-false-until-absent-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
     {:test

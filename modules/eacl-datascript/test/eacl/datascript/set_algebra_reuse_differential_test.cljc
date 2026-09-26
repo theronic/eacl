@@ -38,6 +38,17 @@
    "reader + (parent->guarded - blocked)"
    "owner + reader + ((parent->guarded & eligible) - blocked)"])
 
+(def ^:private consulting-templates
+  "Members whose guards or witnesses consult another permission, directly or
+  through an arrow: the member `banned`, which a subtracted grant keeps false
+  only until that grant expires, or a union-only permission."
+  [[:kept "reader + (parent->kept - banned)"]
+   [:reach "banned + link->reach"]
+   [:backed "reader + (parent->backed & banned)"]
+   [:unbanned "reader + (link->unbanned - parent->banned)"]
+   [:unread "reader + (parent->unread - readable)"]
+   [:vouched "owner + (link->vouched & parent->granted)"]])
+
 (defn- random-program [state]
   (let [chosen (filterv (fn [_] (plain/chance? state 60)) operator-templates)
         chosen (if (seq chosen) chosen [(first operator-templates)])
@@ -48,11 +59,17 @@
                  chosen)]
     (into {:guarded (plain/pick state guarded-templates)} chosen)))
 
-(defn- render-schema [program]
+(defn- random-consulting-program [state]
+  (let [chosen (filterv (fn [_] (plain/chance? state 50)) consulting-templates)]
+    (into {:banned "owner + (parent->banned - blocked)"}
+          (if (seq chosen) chosen [(first consulting-templates)]))))
+
+(defn- render-schema [program & extra-relations]
   (str "caveat enabled(flag bool) { flag }\n"
        "definition user {}\n"
        "definition folder {\n"
        "  relation parent: folder\n"
+       (apply str (for [relation extra-relations] (str "  relation " relation "\n")))
        "  relation reader: user\n"
        "  relation owner: user\n"
        "  relation deleter: user\n"
@@ -75,16 +92,46 @@
            :when (plain/chance? state 25)]
        [:user user relation :folder folder])))))
 
+(defn- random-consulting-relationships
+  "A parent chain, so a grant or ban on one folder reaches the folders below
+  it, random links, and dense grants: a member's decision often rests on
+  another's, and on a ban that expires."
+  [state folders]
+  (vec
+   (distinct
+    (concat
+     (for [[parent child] (partition 2 1 folders)]
+       [:folder parent :parent :folder child])
+     (for [child folders other folders :when (plain/chance? state 15)]
+       [:folder other :link :folder child])
+     (for [folder folders user users
+           relation [:reader :owner :deleter :blocked]
+           :when (plain/chance? state 40)]
+       [:user user relation :folder folder])))))
+
+(def ^:private operand-shapes
+  "Operator permissions over two union-only operands, and one member guarded
+  by relations."
+  {:program random-program
+   :schema render-schema
+   :relationships random-relationships})
+
+(def ^:private consulting-shapes
+  "Guarded members that consult other permissions."
+  {:program random-consulting-program
+   :schema #(render-schema % "link: folder")
+   :relationships random-consulting-relationships})
+
 (def ^:private caveatable #{:reader :eligible :blocked})
 
 (defn- store!
   "A DataScript store with the case's schema and relationships, each written
   with a random qualifier: plain, already expired, expiring at 1100, 1200 or
   1300, or, on the caveatable relations, caveated."
-  [state program folders relationships]
+  [state schema folders relationships]
   (let [conn (datascript/create-conn)
         writer-client (datascript/make-client conn {})]
-    (eacl/write-schema! writer-client (render-schema program))
+    (eacl/write-schema! writer-client schema)
     (ds/transact! conn (mapv #(hash-map :eacl/id %) (concat users folders)))
     (let [db (ds/db conn)
           eid #(ds/entid db [:eacl/id %])
@@ -142,13 +189,15 @@
   (get-in (datascript/cache-stats client) [:subproblems :denotation-hits] 0))
 
 (defn run-case
-  "Runs one seeded case; returns its counters, with `:failure` on the first
-  divergence."
-  [seed]
-  (let [state (atom seed)
-        program (random-program state)
+  "Runs one seeded case of `shapes` (by default `operand-shapes`); returns its
+  counters, with `:failure` on the first divergence."
+  [seed & [shapes]]
+  (let [shapes (or shapes operand-shapes)
+        state (atom seed)
+        program ((:program shapes) state)
+        schema ((:schema shapes) program)
         folders (mapv #(str "f" %) (range (+ 3 (plain/next-int! state 4))))
-        conn (store! state program folders (random-relationships state folders))
+        conn (store! state schema folders ((:relationships shapes) state folders))
         clock (atom 1000)
         options {:clock #(deref clock)
                  :caveat-evaluator (qualification-fixtures/portable-evaluator (atom 0))}
@@ -190,14 +239,14 @@
               (if (= fresh cached)
                 (recur (inc step) client (update counters :requests inc))
                 {:failure {:seed seed :step step :time @clock :request description
-                           :cached cached :fresh fresh :schema (render-schema program)}}))))))))
+                           :cached cached :fresh fresh :schema schema}}))))))))
 
 (defn run-campaign
-  "Runs cases seeded `first-seed`..; stops at the first divergence, returned
-  under `:failure`."
-  [first-seed cases]
+  "Runs cases of `shapes` seeded `first-seed`..; stops at the first
+  divergence, returned under `:failure`."
+  [first-seed cases & [shapes]]
   (reduce (fn [totals seed]
-            (let [result (run-case seed)]
+            (let [result (run-case seed shapes)]
               (if-let [failure (:failure result)]
                 (reduced (assoc totals :failure failure))
                 (-> (merge-with + totals result) (update :cases inc)))))
@@ -228,3 +277,11 @@
       (is (pos? (:hits report)))
       (is (pos? (:reused report)))
       (is (pos? (:restores report))))))
+
+(deftest cached-consulting-decisions-equal-fresh-results-test
+  ;; A guarded member that consults another permission reuses nothing past
+  ;; the deadline of what it consulted, including another member's false
+  ;; that ends when a subtracted grant expires.
+  (let [report (run-campaign 1 #?(:clj 40 :cljs 8) consulting-shapes)]
+    (is (nil? (:failure report)) (pr-str (:failure report)))
+    (is (pos? (:hits report)))))

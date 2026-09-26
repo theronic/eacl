@@ -21,6 +21,9 @@
 // classify it as guarded. A subtracted guard is open when plainly absent and
 // closed when plainly present. Any other subtracted value can let access
 // appear later, so production defers that resource to the exact evaluation.
+// So does a leaf that consults a permission whose absence ends at a
+// deadline (an exclusion inside it whose subtracted grant expires): only a
+// permanently absent leaf is a fixed false value here.
 //
 // This leaf proves three things:
 //

@@ -164,7 +164,8 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- value-class
-  "An oracle value as the search classifies it."
+  "An oracle value as the search classifies it. A permission's false that
+  ends at a deadline can turn true then, so it is conditional, not absent."
   [value]
   (cond
     (true? value) [:decisive nil]
@@ -172,7 +173,7 @@
     (evidence/fault? value) :fault
     (not (evidence/complete? value)) :conditional
     (evidence/has? value) [:decisive (evidence/valid-until value)]
-    (evidence/no? value) :absent
+    (and (evidence/no? value) (nil? (evidence/valid-until value))) :absent
     :else :conditional))
 
 (defn- joined [via held]

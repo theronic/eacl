@@ -682,7 +682,8 @@
     ;; recomputed with point operands. A plan that recurses through linearly
     ;; guarded operators flattens each member into guarded rules decided by
     ;; the same search (GuardedMembership.dfy); a subtracted guard that is not
-    ;; plainly absent or present defers to the tabled evaluator. Candidates
+    ;; plainly absent or present defers to the tabled evaluator, and so does a
+    ;; consulted permission whose false ends at a deadline. Candidates
     ;; come from the delegated operand's own plan or else from the flattened
     ;; generator, one synthetic union node per operator permission. A batched
     ;; evaluation decides a relation leaf from the subject's holdings, read

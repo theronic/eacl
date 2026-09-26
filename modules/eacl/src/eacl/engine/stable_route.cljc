@@ -663,6 +663,17 @@
     (evidence/no? value) :absent
     :else :conditional))
 
+(defn ^:no-doc oracle-class
+  "An oracle's value as the leveled search sees it. A stored edge's false
+  never becomes true, but a permission decided elsewhere can be false only
+  until a deadline: an exclusion whose subtracted grant expires. Such a value
+  is conditional here, never absent, so a search that meets it cannot
+  certify a timeless answer; the exact evaluation decides that resource."
+  [value]
+  (if (and (evidence/no? value) (some? (evidence/valid-until value)))
+    :conditional
+    (evidence-class value)))
+
 (defn- joined-class
   "An arrow's via edge (neither absent nor a fault) and its target tuple
   together: decisive until the earlier deadline only when both are
@@ -788,7 +799,7 @@
       [])
 
     :oracle
-    [(evidence-class (oracle (:target-node rule) eid))]
+    [(oracle-class (oracle (:target-node rule) eid))]
 
     (:arrow-relation :arrow-oracle)
     (into []
@@ -800,7 +811,7 @@
                  (= :absent via) nil
                  (= :fault via) :fault
                  (= :arrow-oracle (:rule rule))
-                 (joined-class via (evidence-class (oracle (:target-node rule) endpoint)))
+                 (joined-class via (oracle-class (oracle (:target-node rule) endpoint)))
                  (= subject-type (:target-subject-type rule))
                  (joined-class via (evidence-class
                                     (qualify (:target-relation-eid rule)
@@ -889,9 +900,9 @@
 
                 :else
                 (let [endpoint (edge/endpoint compact-edge)
-                      held (evidence-class
-                            (if (= :arrow-oracle kind)
-                              (oracle (:target-node rule) endpoint)
+                      held (if (= :arrow-oracle kind)
+                             (oracle-class (oracle (:target-node rule) endpoint))
+                             (evidence-class
                               (qualify (:target-relation-eid rule)
                                        (probe (:target-relation-eid rule)
                                               (:intermediate-type rule) endpoint))))
@@ -920,9 +931,9 @@
               (= ::absent guarded) (recur (inc index))
               :else
               (let [outcome (note! notes level
-                                   (evidence-class
-                                    (if (= :oracle kind)
-                                      (oracle (:target-node rule) eid)
+                                   (if (= :oracle kind)
+                                     (oracle-class (oracle (:target-node rule) eid))
+                                     (evidence-class
                                       (qualify (:relation-eid rule)
                                                (probe (:relation-eid rule)
                                                       (:resource-type rule) eid)))))]
@@ -1088,7 +1099,8 @@
   `:arrow-oracle` rules that ask `oracle`, `(fn [permission eid] value)`, for
   a permission decided elsewhere. Such a program has no point check, so it
   supplies `fallback`, `(fn [resource-eid] value)`, the exact value of a
-  resource the search defers."
+  resource the search defers. An oracle's false that ends at a deadline is
+  conditional (`oracle-class`), so a search that meets it defers too."
   [{:keys [fetch-fn adapter plan subject-type subject-eid resource-eids
            context cut-point! physical-chunk-size qualification oracle fallback
            max-admissions max-commands max-transitions max-values max-stack]

@@ -92,7 +92,9 @@ EACL follows `parent->inherited` only where `eligible` holds, so it decides
 `inherited` with the same memoized search as `reader + parent->inherited`.
 
 A subtracted operand that expires or is caveated could let access appear
-later, so EACL decides that resource exactly instead. Other recursion
+later, so EACL decides that resource exactly instead. The same holds for a
+permission the recursion consults whose answer can change at a deadline,
+such as another guarded permission that subtracts an expiring grant. Other recursion
 through an operator uses stratified recursive evaluation, which costs more
 per result. Examples are an intersection with two recursive operands, or an
 operand that is itself an intersection or exclusion.

@@ -2263,6 +2263,49 @@ definition doc {
                         (if (keyword? decision) false decision)))]
         (leveled-control-run)))))
 
+;;; A guarded member that consults another. User 300 views 100, the parent of
+;;; 101, so `kept` reaches 101 unless `banned` holds there. The oracle stands
+;;; in for `banned`: false on 101 only until 200, when a subtracted grant
+;;; expires.
+
+(def ^:private consulting-control-schema
+  "definition user {}
+definition folder {
+  relation parent: folder
+  relation viewer: user
+  relation owner: user
+  relation suspended: user
+  permission banned = owner + (parent->banned - suspended)
+  permission kept = viewer + (parent->kept - banned)
+}")
+
+(defn- consulting-control-run
+  "`kept` for user 300 on 101 by the guarded search, with the resources it
+  defers to the exact evaluation marked ::deferred."
+  []
+  (let [adapter (operator-probe-adapter
+                 consulting-control-schema
+                 #{[:folder 100 :parent :folder 101] [:user 300 :viewer :folder 100]})
+        plan (operator-plan/seal-plan adapter [:folder :kept])]
+    (operator-typed-or
+     #(route/check-many-eids
+       {:adapter adapter :plan (operator-plan/guarded-program plan [:folder :kept])
+        :subject-type :user :subject-eid 300 :resource-eids [101]
+        :context (route/membership-context)
+        :oracle (fn [_ eid] (if (= 101 eid) (evidence/with-certificate false 200 true) false))
+        :fallback (fn [_] ::deferred)}))))
+
+(defn membership-consulted-false-until-absent-killed?
+  []
+  (let [original route/oracle-class]
+    (and (= [::deferred] (consulting-control-run))
+         ;; Taking the consulted false as absent ignores that `banned` holds
+         ;; from 200 on, and certifies 101 forever.
+         (= [true]
+            (with-redefs [route/oracle-class
+                          (fn [value] (if (evidence/no? value) :absent (original value)))]
+              (consulting-control-run))))))
+
 ;;; Set-algebra result reuse. A request at 100 publishes its decisions under
 ;;; certified point keys; a later request looks them up under its own
 ;;; certified scope. `expiring` is certified until 200 and `incomplete` has an
@@ -2455,6 +2498,8 @@ definition doc {
    :membership-first-level-certificate membership-first-level-certificate-killed?
    :membership-conditional-answered-false
    membership-conditional-answered-false-killed?
+   :membership-consulted-false-until-absent
+   membership-consulted-false-until-absent-killed?
    :reuse-past-certificate-end reuse-past-certificate-end-killed?
    :reuse-key-without-caveat-context reuse-key-without-caveat-context-killed?
    :reuse-incomplete-certificate-later reuse-incomplete-certificate-later-killed?

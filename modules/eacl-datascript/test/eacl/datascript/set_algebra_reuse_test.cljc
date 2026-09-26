@@ -186,6 +186,54 @@
     (is (= :no-permission (check client alice :inherited (folders 3)))
         "the expired eligible grant is not reused")))
 
+(def ^:private suspension-schema
+  "`banned` holds on a folder whose parent it holds on, unless the subject is
+  suspended there. `kept` subtracts `banned` from what it inherits, and
+  `reach` is witnessed by it: each guarded member depends on another
+  member's decision."
+  "definition user {}
+   definition folder {
+     relation parent: folder
+     relation link: folder
+     relation viewer: user
+     relation owner: user
+     relation suspended: user
+     permission banned = owner + (parent->banned - suspended)
+     permission kept = viewer + (parent->kept - banned)
+     permission reach = banned + link->reach
+   }")
+
+(deftest guarded-decisions-end-with-the-members-they-consult-test
+  ;; alice owns and views f0, the parent of f1, and is suspended on f1 until
+  ;; 200. So `banned` on f1 is false only until 200, and a decision that
+  ;; consulted it must not be reused after 200: `kept` loses f1 then, and
+  ;; `reach` gains it.
+  (doseq [[permission before after] [[:kept :has-permission :no-permission]
+                                     [:reach :no-permission :has-permission]]]
+    (let [conn (datascript/create-conn)
+          now (atom 100)
+          client (datascript/make-client conn {:clock #(deref now)})
+          alice (eacl/spice-object :user "alice")
+          [f0 f1] (mapv #(eacl/spice-object :folder %) ["f0" "f1"])
+          f1-ids #(if (= :has-permission %) #{"f1"} #{})]
+      (eacl/write-schema! client suspension-schema)
+      (ds/transact! conn (mapv #(hash-map :eacl/id %) ["alice" "f0" "f1"]))
+      (eacl/create-relationships!
+       client
+       [(eacl/->Relationship f0 :parent f1)
+        (eacl/->Relationship alice :viewer f0)
+        (eacl/->Relationship alice :owner f0)
+        (assoc (eacl/->Relationship alice :suspended f1) :valid-until-ms 200)])
+      (testing (str permission " before the suspension ends")
+        (is (= before (check client alice permission f1 false)))
+        (is (= before (check client alice permission f1)))
+        (is (= (f1-ids before) (disj (walk client alice permission) "f0"))))
+      (reset! now 250)
+      (testing (str permission " after the suspension ends")
+        (is (= after (check client alice permission f1 false)))
+        (is (= after (check client alice permission f1)))
+        (is (= (f1-ids after) (disj (walk client alice permission) "f0")))))))
+
 (defn- point-entries
   "The snapshot's operator and membership decision entries, by kind."
   [snapshot]

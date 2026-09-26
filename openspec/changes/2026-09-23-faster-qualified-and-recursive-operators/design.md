@@ -228,6 +228,11 @@ guarded. On that route:
   when plainly true.
 - A subtracted guard that is expiring, conditional or faulty routes the
   resource to the exact fallback, because time could then add access.
+- A permission that a guard or witness consults through the oracle can
+  itself be false only until a deadline, when an exclusion inside it loses
+  its subtracted grant. That value is conditional, neither plainly false nor
+  plainly true: taken as absent, it would certify a permanent answer that
+  turns at the deadline, in either direction.
 - The fallback is the tabled evaluator's point evaluation for that resource.
 
 **Why it is certified by the existing model.** For one subject and snapshot
