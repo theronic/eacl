@@ -145,6 +145,10 @@
 (def ^:private leaf-instructions
   #{:direct-membership :permission-membership :arrow-membership})
 
+(defn- wildcard-rules [rule wildcard-eid]
+  (cond-> [rule]
+    (some? wildcard-eid) (conj (assoc rule :wildcard-eid wildcard-eid))))
+
 (defn- leaf-rules
   "The search rules of one leaf of `member`'s expression at resource type
   `resource-type`: relation grants, and permission targets that are
@@ -162,9 +166,12 @@
         rules
         (case (:instruction predicate)
           :direct-membership
-          (mapv (fn [{:keys [subject-type relation-id]}]
-                  (assoc common :rule :relation :relation-eid relation-id
-                         :subject-type subject-type))
+          (into []
+                (mapcat (fn [{:keys [subject-type relation-id wildcard-eid]}]
+                          (wildcard-rules
+                           (assoc common :rule :relation :relation-eid relation-id
+                                  :subject-type subject-type)
+                           wildcard-eid)))
                 (get-in predicate [:descriptor :partitions]))
 
           :permission-membership
@@ -179,11 +186,13 @@
                                  :intermediate-type intermediate-type)]
                 (if (= :permission target-kind)
                   [(target arrow :arrow-permission target-node)]
-                  (mapv (fn [{:keys [subject-type relation-id]}]
-                          (assoc arrow :rule :arrow-relation
-                                 :target-relation-eid relation-id
-                                 :target-subject-type subject-type))
-                        (:partitions target-relation)))))
+                  (mapcat (fn [{:keys [subject-type relation-id wildcard-eid]}]
+                            (wildcard-rules
+                             (assoc arrow :rule :arrow-relation
+                                    :target-relation-eid relation-id
+                                    :target-subject-type subject-type)
+                             wildcard-eid))
+                          (:partitions target-relation)))))
             (get-in predicate [:descriptor :partitions]))))]
     (when (every? some? rules) rules)))
 
@@ -761,7 +770,7 @@
     (into
      (sorted-map)
      (for [root (sort-by (juxt (comp str first) (comp str second))
-                        (keys collected))]
+                         (keys collected))]
        [root
         (let [result
               (loop [frontier [[root :positive]]

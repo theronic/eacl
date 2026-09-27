@@ -550,11 +550,13 @@
   (case (:rule rule)
     :relation
     (when (= subject-type (:subject-type rule))
-      [(:relation-eid rule) (:resource-type rule)])
+      (cond-> [(:relation-eid rule) (:resource-type rule)]
+        (:wildcard-eid rule) (conj (:wildcard-eid rule))))
 
     :arrow-relation
     (when (= subject-type (:target-subject-type rule))
-      [(:target-relation-eid rule) (:intermediate-type rule)])
+      (cond-> [(:target-relation-eid rule) (:intermediate-type rule)]
+        (:wildcard-eid rule) (conj (:wildcard-eid rule))))
 
     (:self-permission :arrow-permission :oracle :arrow-oracle) nil
 
@@ -719,8 +721,8 @@
                           sort)
               holdings
               (into {}
-                    (map (fn [[relation-eid resource-type :as slice]]
-                           (let [edges (fetch! (forward-scan subject-type subject-eid
+                    (map (fn [[relation-eid resource-type wildcard-eid :as slice]]
+                           (let [edges (fetch! (forward-scan subject-type (or wildcard-eid subject-eid)
                                                              relation-eid resource-type
                                                              nil holdings-limit))]
                              [slice {:any? (boolean (seq edges))
@@ -795,7 +797,8 @@
     :relation
     (if (= subject-type (:subject-type rule))
       [(evidence-class (qualify (:relation-eid rule)
-                                (probe (:relation-eid rule) (:resource-type rule) eid)))]
+                                (probe (:relation-eid rule) (:resource-type rule) eid
+                                       (:wildcard-eid rule))))]
       [])
 
     :oracle
@@ -816,7 +819,8 @@
                  (joined-class via (evidence-class
                                     (qualify (:target-relation-eid rule)
                                              (probe (:target-relation-eid rule)
-                                                    (:intermediate-type rule) endpoint))))
+                                                    (:intermediate-type rule) endpoint
+                                                    (:wildcard-eid rule)))))
                  :else nil))))
           (intermediates (:resource-type rule) eid (:via-relation-eid rule)
                          (:intermediate-type rule)))))
@@ -905,7 +909,8 @@
                              (evidence-class
                               (qualify (:target-relation-eid rule)
                                        (probe (:target-relation-eid rule)
-                                              (:intermediate-type rule) endpoint))))
+                                              (:intermediate-type rule) endpoint
+                                              (:wildcard-eid rule)))))
                       outcome (note! notes level (joined-class via held))]
                   (cond
                     (= ::kept outcome) ::found
@@ -936,7 +941,8 @@
                                      (evidence-class
                                       (qualify (:relation-eid rule)
                                                (probe (:relation-eid rule)
-                                                      (:resource-type rule) eid)))))]
+                                                      (:resource-type rule) eid
+                                                      (:wildcard-eid rule))))))]
                 (cond
                   (= ::kept outcome) ::found
                   (= ::fault outcome) ::fault
@@ -1147,8 +1153,9 @@
            :oracle oracle
            :guard-classes (:guard-classes entry)
            :probe
-           (fn [relation-eid resource-type eid]
-             (let [slice [relation-eid resource-type]
+           (fn [relation-eid resource-type eid wildcard-eid]
+             (let [subject-eid (or wildcard-eid subject-eid)
+                   slice (cond-> [relation-eid resource-type] wildcard-eid (conj wildcard-eid))
                    held (get holdings slice)]
                (cond
                  (not (:any? held)) nil

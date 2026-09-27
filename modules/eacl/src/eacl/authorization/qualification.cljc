@@ -123,12 +123,27 @@
          #(let [[format _ _ context evaluator] (exact-reuse-identity request)]
             [:certified-point evidence/format-version format context evaluator])))
 
+(defn- relation-allowance [request relation-id]
+  (memo! request [:relation relation-id]
+         #(let [relation (:entity (entity-data request relation-id))]
+            (when-not (and (map? relation) (seq relation))
+              (qualifier/error! :missing-relation))
+            (qualifier/relation-allowance relation))))
+
+(defn declares-caveats?
+  "Whether a relation can demand a Caveat. Reordered membership searches
+   cannot preserve fault demand for such a relation. Malformed metadata also
+   requires the ordered evaluator, which reports it only if demanded."
+  [request relation-id]
+  (try
+    (boolean (some some? (relation-allowance request relation-id)))
+    (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+      (if (= :eacl.qualifier/invalid (:type (ex-data error)))
+        true
+        (throw error)))))
+
 (defn- allowed! [request relation-id caveat-id]
-  (let [allowed (memo! request [:relation relation-id]
-                       #(let [relation (:entity (entity-data request relation-id))]
-                          (when-not (and (map? relation) (seq relation))
-                            (qualifier/error! :missing-relation))
-                          (qualifier/relation-allowance relation)))]
+  (let [allowed (relation-allowance request relation-id)]
     (when-not (contains? allowed caveat-id) (qualifier/error! :caveat-not-allowed))))
 
 (defn- qualifier-input [request qid]

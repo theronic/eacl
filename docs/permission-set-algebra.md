@@ -64,8 +64,11 @@ witnesses expire is decided in a few passes, one per distinct expiry it
 meets, and the grant is certified until the last of those witnesses
 expires.
 
-Caveated relationships are still decided one resource at a time. So is any
-evidence that could let access appear later.
+An operand whose dependency closure declares Caveats uses ordered point
+checks. A Caveat can fault, and reordering witnesses must not turn a demanded
+fault into a grant through a later witness. This decision is retained with the
+schema generation; plain and expiration-only operands keep the batched search.
+Evidence that could let access appear later also requires exact evaluation.
 
 The same holds when the operator sits under a union, or when a union is an
 intersection's anchor:
@@ -98,6 +101,10 @@ such as another guarded permission that subtracts an expiring grant. Other recur
 through an operator uses stratified recursive evaluation, which costs more
 per result. Examples are an intersection with two recursive operands, or an
 operand that is itself an intersection or exclusion.
+
+Guarded members whose closure declares Caveats use the tabled evaluator to
+preserve demanded faults. Wildcard variants retain their own subject holdings
+and guards, including wildcard bans on the right side of an exclusion.
 
 EACL supports one-hop arrows. A target permission can contain another arrow,
 but a directly chained expression such as `a->b->c` is not supported.

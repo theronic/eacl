@@ -290,7 +290,7 @@
           caveat (ds/entid db [:eacl.caveat/name "enabled"])
           writer (qualifiers/writer conn)]
       (ds/transact! conn [{:db/id reader :eacl.relation/caveats [caveat]
-                          :eacl.relation/allows-unqualified? true}])
+                           :eacl.relation/allows-unqualified? true}])
       ;; readable below f1 is conditional on the caveat and expires at 200;
       ;; granted below f0 is plain.
       (staged/write! writer :create [:user (eid "alice") reader :folder (eid "f1")]
@@ -355,7 +355,7 @@
           caveat (ds/entid db [:eacl.caveat/name "enabled"])
           writer (qualifiers/writer conn)]
       (ds/transact! conn [{:db/id deleter :eacl.relation/caveats [caveat]
-                          :eacl.relation/allows-unqualified? true}])
+                           :eacl.relation/allows-unqualified? true}])
       (staged/write! writer :create [:user (eid "alice") deleter :folder (eid "f0")]
                      {:valid-until-ms 200})
       (staged/write! writer :create [:user (eid "alice") deleter :folder (eid "f2")]
@@ -469,8 +469,8 @@
           (eacl/lookup-resources client {:subject alice :permission :pruned
                                          :resource/type :folder :first 10
                                          :caveat-context {} :cache? false}))
-        (is (pos? (:fallbacks @stats 0))
-            "a subtracted guard that expires or is caveated defers")))
+        (is (zero? (:searched @stats 0))
+            "a caveated guarded member goes directly to the ordered evaluator")))
     (doseq [time [100 250 350]
             context [{} {"flag" true} {"flag" false}]
             permission [:inherited :pruned]]
@@ -504,7 +504,6 @@
                        (:checks guarded))
                  (:items guarded))))))))
 
-
 (deftest conditional-results-carry-the-point-checks-residual-test
   ;; `granted` holds on f0 through a direct deleter grant until 200 and
   ;; through its parent's until 500: the point check certifies its first
@@ -529,7 +528,7 @@
           caveat (ds/entid db [:eacl.caveat/name "enabled"])
           writer (qualifiers/writer conn)]
       (ds/transact! conn [{:db/id (relation :reader) :eacl.relation/caveats [caveat]
-                          :eacl.relation/allows-unqualified? true}])
+                           :eacl.relation/allows-unqualified? true}])
       (staged/write! writer :create [:user (eid "alice") (relation :deleter) :folder (eid "f0")]
                      {:valid-until-ms 200})
       (staged/write! writer :create [:user (eid "alice") (relation :deleter) :folder (eid "p")]

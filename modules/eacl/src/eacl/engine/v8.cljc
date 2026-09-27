@@ -1,5 +1,6 @@
 (ns eacl.engine.v8
   (:require [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.qualification :as qualification]
             [eacl.authorization.result :as authorization-result]
             [eacl.backend.v8 :as backend]
             [eacl.cache.derived-schema :as derived-schema]
@@ -943,6 +944,8 @@
     ;; delegated operand's own union plan, or else by the flattened
     ;; generator over the union-only permissions' union plans.
     :recursive-generator :flattened-guarded-generator-v1
+    :qualified-membership :ordered-caveat-operands-v1
+    :membership-subjects :typed-wildcard-variants-v1
     :versions
     {:cover operator-plan/cover-version
      :witness operator-plan/witness-version
@@ -1724,18 +1727,18 @@
                      :asc progress
                      :desc (or last-selected progress))]
     (cond-> {:data (mapv :node selected)
-     :page-info
-     {:start-cursor start-cursor
-      :end-cursor end-cursor
-      :has-next-page?
-      (case direction
-        :asc (boolean (:more? result))
-        :desc (boolean bound))
-      :has-previous-page?
-      (case direction
-        :asc (boolean bound)
-        :desc (boolean (:more? result)))
-      :bounded? (boolean (:bounded? result))}}
+             :page-info
+             {:start-cursor start-cursor
+              :end-cursor end-cursor
+              :has-next-page?
+              (case direction
+                :asc (boolean (:more? result))
+                :desc (boolean bound))
+              :has-previous-page?
+              (case direction
+                :asc (boolean bound)
+                :desc (boolean (:more? result)))
+              :bounded? (boolean (:bounded? result))}}
       (and (or evidence-decisions? *qualification*)
            (= :detailed (or result-policy *lookup-result-policy*)))
       (assoc :result-evidence
@@ -1856,6 +1859,23 @@
     (mapv #(get-in decided [[(:subject-type %) (:subject-eid %)] (:resource-eid %)])
           candidates)))
 
+(defn- ordered-operator-membership?
+  "Caveat faults are demand-sensitive. The leveled search reorders witnesses,
+   so caveated closures use ordered point operands (and tabled guarded
+   members). Plain and expiration-only closures keep the batched search."
+  [plan permission]
+  (when *qualification*
+    (let [compute #(hash-map
+                    :ordered?
+                    (boolean
+                     (some (fn [relation]
+                             (qualification/declares-caveats? *qualification* relation))
+                           (get-in plan [:relation-closures permission :all]))))]
+      (:ordered?
+       (if-let [plans (:sealed-plans *schema-cache*)]
+         (memoized-map-derived! plans [::ordered-operator-membership (:fingerprint plan) permission] compute)
+         (compute))))))
+
 (defn- delegated-operand-oracle
   "The oracle for a delegated operator plan's operands
   (`operator-plan/delegation`). Each union-only operand is decided through
@@ -1864,7 +1884,8 @@
   - `:batched` serves lookups and counts. Candidates that share one subject
     (every forward page and count) go through `stable-route/check-many-eids`
     with one request-scoped membership context, so holdings, intermediates,
-    and decided ancestors are read once per request.
+    and decided ancestors are read once per request. Caveated operands retain
+    ordered point checks because their faults are demand-sensitive.
   - `:point` serves a single check, where the exact point check is already
     the cheapest decision.
 
@@ -1872,7 +1893,8 @@
   modes by the guarded membership search over its program, with a
   request-scoped context. Its guards and witnesses ask this oracle for the
   permissions they name. A resource the search defers gets the tabled
-  evaluator's exact value.
+  evaluator's exact value. A guarded member whose closure declares Caveats
+  uses that evaluator directly.
 
   Returns the oracle's `:delegate`, its `:point-delegate` (which reproduces a
   check's certificates), and the attempt counter of its routed read path. A
@@ -1881,6 +1903,7 @@
   candidates of one subject from one scan."
   [db plan mode]
   (let [{:keys [fetch-fn attempts]} (stable-fetch-fn db)
+        ordered? #(ordered-operator-membership? plan %)
         context (when (= :batched mode) (stable-route/membership-context))
         guarded (:members (operator-plan/guarded-delegation plan))
         guarded-context (when (seq guarded)
@@ -1928,28 +1951,31 @@
                    :checkpoint? false}))
         guarded-decide
         (fn guarded-decide [permission subject-type subject-eid resource-eids]
-          (stable-route/check-many-eids
-           (assoc options
-                  :plan (if (contains? guarded permission)
-                          (operator-plan/guarded-program plan permission)
-                          (stable-plan db permission))
-                  :subject-type subject-type
-                  :subject-eid subject-eid
-                  :resource-eids resource-eids
-                  :context guarded-context
-                  :oracle (fn [target eid]
-                            (first (guarded-decide target subject-type subject-eid [eid])))
-                  :fallback (when (contains? guarded permission)
-                              (fn [eid] (tabled permission subject-type subject-eid eid))))))
+          (if (ordered? permission)
+            (mapv #(tabled permission subject-type subject-eid %) resource-eids)
+            (stable-route/check-many-eids
+             (assoc options
+                    :plan (if (contains? guarded permission)
+                            (operator-plan/guarded-program plan permission)
+                            (stable-plan db permission))
+                    :subject-type subject-type
+                    :subject-eid subject-eid
+                    :resource-eids resource-eids
+                    :context guarded-context
+                    :oracle (fn [target eid]
+                              (first (guarded-decide target subject-type subject-eid [eid])))
+                    :fallback (when (contains? guarded permission)
+                                (fn [eid] (tabled permission subject-type subject-eid eid)))))))
         guarded-delegate (fn [permission candidates]
                            (by-subject #(guarded-decide permission %1 %2 %3) candidates))
         union-delegate
         (if context
           (fn [permission candidates]
             (let [{:keys [subject-type subject-eid]} (first candidates)]
-              (if (every? #(and (= subject-eid (:subject-eid %))
-                                (= subject-type (:subject-type %)))
-                          candidates)
+              (if (and (not (ordered? permission))
+                       (every? #(and (= subject-eid (:subject-eid %))
+                                     (= subject-type (:subject-type %)))
+                               candidates))
                 (stable-route/check-many-eids
                  (assoc options
                         :plan (stable-plan db permission)
@@ -2081,20 +2107,20 @@
                          (or last-selected progress))]
         (report-least-path-run! run)
         (with-emission-evidence
-        {:data (mapv :node items)
-         :page-info
-         {:start-cursor start-cursor
-          :end-cursor end-cursor
-          :has-next-page?
-          (if (= :asc direction)
-            (boolean (:has-more? run))
-            (boolean bound))
-          :has-previous-page?
-          (if (= :asc direction)
-            (boolean bound)
-            (boolean (:has-more? run)))
-          :bounded? (boolean (:bounded? run))}}
-         ordered)))))
+          {:data (mapv :node items)
+           :page-info
+           {:start-cursor start-cursor
+            :end-cursor end-cursor
+            :has-next-page?
+            (if (= :asc direction)
+              (boolean (:has-more? run))
+              (boolean bound))
+            :has-previous-page?
+            (if (= :asc direction)
+              (boolean bound)
+              (boolean (:has-more? run)))
+            :bounded? (boolean (:bounded? run))}}
+          ordered)))))
 
 (defn- least-path-lookup-page
   "Keyset pagination for an acyclic plan: ascending pages resume strictly
@@ -2129,16 +2155,16 @@
         (report-least-path-run! run)
         (report-adapter-attempts! attempts)
         (with-emission-evidence
-        (page-response
-         {:items items
-          :range-reusable? true
-          :has-next? (if descending?
-                       (boolean bound)
-                       (boolean (:has-more? run)))
-          :has-previous? (if descending?
-                           (boolean (:has-more? run))
-                           (boolean bound))})
-         ordered)))))
+          (page-response
+           {:items items
+            :range-reusable? true
+            :has-next? (if descending?
+                         (boolean bound)
+                         (boolean (:has-more? run)))
+            :has-previous? (if descending?
+                             (boolean (:has-more? run))
+                             (boolean bound))})
+          ordered)))))
 
 (defn- structural-cover-fetch
   "Enumerates the positive structural cover from the same compact scan/cache.
@@ -2197,46 +2223,46 @@
             fetch-exclusive
             (fn [candidate-bound limit]
               (binding [*qualification* (when-not (:structural-cover? candidate-filter) *qualification*)]
-              (if least-path?
-                (let [run-options (least-path-run-options
-                                   plan fetch-fn traversal subject-type
-                                   anchor-eid limit direction candidate-bound
-                                   true)
-                      run (run-routed
-                           candidate-bound
-                           #(run-least-path-page run-options traversal))
-                      items
-                      (mapv
-                       (fn [{:keys [value coords evidence]}]
-                         (cond-> {:node (spice-object result-type value)
-                                  :cursor (least-path-edge plan traversal coords)}
-                           (some? evidence) (assoc :evidence evidence)))
-                       (:emissions run))]
-                  (report-least-path-run! run)
+                (if least-path?
+                  (let [run-options (least-path-run-options
+                                     plan fetch-fn traversal subject-type
+                                     anchor-eid limit direction candidate-bound
+                                     true)
+                        run (run-routed
+                             candidate-bound
+                             #(run-least-path-page run-options traversal))
+                        items
+                        (mapv
+                         (fn [{:keys [value coords evidence]}]
+                           (cond-> {:node (spice-object result-type value)
+                                    :cursor (least-path-edge plan traversal coords)}
+                             (some? evidence) (assoc :evidence evidence)))
+                         (:emissions run))]
+                    (report-least-path-run! run)
                   ;; Raw descending least-path emissions are already in
                   ;; examination order.
-                  items)
-                (let [result
-                      (run-routed
-                       candidate-bound
-                       (fn []
-                         (stable-page/edge-page
-                          (stable-edge-page-options
-                           db plan fetch-fn traversal subject-type anchor-eid
-                           limit direction candidate-bound checkpoints
-                           checkpoint-key true))))
-                      items
-                      (cond->> (stable-items plan traversal result-type
-                                            (:start-ordinal result) (:eids result))
-                        *qualification*
-                        (mapv (fn [item]
-                                (let [value (get (:result-evidence result) (get-in item [:node :id]) true)]
-                                  (cond-> item (not (true? value)) (assoc :evidence value))))))]
+                    items)
+                  (let [result
+                        (run-routed
+                         candidate-bound
+                         (fn []
+                           (stable-page/edge-page
+                            (stable-edge-page-options
+                             db plan fetch-fn traversal subject-type anchor-eid
+                             limit direction candidate-bound checkpoints
+                             checkpoint-key true))))
+                        items
+                        (cond->> (stable-items plan traversal result-type
+                                               (:start-ordinal result) (:eids result))
+                          *qualification*
+                          (mapv (fn [item]
+                                  (let [value (get (:result-evidence result) (get-in item [:node :id]) true)]
+                                    (cond-> item (not (true? value)) (assoc :evidence value))))))]
                   ;; Stable-page returns canonical order for both directions;
                   ;; filtering examines backward windows in reverse order.
-                  (if (= :desc direction)
-                    (vec (reverse items))
-                    items)))))
+                    (if (= :desc direction)
+                      (vec (reverse items))
+                      items)))))
             page
             (execute-filtered-lookup-window
              result-type page-req
@@ -2399,15 +2425,15 @@
                     size direction bound checkpoints
                     (when checkpoints
                       (checkpoint-key plan traversal subject-type anchor-eid
-               (checkpoint-series-size query size)))
+                                      (checkpoint-series-size query size)))
                     false))))]
     (report-adapter-attempts! attempts)
     (cond-> (page-response
-     {:items (stable-items plan traversal result-type
-                           (:start-ordinal result) (:eids result))
-      :range-reusable? true
-      :has-next? (:has-next? result)
-      :has-previous? (:has-previous? result)})
+             {:items (stable-items plan traversal result-type
+                                   (:start-ordinal result) (:eids result))
+              :range-reusable? true
+              :has-next? (:has-next? result)
+              :has-previous? (:has-previous? result)})
       (and *qualification* (= :detailed *lookup-result-policy*))
       (assoc :result-evidence (:result-evidence result)))))
 
