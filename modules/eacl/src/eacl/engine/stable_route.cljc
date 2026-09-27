@@ -771,7 +771,9 @@
                      :memos (volatile! {plain-level plain-memo})
                      :skips (volatile! {})
                      :answers (volatile! {})
-                     :fault-free (volatile! #{})
+                     ;; Private to this sequential request; certificates
+                     ;; only grow after a closure has been fully checked.
+                     :fault-free (volatile! {})
                      :guard-classes (volatile! {})
                      :extended (volatile! {})}]
           (add-membership-stats! {:holding-scans (count slices)})
@@ -1069,9 +1071,18 @@
                (certain-edge? (:relation-eid rule)
                               (probe (:relation-eid rule) (:resource-type rule) eid
                                      (:wildcard-eid rule))))
+        certify! (fn [node eid]
+                   (if-let [known (get @fault-free node)]
+                     (let [grown (conj! known eid)]
+                       (when-not (identical? known grown)
+                         (vswap! fault-free assoc node grown)))
+                     (vswap! fault-free assoc node (transient #{eid}))))
         successor (fn [stack target eid]
-                    (let [state [target eid]]
-                      (if (contains? @fault-free state) stack (conj stack state))))
+                    ;; Most ancestors in a page have already been checked.
+                    ;; Index by node to reuse those certificates without
+                    ;; allocating or hashing another [node eid] pair.
+                    (if (contains? (get @fault-free target) eid)
+                      stack (conj stack [target eid])))
         expand
         (fn [stack rule eid]
           (case (:rule rule)
@@ -1111,11 +1122,11 @@
     (fn [resource-eid]
       (loop [stack [[root resource-eid]] visited #{}]
         (if (empty? stack)
-          (do (vswap! fault-free into visited) true)
+          (do (doseq [[node eid] visited] (certify! node eid)) true)
           (let [[node eid :as frame] (peek stack)
                 stack (pop stack)]
             (step! (count stack))
-            (if (or (contains? @fault-free frame) (contains? visited frame))
+            (if (or (contains? (get @fault-free node) eid) (contains? visited frame))
               (recur stack visited)
               (do
                 (admit!)
@@ -1134,9 +1145,8 @@
                           stack (get fault-rules node))]
                   (if (empty? next-stack)
                     (do
-                      (if (empty? visited)
-                        (vswap! fault-free conj frame)
-                        (vswap! fault-free #(into (conj % frame) visited)))
+                      (certify! node eid)
+                      (doseq [[node eid] visited] (certify! node eid))
                       true)
                     (recur next-stack (conj visited frame)))
                   false)))))))))
