@@ -727,6 +727,10 @@
                                                              nil holding-limit))]
                              [slice {:any? (boolean (seq edges))
                                      :complete? (< (count edges) holding-limit)
+                                     ;; Inspect the scan vector once, even
+                                     ;; when several rules share this slice.
+                                     :plain? (and (< (count edges) holding-limit)
+                                                  (not-any? vector? edges))
                                      ;; Scans are strictly ordered by endpoint,
                                      ;; so a truncated scan still decides every
                                      ;; endpoint up to its last.
@@ -740,10 +744,13 @@
                     (filter (fn [rule]
                               (when (= :relation (:rule rule))
                                 (let [held (get holdings (holding-key subject-type rule))]
-                                  (and (:complete? held)
-                                       (every? (comp not vector?) (vals (:edges held))))))))
+                                  (:plain? held)))))
                     (mapcat (fn [rule] (cons rule (mapcat :alternatives (:guards rule))))
                             (mapcat identity (vals reverse-rules))))
+              plain-guards
+              (into #{}
+                    (filter #(every? plain-relations (:alternatives %)))
+                    (mapcat :guards (mapcat identity (vals reverse-rules))))
               ;; Complete unqualified holdings prove a leaf total at every
               ;; resource. Remove these leaves/guards from the audit graph.
               fault-rules
@@ -752,9 +759,7 @@
                (fn [rules]
                  (into []
                        (keep (fn [rule]
-                               (let [guards (filterv #(not (every? (fn [alternative]
-                                                                     (contains? plain-relations alternative))
-                                                                   (:alternatives %)))
+                               (let [guards (filterv #(not (contains? plain-guards %))
                                                      (:guards rule))]
                                  (when-not (and (empty? guards) (contains? plain-relations rule))
                                    (if (seq guards)
@@ -765,6 +770,7 @@
               entry {:reverse-rules reverse-rules
                      :holdings holdings
                      :plain-relations plain-relations
+                     :plain-guards plain-guards
                      :fault-rules fault-rules
                      :possible (possible-nodes reverse-rules subject-type holdings)
                      :memo plain-memo
@@ -862,8 +868,13 @@
   [{:keys [guard-classes] :as search} guard eid]
   (let [key [(:key guard) eid]]
     (or (get @guard-classes key)
-        (let [classes (into [] (mapcat #(alternative-classes search % eid))
-                            (:alternatives guard))]
+        (let [alternatives (:alternatives guard)
+              ;; A relation guard already returns the complete vector.
+              ;; Avoid a flattening transducer for the common single arm.
+              classes (if (= 1 (count alternatives))
+                        (alternative-classes search (first alternatives) eid)
+                        (into [] (mapcat #(alternative-classes search % eid))
+                              alternatives))]
           (vswap! guard-classes assoc key classes)
           classes))))
 
@@ -876,24 +887,33 @@
   it is plainly absent. A plainly present one closes the rule at every
   level. Any other value is ::fault: access could appear when it expires,
   so the resource is decided exactly instead."
-  [search notes level guards eid]
+  [{:keys [plain-guards probe] :as search} notes level guards eid]
   (loop [index 0]
     (if (= index (count guards))
       ::kept
       (let [guard (nth guards index)
-            classes (guard-classes search guard eid)
             outcome
-            (if (= :negative (:sign guard))
-              (cond
-                (some #(= :fault %) classes) ::fault
-                (some #(and (vector? %) (nil? (second %))) classes) ::absent
-                (some #(not= :absent %) classes) ::fault
-                :else ::kept)
-              (loop [i 0]
-                (if (= i (count classes))
-                  ::absent
-                  (let [outcome (note! notes level (nth classes i))]
-                    (if (= ::absent outcome) (recur (inc i)) outcome)))))]
+            (if (contains? plain-guards guard)
+              ;; Complete unqualified slices make every alternative a plain
+              ;; Boolean at every level. No evidence vector/cache is needed.
+              (let [present? (boolean
+                              (some (fn [rule]
+                                      (probe (:relation-eid rule) (:resource-type rule) eid
+                                             (:wildcard-eid rule)))
+                                    (:alternatives guard)))]
+                (if (= present? (= :negative (:sign guard))) ::absent ::kept))
+              (let [classes (guard-classes search guard eid)]
+                (if (= :negative (:sign guard))
+                  (cond
+                    (some #(= :fault %) classes) ::fault
+                    (some #(and (vector? %) (nil? (second %))) classes) ::absent
+                    (some #(not= :absent %) classes) ::fault
+                    :else ::kept)
+                  (loop [i 0]
+                    (if (= i (count classes))
+                      ::absent
+                      (let [outcome (note! notes level (nth classes i))]
+                        (if (= ::absent outcome) (recur (inc i)) outcome)))))))]
         (if (= ::kept outcome) (recur (inc index)) outcome)))))
 
 (defn- expand-arrow
@@ -1296,6 +1316,7 @@
           search
           {:root root
            :subject-type subject-type
+           :plain-guards (:plain-guards entry)
            :oracle oracle
            :guard-classes (:guard-classes entry)
            :probe
