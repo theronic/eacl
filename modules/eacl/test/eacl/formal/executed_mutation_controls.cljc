@@ -1824,8 +1824,8 @@ definition document {
         original uuid/capture invoked (atom false)]
     (and (gate)
          (false? (with-redefs [uuid/capture (fn [value]
-                                            (reset! invoked true)
-                                            (some-> (original value) uuid/text))]
+                                              (reset! invoked true)
+                                              (some-> (original value) uuid/text))]
                    (gate)))
          @invoked)))
 
@@ -1844,8 +1844,8 @@ definition document {
         invoked (atom false)]
     (and (gate)
          (false? (with-redefs [uuid/text (fn [value]
-                                         (reset! invoked true)
-                                         (transform (original value)))]
+                                           (reset! invoked true)
+                                           (transform (original value)))]
                    (gate)))
          @invoked)))
 
@@ -1883,8 +1883,8 @@ definition document {
         original uuid/canonical-text? invoked (atom false)]
     (and (gate)
          (false? (with-redefs [uuid/canonical-text?
-                              (fn [text] (reset! invoked true)
-                                (and (string? text) (original (str/lower-case text))))]
+                               (fn [text] (reset! invoked true)
+                                 (and (string? text) (original (str/lower-case text))))]
                    (gate)))
          @invoked)))
 
@@ -2138,8 +2138,12 @@ definition folder {
 
 (defn membership-truncated-holdings-beyond-bound-killed?
   []
-  (let [expected #{100 102 104 105}]
-    (with-redefs [route/holdings-limit 1]
+  (let [expected #{100 102 104 105}
+        check-many route/check-many-eids]
+    ;; Production chooses a bound for its point/page workload. Force the
+    ;; actual request's bound so this control still exercises truncation.
+    (with-redefs [route/check-many-eids
+                  (fn [options] (check-many (assoc options :holding-limit 1)))]
       (and
        (= expected (delegation-control-set :seen_top))
        ;; 300 views 101 and 104. A scan truncated at 101 does not decide 104;
