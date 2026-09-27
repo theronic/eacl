@@ -53,6 +53,8 @@ retraction, or explicitly install/use the backend's optional
 - [Permission set algebra](permission-set-algebra.md) — intersection,
   exclusion, precedence, stratification, limits, order, cursors, cache, and
   measured performance
+- [Wildcard subjects](../README.md#wildcard-subjects) — `user:*` relations,
+  Caveated wildcards, and `*` with its exclusions in subject lookups
 - [The stable-discovery engine](stable-discovery-engine.md) — enumeration order, cursors, continuation, limits
 - [Cache behavior and recovery](cache.md)
 - [Consistency and cache operations](v8-consistency-cache-operations.md)

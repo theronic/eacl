@@ -743,3 +743,42 @@ API, external secret ownership, rollback, partial rollout recovery, and limits.
 
 Datalevin's existing unpublished-artifact release guard remains in force; these
 changes do not publish its embedded Maven dependency.
+
+## Wildcard subjects
+
+V8 accepts SpiceDB wildcard relation types (issue #183): `relation viewer:
+user | user:*`, `relation anyone: user:* with some_caveat`, alone or beside
+concrete branches. A relationship whose subject is `(eacl/spice-object :user
+"*")` makes every user a member of the relation; see
+[Wildcard Subjects](../README.md#wildcard-subjects).
+
+- Checks, `lookup-resources` and `count-resources` include wildcard grants
+  through union, intersection, exclusion, arrows and recursion, with Caveats
+  and expiry.
+- `lookup-subjects` returns the wildcard as the subject `*`. When
+  intersection or exclusion withholds it from subjects, the `*` subject
+  carries `:excluded-subjects`. `count-subjects` counts entries.
+- `*` is reserved. It is rejected with `:eacl/wildcard-not-allowed` as a
+  resource ID and as the subject of checks, `lookup-resources` and
+  `count-resources`; an object whose external ID is `*` raises
+  `:eacl/reserved-object-id`. Writes whose subject form the relation does not
+  declare fail with `:eacl/unknown-relation-or-permission` and
+  `:reason :wildcard-subject-not-allowed` or `:concrete-subject-not-allowed`.
+  A relation that holds a wildcard cannot be the left side of an arrow.
+- Relationship and permission storage stay **8**. A wildcard branch adds
+  `:eacl.relation/allows-unqualified-wildcard?` and
+  `:eacl.relation/wildcard-caveats` to its Relation entity, and wildcard
+  relationships use one EACL-owned subject entity,
+  `{:eacl/id "eacl.wildcard-subject"}`. Datomic and Datahike install the
+  attributes on the first schema write that declares a wildcard; Datalevin
+  installs them when a client opens the connection; a DataScript connection
+  without them fails the schema write with
+  `:eacl.schema/wildcard-attributes-missing`.
+- Schemas without wildcards keep their plans, fingerprints, cursors and cache
+  keys. Upgrade every serving Peer before writing a schema that uses
+  wildcards.
+
+The behavior is compared with SpiceDB v1.56.0's answers to 72 requests
+([fixture](../formal/fixtures/wildcards/README.md)), with an independent
+reference over 40 seeded stores, and modeled in
+`formal/dafny/WildcardSubjects.dfy`.

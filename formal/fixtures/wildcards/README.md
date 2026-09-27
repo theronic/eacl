@@ -17,7 +17,7 @@ EACL's.
 | --- | --- |
 | `schema.zed` | Wildcard branches beside and instead of concrete ones, with union, intersection, exclusion, arrows to a relation and to a permission that hold a wildcard, recursion, a Caveated wildcard (the first consumer's `nothing_sensitive` exit) and a Caveated exclusion |
 | `relationships.txt` | Relationships in SpiceDB's text form; `[name]` names a Caveat without saved context |
-| `requests.json` | 65 requests: checks, `LookupResources`, `LookupSubjects`, relationship reads, and writes and a schema that SpiceDB rejects |
+| `requests.json` | 72 requests: checks, `LookupResources`, `LookupSubjects`, `ExpandPermissionTree`, relationship reads, and writes and a schema that SpiceDB rejects |
 | `capture.py` | Writes the schema and relationships to a fresh datastore, sends each request in order and writes the two files below (Python standard library only) |
 | `raw-responses-v1.56.0-docker.ndjson` | Each request body and SpiceDB's exact response text, one JSON object per line, beginning with the two setup writes |
 | `spicedb-results.edn` | The normalized results the test reads |
@@ -40,6 +40,7 @@ docker stop eacl-wildcard-golden
 - `:resources`, a map of resource ID to permissionship, for `LookupResources`;
 - `:subjects`, sorted by ID, each with its permissionship, missing fields and
   `:excluded` subjects (sorted by ID) for `LookupSubjects`;
+- `:tree`, the permission tree in SpiceDB's order, for an expansion;
 - `:relationships`, sorted, in the text form above, for a read;
 - `:error` with the gRPC code and the first `ErrorInfo` reason for a rejected
   request.
@@ -50,8 +51,11 @@ normalization keeps each field once.
 
 ## How EACL is compared
 
-Checks, resource lookups and reads must be equal. A rejected request must
-raise the EACL error class the test maps from SpiceDB's reason.
+Checks, resource lookups and reads must be equal, and permission trees must
+have the same topology, with union and intersection children and leaf
+subjects compared unordered. A rejected request must raise the EACL error
+class the test maps from SpiceDB's reason. The expansions avoid relations
+that hold Caveated relationships, which EACL's permission trees do not expand.
 
 Subject lookups are compared by what they grant. A subject holds the
 permission through its own entry or, unless the `*` entry excludes it, through

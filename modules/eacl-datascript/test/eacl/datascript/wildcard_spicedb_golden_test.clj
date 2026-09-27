@@ -7,6 +7,8 @@
   the same requests and compares the answers:
 
   - checks and resource lookups by permissionship, and missing context;
+  - permission trees by topology, with union and intersection children and
+    leaf subjects unordered;
   - subject lookups by denotation: the permissionship every known subject of
     the type gets from its own entry or, unless `*` excludes it, the `*`
     entry. SpiceDB leaves out a granted subject that the wildcard already
@@ -48,6 +50,33 @@
        (when caveat (str "[" caveat "]"))))
 
 (defn- ->object [[type id]] (eacl/spice-object (keyword type) id))
+
+(defn- tree-node
+  "An EACL permission-tree node in the fixture's form."
+  [{:keys [expanded-object expanded-relation leaf intermediate]}]
+  (let [node {:object [(name (:type expanded-object)) (:id expanded-object)]
+              :relation (name expanded-relation)}]
+    (if leaf
+      (assoc node :subjects
+             (mapv (fn [{:keys [type id relation]}]
+                     (cond-> [(name type) id] relation (conj (name relation))))
+                   (:subjects leaf)))
+      (assoc node
+             :operation (:operation intermediate)
+             :children (mapv tree-node (:children intermediate))))))
+
+(defn- canonical-tree
+  "Orders leaf subjects and union and intersection children; an exclusion
+  keeps its base first."
+  [node]
+  (if (contains? node :subjects)
+    (update node :subjects #(vec (sort-by pr-str %)))
+    (update node :children
+            (fn [children]
+              (let [children (mapv canonical-tree children)]
+                (if (= :exclusion (:operation node))
+                  children
+                  (vec (sort-by pr-str children))))))))
 
 (def ^:private unmentioned
   "An existing subject of each type that no relationship names: it holds
@@ -124,6 +153,11 @@
         {:detailed (walk #(eacl/lookup-subjects client %)
                          (assoc query :result-policy :detailed))
          :definite (walk #(eacl/lookup-subjects client %) query)})
+
+      :expand
+      {:tree (tree-node (:tree-root (eacl/expand-permission-tree
+                                     client {:resource (->object resource)
+                                             :permission (keyword permission)})))}
 
       :read
       {:relationships
@@ -219,6 +253,9 @@
                  (definitely-granted definite universe))
               "the default listing grants SpiceDB's definite subjects"))
 
+        (= :expand (:op request))
+        (is (= (canonical-tree (:tree spicedb)) (canonical-tree (:tree actual))))
+
         :else
         (is (= spicedb actual))))))
 
@@ -243,6 +280,6 @@
     (eacl/write-relationships!
      client (mapv (fn [relationship] {:operation :create :relationship relationship})
                   relationships))
-    (is (= 65 (count cases)))
+    (is (= 72 (count cases)))
     (doseq [case cases]
       (assert-case! client relationships cases case))))

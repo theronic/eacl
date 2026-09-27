@@ -121,8 +121,19 @@ but a directly chained expression such as `a->b->c` is not supported.
 Other unsupported forms are:
 
 - `.all()` intersection arrows.
-- Wildcard subjects and `subject#relation` subject sets.
+- `subject#relation` subject sets.
 - `nil` and `self` permission operands.
+
+## Wildcard subjects
+
+A relation may allow every subject of a type (`relation viewer: user | user:*`).
+A wildcard relationship makes every user a member of that relation, so the
+operators above apply to it like any other membership: `viewer - banned`
+withholds the permission from banned users, and `viewer & editor` grants it
+to editors. A relation that holds a wildcard cannot be the left side of an
+arrow. `lookup-subjects` returns the wildcard as the subject `*` and lists the
+subjects that an intersection or exclusion withholds it from under
+`:excluded-subjects`. See [Wildcard Subjects](../README.md#wildcard-subjects).
 
 [Caveats and expiration](caveats.md) can qualify relationships used by these
 expressions. An expired ban can restore access, just as an expired grant can

@@ -93,6 +93,13 @@ identity conversion, selected-snapshot token authentication, monotonic clocks,
 host integer/runtime semantics, and general Clojure source refinement remain
 explicit trusted or empirically checked boundaries.
 
+`dafny/WildcardSubjects.dfy` is the proof-only model of SpiceDB wildcard
+subjects (`user:*`): wildcard membership, the touch-cover representative
+theorem behind `lookup-subjects`' `*` entry and its exclusions, and the
+union-only split. Its production correspondence is the pinned SpiceDB fixture
+in `fixtures/wildcards/`, the seeded reference differential and the backend
+contracts listed in [the assurance boundary](../docs/formal-verification.md).
+
 The abstract operator Phase A consists of
 `PermissionSetAlgebra.dfy`, `SignedDependencyStratification.dfy`,
 `CandidateCover.dfy`, `WitnessPredicate.dfy`, `VectorPredicate.dfy`,

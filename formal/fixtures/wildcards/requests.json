@@ -467,6 +467,48 @@
   }
  },
  {
+  "id": "expand area:a1 viewer",
+  "op": "expand",
+  "resource": "area:a1",
+  "permission": "viewer"
+ },
+ {
+  "id": "expand area:a1 view",
+  "op": "expand",
+  "resource": "area:a1",
+  "permission": "view"
+ },
+ {
+  "id": "expand area:a1 enter",
+  "op": "expand",
+  "resource": "area:a1",
+  "permission": "enter"
+ },
+ {
+  "id": "expand area:a1 both",
+  "op": "expand",
+  "resource": "area:a1",
+  "permission": "both"
+ },
+ {
+  "id": "expand area:a3 mingle",
+  "op": "expand",
+  "resource": "area:a3",
+  "permission": "mingle"
+ },
+ {
+  "id": "expand doc:d0 peek",
+  "op": "expand",
+  "resource": "doc:d0",
+  "permission": "peek"
+ },
+ {
+  "id": "expand doc:d2 read",
+  "op": "expand",
+  "resource": "doc:d2",
+  "permission": "read"
+ },
+ {
   "id": "read area relationships of user:*",
   "op": "read",
   "resourceType": "area",

@@ -152,6 +152,11 @@ allows either an ordinary share or a conditional one. Expiration-only shares
 need the ordinary alternative. An unused Caveat definition does not require
 an evaluator, but a relation that names one does, even before any shares exist.
 
+A [wildcard](../README.md#wildcard-subjects) branch can require a Caveat too:
+`relation anyone: user:* with nothing_sensitive` requires `nothing_sensitive`
+on every `user:*` relationship, and EACL evaluates it for each user with that
+request's context.
+
 Names and parameter names use ASCII identifiers of up to 64 bytes. A Caveat
 can have at most 32 parameters. CEL keywords, type names, and the `__eacl_`
 prefix are reserved. Invalid definitions fail before replacing the schema.

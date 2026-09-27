@@ -233,6 +233,31 @@ codec round trips, immutable selection, causal-token authentication,
 monotonic-clock behavior, host exact-integer/runtime semantics, and arbitrary
 source states remain trusted or empirically certified rather than proved.
 
+### Wildcard-subject assurance boundary
+
+`WildcardSubjects.dfy` contributes 15 obligations. Membership of a concrete
+subject joins its own relationship with the wildcard's when the relation
+declares `T:*`, over the Caveat worlds of `QualifiedEvidence.dfy`. The model
+proves that a subject without a relationship in a permission's touch cover
+(every intersection and exclusion relaxed to a union) is indistinguishable
+from the wildcard; that a subject lookup which decides every touch-cover
+subject exactly and excludes from `*` those it does not grant definitely
+denotes every subject's permission exactly under both result policies; that
+a union-only listing of own derivations beside `*` needs no exclusions; and,
+by a witness, that the definite form of that listing can omit a subject that
+only two conditional derivations grant together. Three model mutants were
+checked by hand and are not registered mutation controls: leaving an
+exclusion's right operand out of the touch cover, dropping the wildcard
+membership, and excluding only denied subjects each falsify a theorem.
+
+The model is proof-only and bounds recursion by fuel. The engine
+correspondence is empirical: `formal/fixtures/wildcards/` (SpiceDB v1.56.0
+answers to 72 requests, compared by
+`eacl.datascript.wildcard-spicedb-golden-test`), the independent evaluator
+`modules/eacl/test/eacl/wildcard_reference.cljc` over seeded stores
+(`eacl.datascript.wildcard-differential-test`, CLJ and CLJS), and the backend
+contract in `modules/eacl/test/eacl/wildcard_contract_support.cljc`.
+
 ## Temporal models
 
 `formal/tla/EaclTemporal.tla` is the compact safety model.

@@ -141,9 +141,33 @@ def normalize(request, status, text):
                 text += "[%s]" % r["optionalCaveat"]["caveatName"]
             found.append(text)
         return {Keyword("relationships"): sorted(found)}
+    if op == "expand":
+        return {Keyword("tree"): tree(items[0]["treeRoot"])}
     if op in ("write", "write-schema"):
         return {Keyword("written"): True}
     raise ValueError(op)
+
+
+def tree(node):
+    """A PermissionRelationshipTree node in SpiceDB's order; the test
+    compares union and intersection children and leaf subjects unordered."""
+    expanded = node["expandedObject"]
+    result = {Keyword("object"): [expanded["objectType"], expanded["objectId"]],
+              Keyword("relation"): node["expandedRelation"]}
+    if "leaf" in node:
+        subjects = []
+        for subject in node["leaf"].get("subjects") or []:
+            reference = [subject["object"]["objectType"], subject["object"]["objectId"]]
+            if subject.get("optionalRelation"):
+                reference.append(subject["optionalRelation"])
+            subjects.append(reference)
+        result[Keyword("subjects")] = subjects
+    else:
+        intermediate = node["intermediate"]
+        result[Keyword("operation")] = Keyword(
+            intermediate["operation"].replace("OPERATION_", "").lower())
+        result[Keyword("children")] = [tree(child) for child in intermediate.get("children") or []]
+    return result
 
 
 def spicedb_request(request):
@@ -166,6 +190,11 @@ def spicedb_request(request):
                 "permission": request["permission"],
                 "subjectObjectType": request["subjectType"]}
         path = "/v1/permissions/subjects"
+    elif op == "expand":
+        body = {"consistency": FULLY_CONSISTENT,
+                "resource": object_ref(request["resource"]),
+                "permission": request["permission"]}
+        path = "/v1/permissions/expand"
     elif op == "read":
         relationship_filter = {"resourceType": request["resourceType"]}
         if request.get("subjectType"):

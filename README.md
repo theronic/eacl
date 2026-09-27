@@ -227,6 +227,7 @@ This README is too long & too technical, so I am working to simplify it and brea
     * [Creating Relationships](#creating-relationships)
     * [Permission Checks](#permission-checks)
     * [Arrow Permissions](#arrow-permissions)
+    * [Wildcard Subjects](#wildcard-subjects)
   * [EACL ID Configuration](#eacl-id-configuration)
   * [Caching](#caching)
     * [Cache Coherence](#cache-coherence)
@@ -1287,6 +1288,105 @@ Now you can use `can?` to check those arrow permissions:
 Internally, EACL stores relation and permission definitions as entities and
 stores each relationship in both directions for efficient traversal.
 
+### Wildcard Subjects
+
+A relation can grant every subject of a type with SpiceDB's wildcard, `user:*`,
+beside or instead of concrete subjects, and a wildcard branch can name a
+[Caveat](docs/caveats.md):
+
+```clojure
+(eacl/write-schema! acl
+  "caveat nothing_sensitive(carrying list<string>) {
+     !(\"launch-codes\" in carrying) && !(\"customer-list\" in carrying)
+   }
+
+   definition user {}
+
+   definition document {
+     relation viewer: user | user:*
+     relation banned: user
+     permission view = viewer - banned
+   }
+
+   definition area {
+     relation anyone: user:* with nothing_sensitive
+     permission exit = anyone
+   }")
+```
+
+A relationship whose subject ID is `"*"` gives every user its relation:
+
+```clojure
+(eacl/create-relationships! acl
+  [(eacl/->Relationship (->user "*") :viewer (->document "handbook"))
+   (eacl/->Relationship (->user "bob") :banned (->document "handbook"))])
+
+(eacl/can? acl (->user "alice") :view (->document "handbook")) ; => true
+(eacl/can? acl (->user "bob") :view (->document "handbook"))   ; => false
+```
+
+Checks, `lookup-resources` and `count-resources` give each subject what its
+type's wildcard holds, through union, intersection, exclusion, arrows and
+recursion. `lookup-subjects` returns the wildcard as the subject `"*"`. Where
+intersection or exclusion withholds the permission from some subjects,
+`:excluded-subjects` lists them:
+
+```clojure
+(eacl/lookup-subjects acl
+  {:resource (->document "handbook") :permission :view :subject/type :user})
+;; :data [{:type :user :id "*" :excluded-subjects [{:type :user :id "bob"}]}]
+```
+
+Read a subject lookup as SpiceDB's: a subject has the permission through its
+own entry or, unless `*` excludes it, through `*`. EACL may also list a
+granted subject that has a relationship of its own although `*` covers it.
+`count-subjects` counts entries, so `*` counts once.
+
+A Caveated wildcard branch requires its Caveat on every wildcard
+relationship, and the Caveat is evaluated for each subject:
+
+```clojure
+(eacl/write-relationships! acl
+  [{:operation :touch
+    :relationship (assoc (eacl/->Relationship (->user "*") :anyone (->area "vault"))
+                         :caveat "nothing_sensitive")}])
+
+(eacl/check-permission acl
+  {:subject (->user "alice") :permission :exit :resource (->area "vault")
+   :caveat-context {"carrying" ["lunch"]}})
+;; includes {:allowed? true :permissionship :has-permission}
+```
+
+As in SpiceDB:
+
+- A relation that holds a wildcard cannot be the left side of an arrow
+  (`parent->view` with `relation parent: folder | folder:*`); an arrow can
+  lead to a relation or permission that holds one (`folder->viewer`).
+- A write fails with `:eacl/unknown-relation-or-permission` when the relation
+  does not declare the subject's form (`:reason :wildcard-subject-not-allowed`
+  or `:concrete-subject-not-allowed`). As for a concrete branch, a wildcard
+  relationship without the Caveat that `user:* with c` requires fails with
+  `:reason :caveat-not-allowed`.
+- The object ID `"*"` is reserved. It means the wildcard in the subject of
+  relationship writes, reads and filters, and in `delete-object!`, which
+  removes every relationship whose subject is that type's wildcard. It is
+  rejected with `:eacl/wildcard-not-allowed` as a resource ID, and as the
+  subject of `can?`, `check-permission(s)`, `lookup-resources` and
+  `count-resources`.
+
+Unlike SpiceDB, a wildcard grants the objects that exist: an ID that names no
+object is still [unknown](#unknown-object-ids).
+
+A wildcard branch is stored as two attributes of the Relation entity, and all
+wildcard relationships share one EACL-owned subject entity; relationship
+storage is unchanged. EACL installs the attributes on Datomic and Datahike
+when a schema first declares a wildcard, and on Datalevin when a client opens
+the connection; a DataScript connection needs EACL's current schema
+(`eacl.datascript.core/create-conn`). Upgrade every serving Peer before
+writing a schema that uses wildcards: an older Peer rejects a relation that
+only allows the wildcard, but would treat the wildcard as an ordinary subject
+elsewhere.
+
 ## EACL ID Configuration
 
 SpiceDB uses strings for subject and resource IDs. Internally, EACL uses backend-native entity IDs, but you can configure EACL to convert internal IDs to external, and vice versa.
@@ -1440,6 +1540,10 @@ entities:
 
 - **Reads** (`can?`, `lookup-resources`, `lookup-subjects`, `count-resources`, `count-subjects`, `read-relationships`) treat unknown IDs as matching nothing: `can?` returns `false`, lookups and reads return empty pages.
 - **Writes** (`write-relationships!` and friends) throw `ex-info {:type :eacl/unknown-object, :object {:type … :id …}}` — a relationship to a nonexistent entity is unsatisfiable, and failing loudly beats minting ghost entities or raw Datomic errors.
+
+The ID `"*"` never names an object: it is the [wildcard subject](#wildcard-subjects).
+A wildcard grants the objects that exist, so `can?` is still `false` for an
+unknown subject ID.
 
 If a lookup result has no external ID in the selected database,
 `lookup-resources` and `lookup-subjects` raise
@@ -1654,9 +1758,17 @@ but it is not a byte-for-byte or operational clone:
   not have direct SpiceDB API equivalents.
 - V8 supports [Caveats and expiring Relationships](docs/caveats.md), including
   conditional results and an exclusive UTC-millisecond expiry. Its bounded CEL
-  profile is a subset of SpiceDB's expression language; wildcard subjects and
-  subject relations remain unsupported. Qualified activation requires upgrading
-  every serving Peer first.
+  profile is a subset of SpiceDB's expression language; subject relations
+  remain unsupported. Qualified activation requires upgrading every serving
+  Peer first.
+- [Wildcard subjects](#wildcard-subjects) grant the objects that exist; SpiceDB
+  grants any subject ID. `lookup-subjects` may list a granted subject that has
+  a relationship of its own beside `*`, where SpiceDB leaves it to `*`. A
+  subject that is only conditionally excluded from `*` is excluded and also
+  returned as its own conditional entry under `:result-policy :detailed`;
+  SpiceDB returns it as a conditional exclusion. Default (definite) lookups
+  omit a subject that only its own conditional relationship and a conditional
+  wildcard together grant, as they omit any conditional result.
 - EACL evaluates relationship cycles as a fixed point and has no separate
   dispatch-depth limit for checks, lookups, and counts. These operations remain
   subject to configured traversal work limits. SpiceDB uses a configurable
