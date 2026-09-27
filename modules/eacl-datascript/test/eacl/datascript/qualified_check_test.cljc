@@ -106,9 +106,10 @@
               decisions (eacl/check-permissions client {:checks checks :cache? false})]
           (is (= [:conditional-permission :has-permission :conditional-permission :conditional-permission]
                  (mapv :permissionship decisions)))
-          ;; The recursive operand also inspects its parent relation once to
-          ;; decide whether witness reordering could suppress a Caveat fault.
-          (is (= 6 (count @reads)))
+          ;; Caveat admission may inspect the parent relation before reaching
+          ;; member. Relation entity order can differ across runtimes; either
+          ;; way, admission adds at most one read and resolution never repeats.
+          (is (<= 5 (count @reads) 6))
           (is (every? #(= 1 %) (vals (frequencies @reads)))))))))
 
 (deftest certified-point-reuse-does-not-alias-unused-context-or-unstamped-mutation
