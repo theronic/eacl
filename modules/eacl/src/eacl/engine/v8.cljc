@@ -1848,16 +1848,25 @@
   "Aligned decisions for `candidates`, one call of `decide` per subject:
   `(decide subject-type subject-eid resource-eids)`."
   [decide candidates]
-  (let [decided
-        (into {}
-              (map (fn [[[subject-type subject-eid] group]]
-                     (let [resource-eids (mapv :resource-eid group)]
-                       [[subject-type subject-eid]
-                        (zipmap resource-eids
-                                (decide subject-type subject-eid resource-eids))])))
-              (group-by (juxt :subject-type :subject-eid) candidates))]
-    (mapv #(get-in decided [[(:subject-type %) (:subject-eid %)] (:resource-eid %)])
-          candidates)))
+  (if-let [{:keys [subject-type subject-eid]} (first candidates)]
+    (if (every? #(and (= subject-type (:subject-type %))
+                      (= subject-eid (:subject-eid %)))
+                (rest candidates))
+      ;; Forward pages and point checks already have one subject. The
+      ;; oracle's values are aligned; grouping and indexing them again only
+      ;; allocates keys and maps for answers we can return directly.
+      (vec (decide subject-type subject-eid (mapv :resource-eid candidates)))
+      (let [decided
+            (into {}
+                  (map (fn [[[subject-type subject-eid] group]]
+                         (let [resource-eids (mapv :resource-eid group)]
+                           [[subject-type subject-eid]
+                            (zipmap resource-eids
+                                    (decide subject-type subject-eid resource-eids))])))
+                  (group-by (juxt :subject-type :subject-eid) candidates))]
+        (mapv #(get-in decided [[(:subject-type %) (:subject-eid %)] (:resource-eid %)])
+              candidates)))
+    []))
 
 (defn- ordered-operator-membership?
   "Caveat faults are demand-sensitive. The leveled search reorders witnesses,
