@@ -148,7 +148,11 @@
    :subproblem-cache
    {:source "formal/dafny/SubproblemCache.dfy"
     :claim :conditional-exact-and-managed-atomic-projection-refinement
-    :minimum-proof-efforts 73}})
+    :minimum-proof-efforts 73}
+   :wildcard-subjects
+   {:source "formal/dafny/WildcardSubjects.dfy"
+    :claim :proof-only-wildcard-membership-touch-cover-and-subject-listing-denotation
+    :minimum-proof-efforts 15}})
 
 (def operation-contracts
   [{:operation :uuid-source-lifecycle
@@ -278,6 +282,32 @@
     [:adapter-query-and-codec-source-refinement
      :deadline-and-host-integer-platform-contracts
      :causal-token-authentication]}
+   {:operation :wildcard-subjects
+    :entry-points ['eacl.core/can? 'eacl.core/check-permission
+                   'eacl.core/check-permissions 'eacl.core/lookup-resources
+                   'eacl.core/count-resources 'eacl.core/lookup-subjects
+                   'eacl.core/count-subjects
+                   "formal/fixtures/wildcards/spicedb-results.edn"]
+    :theorems
+    [:untouched-subject-is-the-wildcard
+     :wildcard-decision-ignores-variants
+     :own-derivation-without-relationships-is-empty
+     :positive-permission-splits-into-own-and-wildcard
+     :detailed-touch-listing-denotes-exactly
+     :definite-touch-listing-denotes-exactly
+     :union-listing-denotes-exactly
+     :definite-union-listing-is-sound
+     :complementary-conditionals-witness]
+    :dafny ["formal/dafny/WildcardSubjects.dfy"]
+    :adapter-obligations
+    [:wildcard-relationships-only-on-declared-branches
+     :one-wildcard-subject-entity-per-database
+     :touch-cover-contains-every-subject-with-a-closure-relationship
+     :exact-operator-decision-for-each-touch-cover-subject]
+    :runtime-targets [:clj-java :cljs-javascript]
+    :remaining
+    [:engine-source-refinement
+     :recursion-as-least-fixed-point-rather-than-fuel]}
    {:operation :can?
     :entry-points ['eacl.core/can?]
     :theorems

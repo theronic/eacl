@@ -2438,16 +2438,19 @@
             page-info [:start-cursor :end-cursor])))))))
 
 (defn- wildcard-excluded?
+  "A subject's permission is the union of its own entry and, unless the
+  wildcard entry excludes it, the wildcard entry's. A touch-cover subject
+  without a definite grant is excluded under every result policy: a
+  conditional subject keeps its own conditional entry, and the wildcard's
+  grant must not complete it."
   [decision]
-  (if (= :detailed *lookup-result-policy*)
-    (evidence/no? decision)
-    (not (evidence/has? decision))))
+  (not (evidence/has? decision)))
 
 (defn- wildcard-exclusions
   "The touch-cover subjects the wildcard entry does not grant: every subject
   holding a tuple in the permission's relation closure whose exact decision
-  denies it (a conditional decision too, under the definite policy). A
-  subject outside the touch cover has exactly the wildcard's memberships."
+  is not a definite grant. A subject outside the touch cover has exactly the
+  wildcard's memberships."
   [db touch-plan evaluate subject-type anchor-eid wildcard-eid]
   (let [{:keys [fetch-fn attempts]} (stable-fetch-fn db)
         finished

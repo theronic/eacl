@@ -9,14 +9,25 @@
             [eacl.datomic.schema :as schema]
             [eacl.wildcard-contract-support :as contract]))
 
+(defn- seed!
+  [conn ids]
+  @(d/transact conn (mapv (fn [id] {:eacl/id id}) ids)))
+
 (defn- seed-objects!
   [conn]
-  @(d/transact conn (mapv (fn [id] {:eacl/id id}) contract/objects)))
+  (seed! conn contract/objects))
 
 (deftest datomic-wildcard-contract-test
   (with-mem-conn [conn schema/v8-schema]
     (seed-objects! conn)
     (contract/assert-wildcard-contract!
+     (datomic/make-client conn {:security-key "datomic-wildcard-test00000000000"})
+     #(seed! conn %))))
+
+(deftest datomic-wildcard-speculative-contract-test
+  (with-mem-conn [conn schema/v8-schema]
+    (seed-objects! conn)
+    (contract/assert-wildcard-speculative-contract!
      (datomic/make-client conn {:security-key "datomic-wildcard-test00000000000"}))))
 
 (deftest datomic-wildcard-without-cache-test
@@ -24,7 +35,8 @@
     (seed-objects! conn)
     (contract/assert-wildcard-contract!
      (datomic/make-client conn {:security-key "datomic-wildcard-test00000000000"
-                                :cache cache/no-cache}))))
+                                :cache cache/no-cache})
+     #(seed! conn %))))
 
 (deftest datomic-wildcard-caveat-contract-test
   (with-mem-conn [conn schema/v8-schema]

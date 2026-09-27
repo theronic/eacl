@@ -10,21 +10,31 @@
             [eacl.datahike.storage :as storage]
             [eacl.wildcard-contract-support :as contract]))
 
+(defn- seed!
+  [conn ids]
+  (d/transact conn (vec (map-indexed (fn [index id] {:db/id (- (inc index)) :eacl/id id})
+                                     ids))))
+
 (defn- seed-objects!
   [conn]
-  (d/transact conn (vec (map-indexed (fn [index id] {:db/id (- (inc index)) :eacl/id id})
-                                     contract/objects))))
+  (seed! conn contract/objects))
 
 (deftest datahike-wildcard-contract-test
   (let [conn (datahike/create-conn)]
     (seed-objects! conn)
-    (contract/assert-wildcard-contract! (datahike/make-client conn {}))))
+    (contract/assert-wildcard-contract! (datahike/make-client conn {}) #(seed! conn %))))
+
+(deftest datahike-wildcard-speculative-contract-test
+  (let [conn (datahike/create-conn)]
+    (seed-objects! conn)
+    (contract/assert-wildcard-speculative-contract! (datahike/make-client conn {}))))
 
 (deftest datahike-wildcard-without-cache-test
   (let [conn (datahike/create-conn)]
     (seed-objects! conn)
     (contract/assert-wildcard-contract!
-     (datahike/make-client conn {:cache cache/no-cache}))))
+     (datahike/make-client conn {:cache cache/no-cache})
+     #(seed! conn %))))
 
 (deftest datahike-wildcard-caveat-contract-test
   (let [conn (datahike/create-conn)

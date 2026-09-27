@@ -2,8 +2,8 @@
   "Backend-neutral contract for SpiceDB wildcard subjects (`user:*`).
 
   Every public backend runs `assert-wildcard-contract!` against a fresh
-  writable client; JVM clients with the CEL evaluator also run
-  `assert-wildcard-caveat-contract!`. Expected subject lookups follow the
+  writable client and `assert-wildcard-caveat-contract!` against one with a
+  Caveat evaluator (the JVM CEL module, or core's portable plan evaluator). Expected subject lookups follow the
   behavior observed on SpiceDB v1.56.0 (formal/fixtures/wildcards), stated as
   EACL's documented listing: every granted subject holding a tuple in the
   permission's relations is listed, and the `*` entry names the subjects the
@@ -97,14 +97,29 @@ definition doc {
         items))))
 
 (defn subject-entries
-  "lookup-subjects as `{id excluded-ids}`, order-insensitive."
-  [client resource permission]
+  "lookup-subjects as `{id excluded-ids}`, order-insensitive. `query` adds
+  request options such as `:caveat-context`."
+  ([client resource permission]
+   (subject-entries client resource permission {}))
+  ([client resource permission query]
+   (into {}
+         (map (fn [{:keys [id excluded-subjects]}]
+                [id (set (map :id excluded-subjects))]))
+         (walk #(eacl/lookup-subjects client %)
+               (merge {:resource resource :permission permission
+                       :subject/type :user :first 2}
+                      query)))))
+
+(defn- detailed-subject-entries
+  "`:detailed` lookup-subjects as `{id [permissionship excluded-ids]}`."
+  [client resource permission query]
   (into {}
-        (map (fn [{:keys [id excluded-subjects]}]
-               [id (set (map :id excluded-subjects))]))
+        (map (fn [{:keys [object permissionship]}]
+               [(:id object) [permissionship (set (map :id (:excluded-subjects object)))]]))
         (walk #(eacl/lookup-subjects client %)
-              {:resource resource :permission permission
-               :subject/type :user :first 2})))
+              (merge {:resource resource :permission permission
+                      :subject/type :user :first 2 :result-policy :detailed}
+                     query))))
 
 (defn- error-data
   [f]
@@ -120,10 +135,28 @@ definition doc {
               [(:type subject) (:id subject) relation (:type resource) (:id resource)])
             (:data (eacl/read-relationships client query)))))
 
+(defn- assert-paginated-wildcard-subject!
+  "A reader created after the wildcard subject entity sorts after it, so the
+  wildcard falls between concrete subjects of one reverse walk and must
+  survive cursor encoding at a page boundary."
+  [client seed!]
+  (seed! ["zed"])
+  (eacl/create-relationships!
+   client [(eacl/->Relationship (->user "*") :reader (->doc "d10"))
+           (eacl/->Relationship (->user "alice") :reader (->doc "d10"))
+           (eacl/->Relationship (->user "zed") :reader (->doc "d10"))])
+  (doseq [size [1 2 3]]
+    (let [walked (walk #(eacl/lookup-subjects client %)
+                       {:resource (->doc "d10") :permission :read
+                        :subject/type :user :first size})]
+      (is (= #{"alice" "zed" "*"} (set (map :id walked))))
+      (is (= 3 (count walked)) "a wildcard boundary neither repeats nor skips"))))
+
 (defn assert-wildcard-contract!
   "`client` is a fresh writable client whose database holds `objects` as
-  entities addressed by their `:eacl/id`."
-  [client]
+  entities addressed by their `:eacl/id`. `seed!` creates further objects
+  from a vector of `:eacl/id` strings."
+  [client seed!]
   (testing "a wildcard schema is admitted and read back with its branches"
     (is (map? (eacl/write-schema! client wildcard-schema)))
     (is (some #(and (= :viewer (:eacl.relation/relation-name %))
@@ -247,9 +280,33 @@ definition folder {
                         client {:resource (->doc "d1") :permission :read_clean
                                 :subject/type :user}))))))
 
+  (testing "batched checks decide wildcard grants per demand"
+    (is (= [true false true]
+           (mapv :allowed?
+                 (eacl/check-permissions
+                  client
+                  {:checks [{:subject (->user "alice") :permission :enter :resource (->area "a1")}
+                            {:subject (->user "bob") :permission :enter :resource (->area "a1")}
+                            {:subject (->user "carol") :permission :read_clean :resource (->doc "d2")}]})))))
+
+  (testing "permission trees list a stored wildcard as the * subject"
+    (let [leaves (atom #{})]
+      (letfn [(collect [node]
+                (when-let [subjects (get-in node [:leaf :subjects])]
+                  (swap! leaves into subjects))
+                (doseq [child (get-in node [:intermediate :children])]
+                  (collect child)))]
+        (collect (:tree-root (eacl/expand-permission-tree
+                              client {:resource (->area "a1") :permission :view}))))
+      (is (contains? (set (map :id @leaves)) "*"))))
+
+  (testing "a wildcard at a page boundary keeps its place"
+    (assert-paginated-wildcard-subject! client seed!))
+
   (testing "relationship reads treat * as the literal wildcard subject"
     (is (= #{[:user "*" :viewer :area "a1"] [:user "*" :wild :area "a1"]
-             [:user "*" :viewer :folder "f0"] [:user "*" :reader :doc "d11"]}
+             [:user "*" :viewer :folder "f0"] [:user "*" :reader :doc "d11"]
+             [:user "*" :reader :doc "d10"]}
            (relationship-tuples client {:subject/type :user :subject/id "*"})))
     (is (= #{[:team "*" :guest :area "a3"]}
            (relationship-tuples client {:subject/type :team :subject/id "*"}))))
@@ -284,19 +341,22 @@ definition folder {
     (is (true? (eacl/can? client (->team "blue") :mingle (->area "a3"))))))
 
 (def caveat-schema
-  "The first consumer's schema (the author's blog)."
+  "The first consumer's schema (the author's blog: `anyone` and `exit`), with
+  an expiring wildcard and a Caveated exclusion from a Caveated wildcard."
   "caveat nothing_sensitive(carrying list<string>) { !(\"launch-codes\" in carrying) && !(\"customer-list\" in carrying) }
+caveat is_weekday(day string) { day != \"saturday\" && day != \"sunday\" }
 definition user {}
 definition area {
   relation anyone: user:* with nothing_sensitive
   relation viewer: user:*
-  relation banned: user
+  relation banned: user | user with is_weekday
   permission exit = anyone
   permission stroll = viewer - banned
+  permission guarded = anyone - banned
 }")
 
 (defn assert-wildcard-caveat-contract!
-  "`client` needs a CEL evaluator and a controllable `:clock` backed by
+  "`client` needs a Caveat evaluator and a controllable `:clock` backed by
   `now-ms` (an atom of epoch milliseconds). Its database holds `objects`."
   [client now-ms]
   (eacl/write-schema! client caveat-schema)
@@ -307,7 +367,12 @@ definition area {
                           :caveat "nothing_sensitive")}
     {:operation :create
      :relationship (assoc (eacl/->Relationship (->user "*") :viewer (->area "a2"))
-                          :valid-until-ms (+ @now-ms 1000))}])
+                          :valid-until-ms (+ @now-ms 1000))}
+    {:operation :create
+     :relationship (eacl/->Relationship (->user "bob") :banned (->area "a1"))}
+    {:operation :create
+     :relationship (assoc (eacl/->Relationship (->user "erin") :banned (->area "a1"))
+                          :caveat "is_weekday")}])
 
   (testing "a Caveated wildcard branch requires its Caveat"
     (is (= :caveat-not-allowed
@@ -342,6 +407,47 @@ definition area {
                             :subject/type :user
                             :caveat-context {"carrying" ["launch-codes"]}})))))
 
+  (testing "a Caveated exclusion from a Caveated wildcard is decided per subject"
+    (let [context (fn [day] (cond-> {"carrying" []} day (assoc "day" day)))
+          entries #(subject-entries client (->area "a1") :guarded {:caveat-context %})
+          check #(eacl/check-permission
+                  client {:subject (->user %1) :permission :guarded
+                          :resource (->area "a1") :caveat-context %2})]
+      (is (= {"*" #{"bob" "erin"}} (entries (context "monday"))))
+      (is (= {"erin" #{} "*" #{"bob"}} (entries (context "sunday")))
+          "a granted subject with a relationship of its own is listed beside *")
+      (is (= {"*" #{"bob" "erin"}} (entries (context nil)))
+          "a conditional subject is not a definite grant")
+      (is (= {"*" [:has-permission #{"bob" "erin"}]
+              "erin" [:conditional-permission #{}]}
+             (detailed-subject-entries client (->area "a1") :guarded
+                                       {:caveat-context (context nil)}))
+          "the wildcard does not complete a conditional subject's entry")
+      (is (= {:count 2 :definite-count 1 :conditional-count 1}
+             (select-keys (eacl/count-subjects
+                           client {:resource (->area "a1") :permission :guarded
+                                   :subject/type :user :result-policy :detailed
+                                   :caveat-context (context nil)})
+                          [:count :definite-count :conditional-count])))
+      (is (= 1 (:count (eacl/count-subjects
+                        client {:resource (->area "a1") :permission :guarded
+                                :subject/type :user
+                                :caveat-context (context "monday")}))))
+      (is (= :no-permission (:permissionship (check "erin" (context "monday")))))
+      (is (= :has-permission (:permissionship (check "erin" (context "sunday")))))
+      (is (= {:permissionship :conditional-permission :missing-fields ["day"]}
+             (select-keys (check "erin" (context nil)) [:permissionship :missing-fields])))
+      (is (= :has-permission (:permissionship (check "alice" (context nil)))))
+      (is (= ["a1"] (ids (eacl/lookup-resources
+                          client {:subject (->user "erin") :permission :guarded
+                                  :resource/type :area
+                                  :caveat-context (context "sunday")}))))
+      (is (= [] (ids (eacl/lookup-resources
+                      client {:subject (->user "erin") :permission :guarded
+                              :resource/type :area
+                              :caveat-context (context "monday")}))))
+      (is (= {} (entries {"carrying" ["launch-codes"] "day" "sunday"})))))
+
   (testing "an expiring wildcard relationship stops granting at its deadline"
     (is (true? (eacl/can? client (->user "alice") :stroll (->area "a2"))))
     (swap! now-ms + 1000)
@@ -349,3 +455,28 @@ definition area {
     (is (= [] (ids (eacl/lookup-subjects
                     client {:resource (->area "a2") :permission :stroll
                             :subject/type :user}))))))
+
+(defn assert-wildcard-speculative-contract!
+  "Speculative schema and relationship planning for backends that support
+  `eacl/with-schema` and `eacl/with`. `client`'s database holds `objects`."
+  [client]
+  (eacl/write-schema! client (str/replace wildcard-schema
+                                          "relation reader: user | user:*"
+                                          "relation reader: user"))
+  (eacl/create-relationship! client (->user "alice") :reader (->doc "d0"))
+  (let [snapshot (eacl/snapshot client)]
+    (try
+      (let [prospective (eacl/with-schema snapshot wildcard-schema)]
+        (try
+          (let [tx (eacl/tx-relationship prospective :create (->user "*") :reader (->doc "d1"))
+                granted (eacl/with prospective tx)]
+            (try
+              (is (true? (eacl/can? granted (->user "bob") :read (->doc "d1"))))
+              (is (= #{"*"} (set (ids (eacl/lookup-subjects
+                                       granted {:resource (->doc "d1") :permission :read
+                                                :subject/type :user})))))
+              (finally (eacl/release! granted))))
+          (finally (eacl/release! prospective))))
+      (finally (eacl/release! snapshot))))
+  (is (false? (eacl/can? client (->user "bob") :read (->doc "d1")))
+      "speculation commits nothing"))

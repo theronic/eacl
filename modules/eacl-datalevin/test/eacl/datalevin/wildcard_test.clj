@@ -2,7 +2,8 @@
   (:require [clojure.test :refer [deftest]]
             [datalevin.core :as d]
             [datalevin.util :as u]
-            [eacl.caveats.jvm :as cel]
+            [eacl.authorization.qualification-test :as fixtures]
+            [eacl.cache :as cache]
             [eacl.datalevin.core :as datalevin]
             [eacl.wildcard-contract-support :as contract]))
 
@@ -21,7 +22,8 @@
                   :security-key test-key
                   :revision-watermark watermark
                   :advance-revision-watermark! (fn [revision] (swap! watermark max revision))}
-                 options)))
+                 options))
+         (fn [ids] (d/transact! conn (mapv (fn [id] {:eacl/id id}) ids))))
       (finally
         (d/close conn)
         (u/delete-files dir)))))
@@ -29,7 +31,13 @@
 (deftest datalevin-wildcard-contract-test
   (with-client {} contract/assert-wildcard-contract!))
 
+(deftest datalevin-wildcard-without-cache-test
+  (with-client {:cache cache/no-cache} contract/assert-wildcard-contract!))
+
 (deftest datalevin-wildcard-caveat-contract-test
   (let [now-ms (atom 1790000000000)]
-    (with-client {:caveat-evaluator (cel/evaluator) :clock #(deref now-ms)}
-      #(contract/assert-wildcard-caveat-contract! % now-ms))))
+    ;; The Datalevin classpath has no JVM CEL module; core's portable plan
+    ;; evaluator serves the same Caveat.
+    (with-client {:caveat-evaluator (fixtures/portable-evaluator (atom 0))
+                  :clock #(deref now-ms)}
+      (fn [client _seed!] (contract/assert-wildcard-caveat-contract! client now-ms)))))

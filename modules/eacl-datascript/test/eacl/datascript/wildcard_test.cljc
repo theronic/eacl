@@ -2,26 +2,46 @@
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is]]
             #?(:clj [eacl.caveats.jvm :as cel])
             [datascript.core :as ds]
+            [eacl.authorization.qualification-test :as fixtures]
             [eacl.cache :as cache]
             [eacl.datascript.core :as datascript]
             [eacl.datascript.schema :as schema]
             [eacl.wildcard-contract-support :as contract]))
 
+(defn- seed!
+  [conn ids]
+  (ds/transact! conn (mapv (fn [id] {:eacl/id id}) ids)))
+
 (defn- seed-objects!
   [conn]
-  (ds/transact! conn (mapv (fn [id] {:eacl/id id}) contract/objects)))
+  (seed! conn contract/objects))
 
 (deftest datascript-wildcard-contract-test
   (let [conn (datascript/create-conn)
         client (datascript/make-client conn {})]
     (seed-objects! conn)
-    (contract/assert-wildcard-contract! client)))
+    (contract/assert-wildcard-contract! client #(seed! conn %))))
 
 (deftest datascript-wildcard-without-cache-test
   (let [conn (datascript/create-conn)
         client (datascript/make-client conn {:cache cache/no-cache})]
     (seed-objects! conn)
-    (contract/assert-wildcard-contract! client)))
+    (contract/assert-wildcard-contract! client #(seed! conn %))))
+
+(deftest datascript-wildcard-speculative-contract-test
+  (let [conn (datascript/create-conn)]
+    (seed-objects! conn)
+    (contract/assert-wildcard-speculative-contract!
+     (datascript/make-client conn {}))))
+
+(deftest datascript-wildcard-portable-caveat-contract-test
+  (let [conn (datascript/create-conn)
+        now-ms (atom 1790000000000)
+        client (datascript/make-client
+                conn {:caveat-evaluator (fixtures/portable-evaluator (atom 0))
+                      :clock #(deref now-ms)})]
+    (seed-objects! conn)
+    (contract/assert-wildcard-caveat-contract! client now-ms)))
 
 #?(:clj
    (deftest datascript-wildcard-caveat-contract-test
