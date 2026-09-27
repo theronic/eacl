@@ -126,10 +126,10 @@
        (fn [bytes [node value]]
          (execution/check! :evidence-witness)
          (when-not (and (vector? node) (= 2 (count node))
-                       (get-in (:predicate-programs plan) node))
+                        (get-in (:predicate-programs plan) node))
            (invalid! :invalid-witness-node "Evidence witness is outside the sealed plan." {:node node}))
          (let [bytes (+ bytes (if (boolean? value) 1
-                                 (caveat-values/utf8-size (evidence/encode value))))]
+                                  (caveat-values/utf8-size (evidence/encode value))))]
            (when (> bytes maximum-evidence-witness-bytes)
              (invalid! :witness-size "Evidence witnesses exceed the vector byte bound." {:bytes bytes}))
            (when-not (evidence/before? (:time qualification) (evidence/valid-until value))
@@ -341,31 +341,47 @@
                           (case instruction
                             :direct-membership
                             (let [indexed-probes
-                                  (mapcat (fn [index]
-                                            (map #(vector index %)
-                                                 (direct-probes
-                                                  (nth candidates index)
-                                                  (:descriptor predicate))))
-                                          pending)
-                                  probe-indexes (mapv first indexed-probes)
-                                  probes (mapv second indexed-probes)
-                                  decisions
-                                  (if (seq probes)
-                                    (or (held-decisions holdings qualification probes)
-                                        (if qualification
-                                          (mapv (fn [probe compact-edge]
-                                                  (qualification/qualify qualification
-                                                                         (get-in probe [:descriptor :relation-eid])
-                                                                         compact-edge))
-                                                probes (direct/dispatch-edges adapter probes))
-                                          (direct/dispatch adapter probes cache-lookup)))
-                                    [])]
-                              ;; Retain exact leaf decisions privately until
-                              ;; every demanded subgroup in the vector has
-                              ;; completed. A later failure therefore cannot
-                              ;; publish a successful prefix.
-                              (vswap! completed-leaves into
-                                      (mapv vector probes decisions))
+                                  (into []
+                                        (keep (fn [index]
+                                                (let [probes (direct-probes
+                                                              (nth candidates index)
+                                                              (:descriptor predicate))]
+                                                  (when (seq probes) [index probes]))))
+                                        pending)
+                                  dispatch!
+                                  (fn [probes]
+                                    ;; Own probes share one subject's slice,
+                                    ;; as do wildcard probes, so each group
+                                    ;; can be decided from retained holdings.
+                                    (let [decisions
+                                          (if (seq probes)
+                                            (or (held-decisions holdings qualification probes)
+                                                (if qualification
+                                                  (mapv (fn [probe compact-edge]
+                                                          (qualification/qualify qualification
+                                                                                 (get-in probe [:descriptor :relation-eid])
+                                                                                 compact-edge))
+                                                        probes (direct/dispatch-edges adapter probes))
+                                                  (direct/dispatch adapter probes cache-lookup)))
+                                            [])]
+                                      ;; Publish only after every demanded
+                                      ;; subgroup in the vector succeeds.
+                                      (vswap! completed-leaves into (mapv vector probes decisions))
+                                      decisions))
+                                  own-decisions (dispatch! (mapv (comp first second) indexed-probes))
+                                  wildcard-probes
+                                  (into []
+                                        (keep (fn [[[index probes] own]]
+                                                (when (and (second probes)
+                                                           (not (or (evidence/has? own) (evidence/fault? own))))
+                                                  [index (second probes)])))
+                                        (map vector indexed-probes own-decisions))
+                                  ;; Match scalar union demand: a definite own
+                                  ;; grant or fault does not demand the wildcard.
+                                  decisions (into own-decisions
+                                                  (dispatch! (mapv second wildcard-probes)))
+                                  probe-indexes (into (mapv first indexed-probes)
+                                                      (map first wildcard-probes))]
                               (finish!
                                (reduce (fn [result index]
                                          (assoc result index false))

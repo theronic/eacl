@@ -3,7 +3,9 @@
             #?(:clj [clojure.java.io :as io])
             [datascript.core :as ds]
             [eacl.authorization.qualification-test :as fixtures]
+            [eacl.backend.direct-membership :as direct]
             [eacl.cache :as cache]
+            [eacl.caveats.evaluator :as evaluator]
             [eacl.core :as eacl]
             [eacl.datascript.core :as datascript]
             [eacl.datascript.schema :as schema]
@@ -18,6 +20,31 @@
 (defn- seed-objects!
   [conn]
   (seed! conn contract/objects))
+
+(deftest definite-concrete-membership-does-not-evaluate-wildcard-caveat-test
+  (let [conn (datascript/create-conn)
+        calls (atom 0)
+        stats (atom {})
+        portable (fixtures/portable-evaluator (atom 0))
+        client (datascript/make-client
+                conn {:caveat-evaluator
+                      (reify evaluator/Evaluator
+                        (descriptor [_] (evaluator/descriptor portable))
+                        (-evaluate [_ _ _ _]
+                          (swap! calls inc)
+                          {:outcome :error :reason :resource-limit}))})]
+    (seed-objects! conn)
+    (eacl/write-schema! client contract/caveat-schema)
+    (eacl/create-relationships!
+     client [(eacl/->Relationship (contract/->user "alice") :amixed (contract/->area "a1"))
+             (eacl/->Relationship (contract/->user "alice") :editor (contract/->area "a1"))
+             (assoc (eacl/->Relationship (contract/->user "*") :amixed (contract/->area "a1"))
+                    :caveat "is_weekday")])
+    (binding [direct/*physical-stats* stats]
+      (is (true? (eacl/can? client (contract/->user "alice") :edit (contract/->area "a1")))))
+    (is (zero? @calls) "the definite concrete branch discharges direct membership")
+    (is (= 2 (:scalar-equivalent-predicates @stats))
+        "the two concrete grants suffice; no wildcard probe is needed")))
 
 (deftest wildcard-identity-bypasses-custom-codecs-test
   (let [conn (datascript/create-conn)

@@ -66,6 +66,12 @@
   "Maximum exact node entries retained during one bounded raw batch."
   100000)
 
+(defn- wildcard-alternatives?
+  [descriptor subject-type subject-eid]
+  (let [wildcard-eid (:wildcard-eid
+                      (operator-plan/relation-partition descriptor subject-type))]
+    (and (some? wildcard-eid) (not= subject-eid wildcard-eid))))
+
 (defn- complete-arrow-witness
   [options predicate permission node-id subject-type subject-eid resource-eid witness]
   (let [value (evidence/throw-if-fault! (:evidence witness))]
@@ -77,17 +83,24 @@
                                 (when (and (= (:intermediate-type rule) (:intermediate-type p))
                                            (= (:via-relation-eid rule) (:via-relation-eid p))) i))
                               (get-in predicate [:descriptor :partitions])))
-            request (:qualification options)]
+            request (:qualification options)
+            target-relation (get-in predicate [:descriptor :partitions partition :target-relation])
+            exact-binding? (not (and (= :arrow-relation (:rule rule))
+                                     (wildcard-alternatives? target-relation subject-type subject-eid)))]
         (when-not (some? partition)
           (invalid! :arrow-witness-partition "Generated arrow binding is outside its predicate." {}))
         (scalar/check-eids
-         {:adapter (:adapter options) :plan (:plan options)
-          :permission permission :node-id node-id :subject-type subject-type
-          :subject-eid subject-eid :resource-eid resource-eid
-          :qualification request :limits (:vector-limits options)
-          :arrow-witness {:point [permission node-id subject-type subject-eid resource-eid]
-                          :partition partition :intermediate (:intermediate witness)
-                          :evidence value :scope (qualification/exact-reuse-identity request)}})))))
+         (cond-> {:adapter (:adapter options) :plan (:plan options)
+                  :permission permission :node-id node-id :subject-type subject-type
+                  :subject-eid subject-eid :resource-eid resource-eid
+                  :qualification request :limits (:vector-limits options)}
+           ;; One concrete or wildcard tuple is only a lower bound for the
+           ;; target relation. Do not skip that intermediate's other grant.
+           exact-binding?
+           (assoc :arrow-witness
+                  {:point [permission node-id subject-type subject-eid resource-eid]
+                   :partition partition :intermediate (:intermediate witness)
+                   :evidence value :scope (qualification/exact-reuse-identity request)})))))))
 
 (defn- local-node-acceptor
   [{:keys [adapter plan cache-lookup vector-limits scope-identity qualification] :as options} cover-plan]
@@ -107,7 +120,11 @@
                 previous (get-in @memo [:points point] {})
                 proof-node (when evidence-witness
                              (case (get-in evidence-witness [:rule :rule])
-                               :relation semantic
+                               :relation
+                               (when (or (evidence/has? (:evidence evidence-witness))
+                                         (not (wildcard-alternatives? (:descriptor predicate)
+                                                                      subject-type subject-eid)))
+                                 semantic)
                                :self-permission (get node-map (get-in evidence-witness [:rule :target-node]))
                                (:arrow-relation :arrow-permission) nil
                                (invalid! :unsupported-generator-witness
@@ -281,16 +298,16 @@
                               (evidence/combine :intersection decision
                                                 (accept-result-evidence (:value emission))))
                              decision)]
-            (cond-> (assoc emission
-                           :accepted?
-                           (boolean
-                            (and (if (= result-policy :detailed)
-                                   (not (evidence/no? decision))
-                                   (evidence/has? decision))
-                                 (or (nil? accept-result?)
-                                     (accept-result? (:value emission))))))
-              qualification (assoc :evidence decision)
-              (not qualification) (assoc :true-nodes witness))))
+              (cond-> (assoc emission
+                             :accepted?
+                             (boolean
+                              (and (if (= result-policy :detailed)
+                                     (not (evidence/no? decision))
+                                     (evidence/has? decision))
+                                   (or (nil? accept-result?)
+                                       (accept-result? (:value emission))))))
+                qualification (assoc :evidence decision)
+                (not qualification) (assoc :true-nodes witness))))
           emissions witnesses decisions)))
 
 (defn- add-counters [total delta]

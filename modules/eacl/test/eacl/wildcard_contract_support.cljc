@@ -371,10 +371,43 @@ definition area {
   relation anyone: user:* with nothing_sensitive
   relation viewer: user:*
   relation banned: user | user with is_weekday
+  relation amixed: user | user with is_weekday | user:* | user:* with is_weekday
+  relation editor: user
+  relation parent: area
   permission exit = anyone
   permission stroll = viewer - banned
   permission guarded = anyone - banned
+  permission edit = amixed & editor
+  permission inherited_edit = parent->amixed - banned
 }")
+
+(defn- assert-complete-wildcard-witnesses!
+  [client]
+  (eacl/create-relationships!
+   client [(eacl/->Relationship (->user "alice") :editor (->area "a1"))
+           (eacl/->Relationship (->user "alice") :editor (->area "a2"))
+           (eacl/->Relationship (->area "a1") :parent (->area "a2"))])
+  (doseq [conditional-subject ["*" "alice"]]
+    (eacl/write-relationships!
+     client (mapv (fn [subject]
+                    {:operation :touch
+                     :relationship
+                     (cond-> (eacl/->Relationship (->user subject) :amixed (->area "a1"))
+                       (= subject conditional-subject) (assoc :caveat "is_weekday"))})
+                  ["*" "alice"]))
+    (doseq [[permission resource-id] [[:edit "a1"] [:inherited_edit "a2"]]
+            cache? [false true]
+            :let [query {:subject (->user "alice") :permission permission
+                         :resource/type :area :cache? cache?}]]
+      (testing (str permission ": " conditional-subject " is conditional, the other grant is definite")
+        (is (true? (eacl/can? client (->user "alice") permission (->area resource-id))))
+        (doseq [page-options [{:first 1} {:last 1}]]
+          (is (= [resource-id] (ids (eacl/lookup-resources client (merge query page-options)))))
+          (is (= [[resource-id :has-permission]]
+                 (mapv (juxt (comp :id :object) :permissionship)
+                       (:data (eacl/lookup-resources
+                               client (merge query page-options {:result-policy :detailed})))))))
+        (is (= 1 (:count (eacl/count-resources client query))))))))
 
 (defn assert-wildcard-caveat-contract!
   "`client` needs a Caveat evaluator and a controllable `:clock` backed by
@@ -468,6 +501,9 @@ definition area {
                               :resource/type :area
                               :caveat-context (context "monday")}))))
       (is (= {} (entries {"carrying" ["launch-codes"] "day" "sunday"})))))
+
+  (testing "a scanned wildcard or concrete tuple is not the whole relation's evidence"
+    (assert-complete-wildcard-witnesses! client))
 
   (testing "an expiring wildcard relationship stops granting at its deadline"
     (is (true? (eacl/can? client (->user "alice") :stroll (->area "a2"))))
