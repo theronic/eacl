@@ -1,7 +1,17 @@
 (ns eacl.caveats.values-test
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is testing]]
             [clojure.string :as str]
-            [eacl.caveats.values :as values]))
+            [eacl.caveats.values :as values]
+            [eacl.secure-format :as secure]))
+
+(deftest map-key-ordering-encodes-each-key-once
+  (let [keys ["" "a" "aa" "b" "é" "中" "\uFFFF" "😀"]
+        input (zipmap (reverse keys) (repeat false))
+        encode secure/utf8-bytes
+        encodes (atom 0)]
+    (with-redefs [secure/utf8-bytes (fn [s] (swap! encodes inc) (encode s))]
+      (is (= keys (vec (values/sorted-keys input))))
+      (is (= (count input) @encodes)))))
 
 (deftest host-contexts-merge-by-exact-keys
   (let [folded #(sorted-map-by (fn [a b] (compare (str/lower-case a) (str/lower-case b))) %1 %2)

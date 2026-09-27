@@ -82,9 +82,8 @@
     (when (> size (:string-utf8-bytes limits)) (error! :resource-limit {:limit :string-utf8-bytes})))
   v)
 
-(defn- scalar-order [a b]
-  (let [x (secure/utf8-bytes a) y (secure/utf8-bytes b)
-        nx (count x) ny (count y)]
+(defn- byte-order [x y]
+  (let [nx (count x) ny (count y)]
     (loop [i 0]
       (if (= i (min nx ny))
         (compare nx ny)
@@ -95,7 +94,10 @@
   "A string-keyed map's keys in canonical Unicode scalar order, the order in
    which comprehensions visit them."
   [m]
-  (sort scalar-order (keys m)))
+  ;; Encode each key once, not twice per comparison. Nested comprehensions
+  ;; repeat this traversal, so comparator allocation would multiply too.
+  (map second (sort-by first byte-order
+                       (mapv (fn [k] [(secure/utf8-bytes k) k]) (keys m)))))
 
 (defn- charge! [budget size]
   (vswap! budget (fn [[entries bytes]] [(inc entries) (+ bytes size)]))
@@ -122,7 +124,7 @@
              (doseq [key (keys value)] (checked-string key) (charge! budget (utf8-size key)))
              [:map (nth type 2)
               (mapv (fn [key] [key (encode-value (nth type 2) (get value key) budget)])
-                    (sort scalar-order (keys value)))])
+                    (sorted-keys value))])
       (error! :parameter-type))))
 
 (def ^:private encoding-options
