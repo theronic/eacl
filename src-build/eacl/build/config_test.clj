@@ -6,11 +6,12 @@
 
 (deftest coordinated-module-identities-and-versions
   (testing "the workspace has exactly the requested dependency order"
-    (is (= [:eacl :eacl-caveats-jvm :eacl-datomic :eacl-datahike :eacl-datascript
-            :eacl-datalevin]
+    (is (= [:eacl :eacl-caveats-jvm :eacl-caveats-portable :eacl-datomic :eacl-datahike
+            :eacl-datascript :eacl-datalevin]
            config/module-order))
     (is (= '[dev.eacl/eacl
              dev.eacl/eacl-caveats-jvm
+             dev.eacl/eacl-caveats-portable
              dev.eacl/eacl-datomic
              dev.eacl/eacl-datahike
              dev.eacl/eacl-datascript
@@ -18,7 +19,8 @@
            (mapv (comp :lib config/module) config/module-order)))
     (is (true? (config/assert-coordinate-set!))))
   (testing "the release set excludes modules with unpublished dependencies"
-    (is (= [:eacl :eacl-caveats-jvm :eacl-datomic :eacl-datahike :eacl-datascript]
+    (is (= [:eacl :eacl-caveats-jvm :eacl-caveats-portable :eacl-datomic :eacl-datahike
+            :eacl-datascript]
            config/release-module-order))
     (is (= :datalevin-fork-artifact-unpublished
            (:release-blocker (config/module :eacl-datalevin)))))

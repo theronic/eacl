@@ -293,11 +293,15 @@
   to its pinned dependency artifact, never to the EACL adapter JAR."
   [module-id jar-file]
   (let [entries (jar-entries jar-file)
-        forbidden-prefixes (cond-> ["exoscale/cel/" "org/antlr/"]
-                             (not= :eacl-caveats-jvm module-id) (conj "eacl/caveats/jvm/")
-                             (= :eacl-caveats-jvm module-id)
+        evaluator-entries {:eacl-caveats-jvm "eacl/caveats/jvm"
+                           :eacl-caveats-portable "eacl/caveats/portable"}
+        foreign-evaluators (vals (dissoc evaluator-entries module-id))
+        forbidden-prefixes (cond-> (into ["exoscale/cel/" "org/antlr/"]
+                                         (map #(str % "/")) foreign-evaluators)
+                             (contains? evaluator-entries module-id)
                              (into ["eacl/datomic/" "eacl/datahike/" "eacl/datascript/" "eacl/datalevin/"]))
-        forbidden (filterv #(or (and (not= :eacl-caveats-jvm module-id) (= "eacl/caveats/jvm.clj" %))
+        forbidden (filterv #(or (some (fn [entry] (contains? #{(str entry ".clj") (str entry ".cljc")} %))
+                                      foreign-evaluators)
                                 (some (fn [prefix] (string/starts-with? % prefix)) forbidden-prefixes)) entries)]
     (when (seq forbidden)
       (throw (ex-info "Caveat implementation or dependency payload crossed a module boundary."

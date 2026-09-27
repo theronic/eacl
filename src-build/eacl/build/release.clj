@@ -14,6 +14,7 @@
 (def consumer-entry-points
   {:eacl 'eacl.core
    :eacl-caveats-jvm 'eacl.caveats.jvm
+   :eacl-caveats-portable 'eacl.caveats.portable
    :eacl-datomic 'eacl.datomic.core
    :eacl-datahike 'eacl.datahike.core
    :eacl-datascript 'eacl.datascript.core

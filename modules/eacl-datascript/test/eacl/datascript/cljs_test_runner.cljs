@@ -25,6 +25,8 @@
             [eacl.datascript.caveat-schema-test]
             [eacl.caveats.plan-test]
             [eacl.caveats.partial-test]
+            [eacl.caveats.portable.evaluator-test]
+            [eacl.caveats.portable.datascript-test]
             [eacl.relationships.qualifier-test]
             [eacl.relationships.mutations-test]
             [eacl.core-test]
@@ -225,6 +227,8 @@
                'eacl.datascript.caveat-schema-test
                'eacl.caveats.plan-test
                'eacl.caveats.partial-test
+               'eacl.caveats.portable.evaluator-test
+               'eacl.caveats.portable.datascript-test
                'eacl.relationships.qualifier-test
                'eacl.relationships.mutations-test
                'eacl.schema.expression-test

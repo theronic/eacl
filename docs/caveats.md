@@ -109,10 +109,11 @@ conditions and requires the optional JVM evaluator.
 ## Conditional access
 
 Use a Caveat when access depends on request data, such as the user's region.
-A Caveat names a Boolean condition and the inputs it needs. JVM applications
-need the optional `eacl-caveats-jvm` evaluator for named conditions;
-ClojureScript applications must supply a compatible evaluator. See
-[evaluator setup](../modules/eacl-caveats-jvm/README.md).
+A Caveat names a Boolean condition and the inputs it needs. Named conditions
+need an optional evaluator: `eacl-caveats-jvm` on the JVM, or
+`eacl-caveats-portable` in ClojureScript, including DataScript apps. See the
+[JVM](../modules/eacl-caveats-jvm/README.md) and
+[ClojureScript](../modules/eacl-caveats-portable/README.md) evaluator setup.
 
 ## Named definitions and schema admission
 
@@ -129,8 +130,10 @@ Require it before writing a schema that uses a named condition:
 (require '[eacl.caveats.jvm])
 ```
 
-Requiring this namespace registers the JVM evaluator. Use
-`eacl/write-schema!` to install a schema such as:
+Requiring this namespace registers the JVM evaluator. In ClojureScript,
+require `eacl.caveats.portable` instead; its
+[README](../modules/eacl-caveats-portable/README.md) shows the dependency.
+Use `eacl/write-schema!` to install a schema such as:
 
 ```zed
 caveat in_region(region string, accepted list<string>) {
@@ -297,9 +300,11 @@ supplied map is an evaluation fault, not a request for more input. `can?`
 returns true only for a definite grant. Use `check-permission` when your
 application needs to distinguish denial, missing input, and evaluation errors.
 
-The [JVM evaluator guide](../modules/eacl-caveats-jvm/README.md) describes the
-supported implementation. ClojureScript requires a supplied evaluator that
-implements the same bounded profile and passes its conformance checks.
+The [JVM](../modules/eacl-caveats-jvm/README.md) and
+[portable](../modules/eacl-caveats-portable/README.md) evaluator guides describe
+the supported implementations. The portable evaluator passes the JVM module's
+corpus and a differential test against it. Any other supplied evaluator must
+implement the same bounded profile and pass the same conformance checks.
 
 ## Sparse qualifier storage and staged publication
 
@@ -426,8 +431,8 @@ For retained databases:
 1. Back up the database and complete the
    [relationship storage migration](relationship-storage-v7-to-v8.md).
 2. Upgrade every serving Peer before allowing expiring or conditional writes.
-3. Install the JVM evaluator, or supply a compatible evaluator, if relations
-   use named Caveats. Expiration alone needs none.
+3. Install the JVM or portable evaluator, or supply a compatible one, if
+   relations use named Caveats. Expiration alone needs none.
 4. Check clock health and ensure live authorization uses fresh evaluation time.
 5. Exercise expiration without writes, missing-context results, and cursor
    restart before enabling the feature for users.

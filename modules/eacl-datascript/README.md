@@ -149,7 +149,9 @@ Maven consumers install no formal tools.
 
 This adapter uses five-slot endpoint pairs with a trailing nullable
 `qualifier-eid`. V8 supports
-[Caveats and expiring Relationships](../../docs/caveats.md) ; older readers must be drained first. Upgrades are explicit
+[Caveats and expiring Relationships](../../docs/caveats.md) ; older readers must be drained first. In
+ClojureScript, named Caveats need the optional [portable evaluator](../eacl-caveats-portable/README.md);
+expiration alone needs none. Upgrades are explicit
 and restartable, and client construction requires a completed target store.
 Follow the [7-to-8 operator guide](../../docs/relationship-storage-v7-to-v8.md) before
 starting clients, then the v8 serving rollout guide before qualified writes.

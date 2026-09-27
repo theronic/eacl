@@ -11,7 +11,7 @@ mkdir -p "$(dirname "$log")"
 clojure -M:dev:caveats-jvm -e "
 (set! *warn-on-reflection* true)
 (binding [*warn-on-reflection* true]
-  (require 'eacl.caveats.jvm 'eacl.relationships.staged
+  (require 'eacl.caveats.jvm 'eacl.caveats.portable 'eacl.relationships.staged
            'eacl.relationships.qualifier-integrity
            'eacl.datomic.qualifiers 'eacl.datascript.qualifiers 'eacl.datahike.qualifiers
            'eacl.core 'eacl.cache 'eacl.subproblem-cache 'eacl.relay
