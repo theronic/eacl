@@ -134,15 +134,10 @@
           {}
           (or relations [])))
 
-(defn validate-relationship-write!
-  "Validates the schema names of one relationship update with the same
-  typed taxonomy the read side uses: the resource definition, the relation
-  declared on it, the subject definition, that the subject's definition
-  is a declared subject type of that relation, and that the relation accepts
-  the subject's form: a concrete subject, or the wildcard `T:*` when
-  `:wildcard?` is true. IDs are data, not schema, and stay outside this
-  validator; a well-typed write may still fail on an unknown object."
-  [schema operation {:keys [resource-type subject-type relation wildcard?]}]
+(defn- validate-relationship!
+  "Validates relationship names and types. A supplied :wildcard? also checks
+  the subject form for a write; reads may select either form or no tuples."
+  [schema operation {:keys [resource-type subject-type relation wildcard?] :as request}]
   (let [{:keys [definitions relations relation-forms]} (catalog schema)]
     (when-not (contains? definitions resource-type)
       (unknown-definition! operation resource-type :resource))
@@ -169,7 +164,7 @@
          :reason :subject-type-not-declared})))
     (let [form (if wildcard? :wildcard :concrete)
           forms (get relation-forms [resource-type relation subject-type])]
-      (when (and forms (not (contains? forms form)))
+      (when (and (contains? request :wildcard?) forms (not (contains? forms form)))
         (throw
          (ex-info
           (if wildcard?
@@ -191,6 +186,14 @@
                      :wildcard-subject-not-allowed
                      :concrete-subject-not-allowed)})))))
   schema)
+
+(defn validate-relationship-write!
+  "Validates schema names, types and the subject form for a relationship
+  update. :wildcard? true selects the wildcard branch; otherwise the write
+  requires a concrete branch. IDs remain outside this validator."
+  [schema operation request]
+  (validate-relationship! schema operation
+                          (assoc request :wildcard? (true? (:wildcard? request)))))
 
 (defn validate-relationship-read!
   [schema filters]
@@ -237,16 +240,15 @@
   (case operation
     :lookup-resources
     (when-let [{:keys [relation subject]} (:resource/relationship query)]
-      (validate-relationship-write!
+      (validate-relationship!
        schema operation
        {:resource-type (:resource/type query)
         :subject-type (:type subject)
-        :relation relation
-        :wildcard? (= "*" (:id subject))}))
+        :relation relation}))
 
     :lookup-subjects
     (when-let [{:keys [relation resource]} (:subject/relationship query)]
-      (validate-relationship-write!
+      (validate-relationship!
        schema operation
        {:resource-type (:type resource)
         :subject-type (:subject/type query)

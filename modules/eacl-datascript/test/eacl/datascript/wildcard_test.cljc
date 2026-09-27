@@ -1,11 +1,14 @@
 (ns eacl.datascript.wildcard-test
-  (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is]]
+  (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is testing]]
             #?(:clj [clojure.java.io :as io])
             [datascript.core :as ds]
             [eacl.authorization.qualification-test :as fixtures]
             [eacl.cache :as cache]
+            [eacl.core :as eacl]
             [eacl.datascript.core :as datascript]
             [eacl.datascript.schema :as schema]
+            [eacl.engine.v8 :as engine]
+            [eacl.schema.wildcard :as wildcard]
             [eacl.wildcard-contract-support :as contract]))
 
 (defn- seed!
@@ -15,6 +18,66 @@
 (defn- seed-objects!
   [conn]
   (seed! conn contract/objects))
+
+(deftest wildcard-identity-bypasses-custom-codecs-test
+  (let [conn (datascript/create-conn)
+        writer (datascript/make-client conn {})]
+    (seed-objects! conn)
+    (eacl/write-schema! writer contract/wildcard-schema)
+    (eacl/create-relationship! writer (contract/->user "*") :viewer (contract/->area "a1"))
+    (doseq [reject-internal? [false true]]
+      (let [client (datascript/make-client
+                    conn
+                    {:object-id->lookup-ref (fn [id] [:eacl/id (subs id 3)])
+                     :entid->object-id
+                     (fn [db eid]
+                       (let [id (:eacl/id (ds/entity db eid))]
+                         (when (and reject-internal? (= wildcard/entity-id id))
+                           (throw (ex-info "Application codec requires an application object." {})))
+                         (str "id:" id)))})
+            query {:resource (contract/->area "id:a1") :permission :view
+                   :subject/type :user :first 1}]
+        (testing "wildcards are not application objects"
+          (is (= ["*"] (mapv :id (:data (eacl/lookup-subjects client query)))))
+          (is (= ["*"]
+                 (mapv (comp :id :subject)
+                       (:data (eacl/read-relationships
+                               client {:subject/type :user :subject/id "*"}))))))))))
+
+(deftest wildcard-entity-cannot-be-addressed-by-an-application-alias-test
+  (let [conn (datascript/create-conn {:app/id {:db/unique :db.unique/identity}})
+        writer (datascript/make-client conn {})]
+    (seed-objects! conn)
+    (eacl/write-schema! writer contract/wildcard-schema)
+    (eacl/create-relationship! writer (contract/->user "*") :viewer (contract/->area "a1"))
+    (ds/transact! conn [{:db/id wildcard/lookup-ref :app/id "alias"}
+                        {:db/id [:eacl/id "a1"] :app/id "a1"}])
+    (let [client (datascript/make-client
+                  conn {:object-id->lookup-ref #(vector :app/id %)})]
+      (is (false? (eacl/can? client (contract/->user "alias") :view (contract/->area "a1")))
+          "an alias must not turn the wildcard into a concrete subject"))))
+
+(deftest unused-wildcard-branch-keeps-subject-lookups-bounded-test
+  (let [conn (datascript/create-conn)
+        client (datascript/make-client conn {:cache cache/no-cache})
+        banned (mapv #(str "banned-" %) (range 512))
+        resource (contract/->area "a1")
+        query {:resource resource :permission :enter :subject/type :user}]
+    (seed! conn (into ["alice" "a1"] banned))
+    (eacl/write-schema! client contract/wildcard-schema)
+    (eacl/create-relationships!
+     client (into [(eacl/->Relationship (contract/->user "alice") :viewer resource)]
+                  (map #(eacl/->Relationship (contract/->user %) :banned resource))
+                  banned))
+    (doseq [operation [:lookup :count]]
+      (let [stats (atom {})]
+        (binding [engine/*recursive-traversal-stats* stats]
+          (case operation
+            :lookup (is (= ["alice"]
+                           (mapv :id (:data (eacl/lookup-subjects client (assoc query :first 10))))))
+            :count (is (= 1 (:count (eacl/count-subjects client query))))))
+        (is (< (:fetched-values @stats 0) 64)
+            (str operation " must not enumerate unrelated bans without a wildcard tuple: " @stats))))))
 
 (deftest datascript-wildcard-contract-test
   (let [conn (datascript/create-conn)

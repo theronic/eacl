@@ -1143,19 +1143,6 @@
     :arrow-relation (:target-subject-type rule)
     nil))
 
-(defn- wildcard-touch-route?
-  "A reverse operator lookup routes through the touch cover when its positive
-  cover can grant through a wildcard subject of the requested type: only then
-  can a subject hold the permission without a positive tuple of its own, or
-  be excluded from the wildcard."
-  [cover-plan traversal subject-type]
-  (and (= :reverse traversal)
-       (boolean
-        (some (fn [rule]
-                (and (sealed-plan/wildcard-variant? rule)
-                     (= subject-type (rule-subject-type rule))))
-              (:rules cover-plan)))))
-
 (defn- operator-edge
   [plan cover-plan traversal semantic-scope coords]
   {:kind :operator-least-path-edge
@@ -2437,6 +2424,42 @@
               (update result field #(when % (recursive-edge %))))
             page-info [:start-cursor :end-cursor])))))))
 
+(defn- wildcard-touch-route?
+  "Use the touch cover only when the positive structural cover actually
+  reaches a wildcard on this resource. Merely declaring T:* must not turn
+  a small concrete lookup into a scan of every negative operand.
+
+  This probe ignores qualifiers and exact operator predicates: a wildcard
+  denied by the full expression can still grant a concrete subject through
+  a nested exclusion. Structural reachability is conservative and stable
+  across Caveat context and expiry changes at the same relationship basis."
+  [db plan traversal subject-type anchor]
+  (when (= :reverse traversal)
+    (let [cover-plan (stable-cover-plan db plan)
+          wildcard-eid
+          (some (fn [rule]
+                  (when (= subject-type (rule-subject-type rule))
+                    (:wildcard-eid rule)))
+                (:rules cover-plan))]
+      (when wildcard-eid
+        (let [{:keys [fetch-fn attempts]} (stable-fetch-fn db)
+              reachable?
+              (binding [*qualification* nil]
+                (run-routed
+                 (fn []
+                   (stable-route/check-eids
+                    (merge (stable-limits)
+                           {:adapter db
+                            :fetch-fn (structural-cover-fetch fetch-fn)
+                            :plan cover-plan
+                            :subject-type subject-type
+                            :subject-eid wildcard-eid
+                            :resource-eid (object-eid db (:id anchor))
+                            :wildcards? false
+                            :cut-point! (stable-cut-point)})))))]
+          (report-adapter-attempts! attempts)
+          reachable?)))))
+
 (defn- wildcard-excluded?
   "A subject's permission is the union of its own entry and, unless the
   wildcard entry excludes it, the wildcard entry's. A touch-cover subject
@@ -2540,7 +2563,7 @@
             plan (stable-plan db root-node)]
         (if (operator-plan/operator-plan? plan)
           (cond
-            (wildcard-touch-route? (stable-cover-plan db plan) traversal subject-type)
+            (wildcard-touch-route? db plan traversal subject-type anchor)
             (wildcard-touch-lookup-page
              db plan traversal query page-req cache-fn result-type anchor
              subject-type candidate-filter)
@@ -2822,7 +2845,7 @@
   (if-let [anchor-eid (object-eid db (:id anchor))]
     (cond
       ;; Counts the entries lookup-subjects returns: the wildcard entry once.
-      (wildcard-touch-route? (stable-cover-plan db plan) traversal subject-type)
+      (wildcard-touch-route? db plan traversal subject-type anchor)
       (recursive-operator-count
        db plan traversal query result-type anchor subject-type count-limit
        :cover-plan (stable-touch-plan db plan)

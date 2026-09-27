@@ -311,6 +311,27 @@ definition folder {
     (is (= #{[:team "*" :guest :area "a3"]}
            (relationship-tuples client {:subject/type :team :subject/id "*"}))))
 
+  (testing "lookup relationship filters accept wildcard-only relations"
+    (is (= ["*"]
+           (ids (eacl/lookup-subjects
+                 client {:resource (->area "a1") :permission :view
+                         :subject/type :user
+                         :subject/relationship {:relation :wild
+                                                :resource (->area "a1")}}))))
+    (is (= ["a1"]
+           (ids (eacl/lookup-resources
+                 client {:subject (->user "alice") :permission :view
+                         :resource/type :area
+                         :resource/relationship {:relation :wild
+                                                 :subject (->user "*")}}))))
+    (is (= []
+           (ids (eacl/lookup-resources
+                 client {:subject (->user "alice") :permission :view
+                         :resource/type :area
+                         :resource/relationship {:relation :wild
+                                                 :subject (->user "alice")}})))
+        "a literal concrete relationship filter has no matches"))
+
   (testing "writes invalidate cached wildcard answers"
     (is (true? (eacl/can? client (->user "alice") :read (->doc "d11"))))
     (eacl/delete-relationship! client (->user "*") :reader (->doc "d11"))

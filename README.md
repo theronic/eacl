@@ -1342,6 +1342,11 @@ own entry or, unless `*` excludes it, through `*`. EACL may also list a
 granted subject that has a relationship of its own although `*` covers it.
 `count-subjects` counts entries, so `*` counts once.
 
+A page containing `*` may need to inspect every subject reachable through
+the permission's relations to compute its exclusions, even with a small page
+size. Declaring wildcard support alone does not trigger that scan: EACL first
+checks whether the positive permission paths reach a stored wildcard tuple.
+
 A Caveated wildcard branch requires its Caveat on every wildcard
 relationship, and the Caveat is evaluated for each subject:
 
@@ -1373,6 +1378,10 @@ As in SpiceDB:
   rejected with `:eacl/wildcard-not-allowed` as a resource ID, and as the
   subject of `can?`, `check-permission(s)`, `lookup-resources` and
   `count-resources`.
+
+The reserved `"*"` identity bypasses application ID codecs. Custom codecs
+receive concrete objects only; they do not need to handle EACL's private
+wildcard entity. An application ID cannot alias that entity.
 
 Unlike SpiceDB, a wildcard grants the objects that exist: an ID that names no
 object is still [unknown](#unknown-object-ids).
