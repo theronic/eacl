@@ -1,6 +1,6 @@
 (ns eacl.datascript.wildcard-test
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is]]
-            #?(:clj [eacl.caveats.jvm :as cel])
+            #?(:clj [clojure.java.io :as io])
             [datascript.core :as ds]
             [eacl.authorization.qualification-test :as fixtures]
             [eacl.cache :as cache]
@@ -44,14 +44,26 @@
     (contract/assert-wildcard-caveat-contract! client now-ms)))
 
 #?(:clj
-   (deftest datascript-wildcard-caveat-contract-test
-     (let [conn (datascript/create-conn)
-           now-ms (atom 1790000000000)
-           client (datascript/make-client
-                   conn {:caveat-evaluator (cel/evaluator)
-                         :clock #(deref now-ms)})]
-       (seed-objects! conn)
-       (contract/assert-wildcard-caveat-contract! client now-ms))))
+   (defn- jvm-evaluator
+     "The certified JVM CEL evaluator. The workspace test classpath has
+     eacl-caveats-jvm; an isolated eacl-datascript classpath does not."
+     []
+     (when-let [evaluator (try (requiring-resolve 'eacl.caveats.jvm/evaluator)
+                               (catch java.io.FileNotFoundException _ nil))]
+       (evaluator))))
+
+#?(:clj
+   (deftest datascript-wildcard-jvm-caveat-contract-test
+     (if-let [evaluator (jvm-evaluator)]
+       (let [conn (datascript/create-conn)
+             now-ms (atom 1790000000000)
+             client (datascript/make-client
+                     conn {:caveat-evaluator evaluator
+                           :clock #(deref now-ms)})]
+         (seed-objects! conn)
+         (contract/assert-wildcard-caveat-contract! client now-ms))
+       (is (nil? (io/resource "eacl/caveats/jvm.clj"))
+           "only an isolated module classpath lacks the JVM evaluator"))))
 
 (deftest datascript-connection-without-wildcard-attributes-test
   ;; A connection created from an older EACL schema cannot store wildcard

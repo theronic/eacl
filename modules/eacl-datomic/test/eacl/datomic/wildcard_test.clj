@@ -1,8 +1,8 @@
 (ns eacl.datomic.wildcard-test
   (:require [clojure.test :refer [deftest is]]
             [datomic.api :as d]
+            [eacl.authorization.qualification-test :as fixtures]
             [eacl.cache :as cache]
-            [eacl.caveats.jvm :as cel]
             [eacl.core :as eacl]
             [eacl.datomic.core :as datomic]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
@@ -44,7 +44,7 @@
     (let [now-ms (atom 1790000000000)]
       (contract/assert-wildcard-caveat-contract!
        (datomic/make-client conn {:security-key "datomic-wildcard-test00000000000"
-                                  :caveat-evaluator (cel/evaluator)
+                                  :caveat-evaluator (fixtures/portable-evaluator (atom 0))
                                   :clock #(deref now-ms)})
        now-ms))))
 

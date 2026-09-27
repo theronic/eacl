@@ -1,8 +1,8 @@
 (ns eacl.datahike.wildcard-test
   (:require [clojure.test :refer [deftest is]]
             [datahike.api :as d]
+            [eacl.authorization.qualification-test :as fixtures]
             [eacl.cache :as cache]
-            [eacl.caveats.jvm :as cel]
             [eacl.core :as eacl]
             [eacl.datahike.core :as datahike]
             [eacl.datahike.db :as ddb]
@@ -41,7 +41,7 @@
         now-ms (atom 1790000000000)]
     (seed-objects! conn)
     (contract/assert-wildcard-caveat-contract!
-     (datahike/make-client conn {:caveat-evaluator (cel/evaluator)
+     (datahike/make-client conn {:caveat-evaluator (fixtures/portable-evaluator (atom 0))
                                  :clock #(deref now-ms)})
      now-ms)))
 
