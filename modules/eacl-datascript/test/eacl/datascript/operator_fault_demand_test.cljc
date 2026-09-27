@@ -15,7 +15,8 @@
   ;; Leveled membership used to visit targets backwards and publish a grant
   ;; which could also turn a later point check into a false positive.
   (doseq [body ["parent->reader + parent->readable"
-                "parent->base + parent->readable"]
+                "parent->base + parent->readable"
+                "parent->reader + (parent->readable & eligible)"]
           cache? [false true]]
     (testing (str body ", cache=" cache?)
       (let [conn (datascript/create-conn)
