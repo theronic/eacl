@@ -1077,6 +1077,12 @@
   resources: one value per resource, with the permissionship `check-eids`
   returns for that point.
 
+  Internal optimization: callers must establish that witnesses and guards
+  cannot demand order-sensitive faults. This search reorders alternatives;
+  falling back on an encountered fault cannot recover a fault hidden by an
+  earlier decisive witness. Engine operand admission enforces this condition
+  by routing closures that declare Caveats to ordered evaluation instead.
+
   - A decisive answer is plain true, or true until the latest first-expiry
     over its witness paths (`decide-leveled`). That certificate is sound and
     may end later than the point check's, which is the first witness it
