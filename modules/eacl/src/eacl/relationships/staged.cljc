@@ -7,7 +7,8 @@
             [eacl.caveats.definition :as definition]
             [eacl.relationships.endpoint-pair :as pair]
             [eacl.relationships.qualifier :as qualifier]
-            [eacl.relationships.storage :as storage]))
+            [eacl.relationships.storage :as storage]
+            [eacl.schema.wildcard :as wildcard]))
 
 (defn error! [reason]
   (throw (ex-info "Invalid staged qualified Relationship operation."
@@ -76,32 +77,48 @@
       (error! :invalid-temporary-id))
     id))
 
-(defn- selected-relation [native db identity]
+(defn- wildcard-subject-entity? [entity]
+  (= wildcard/entity-id (:eacl/id entity)))
+
+(defn- selected-relation
+  "Returns the Relation and the subject form (`:wildcard` when the subject is
+  the EACL-owned wildcard subject entity, else `:concrete`)."
+  [native db identity]
   (when-not (and (vector? identity) (= 5 (count identity))
                  (keyword? (nth identity 0)) (keyword? (nth identity 3))
                  (every? concrete-eid? (map #(nth identity %) [1 2 4])))
     (error! :relationship-identity))
   (let [[subject-type subject-id relation-id resource-type resource-id] identity
         entity (:entity native)
-        relation (entity db relation-id)]
-    (when-not (and (seq (dissoc (entity db subject-id) :db/id))
-                   (seq (dissoc (entity db resource-id) :db/id)))
+        relation (entity db relation-id)
+        subject (entity db subject-id)
+        resource (entity db resource-id)]
+    (when-not (and (seq (dissoc subject :db/id))
+                   (seq (dissoc resource :db/id)))
       (error! :missing-endpoint))
+    (when (wildcard-subject-entity? resource)
+      (error! :wildcard-resource))
     (when-not (and (= subject-type (:eacl.relation/subject-type relation))
                    (= resource-type (:eacl.relation/resource-type relation))
                    (keyword? (:eacl.relation/relation-name relation)))
       (error! :missing-relation))
-    relation))
+    {:relation relation
+     :form (if (wildcard-subject-entity? subject) :wildcard :concrete)}))
 
 (defn- parameters [native db caveat]
   (when (some? caveat)
     (:parameters (definition/decode-entity ((:entity native) db caveat)))))
 
-(defn- admitted-value [native db relation value]
+(defn- admitted-value
+  "Normalizes a qualifier against the Caveat alternatives of the branch named
+  by the subject form: a `T:*` subject must use the wildcard branch."
+  [native db {:keys [relation form]} value]
   (let [value (qualifier/normalize value (parameters native db (:caveat value)))
-        allowances (qualifier/relation-allowance relation)]
+        allowances (get (qualifier/relation-branch-allowances relation) form)]
     (when-not (contains? allowances (:caveat value))
-      (error! :caveat-not-allowed))
+      (error! (if (and (= :wildcard form) (empty? allowances))
+                :wildcard-not-allowed
+                :caveat-not-allowed)))
     value))
 
 (defn- values-for [identity qid]

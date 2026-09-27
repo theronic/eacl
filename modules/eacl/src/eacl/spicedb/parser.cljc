@@ -303,31 +303,63 @@
               :eacl/error :eacl.schema/parse-error
               :parse-tree parse-tree}))))
 
-(defn staged-relation-entities
-  "Non-serving schema foundation: groups plain and Caveated alternatives under
-   one Relation identity. Public schema admission still rejects `with` branches."
-  [{:keys [definitions caveats]}]
+(defn- caveat-refs [names]
+  (mapv #(vector :eacl.caveat/name %) names))
+
+(defn relation-entities
+  "Groups every branch of one relation declaration by subject type into one
+   Relation identity. The concrete branch (`user`, `user with c`) keeps its
+   existing encoding; a wildcard branch (`user:*`, `user:* with c`) adds
+   `:eacl.relation/allows-unqualified-wildcard?` and, for Caveated branches,
+   `:eacl.relation/wildcard-caveats`. A relation with only wildcard branches
+   stores `:eacl.relation/allows-unqualified? false` without concrete Caveats.
+
+   With `:strict? true` a repeated branch fails; otherwise it collapses, which
+   preserves the unqualified admission path's tolerance of `user | user`."
+  [{:keys [definitions caveats]} {:keys [strict?]}]
   (let [names (set (map :eacl.caveat/name caveats))]
     (vec
-      (for [[resource-type {:keys [relations]}] (sort-by key definitions)
-            [relation-name refs] (sort-by key relations)
-            [subject-type alternatives] (sort-by key (group-by :type refs))]
-        (let [allowances (mapv :caveat alternatives)
-              qualified (sort (remove nil? allowances))]
-          (when-not (= (count allowances) (count (set allowances)))
-            (throw (ex-info "Duplicate Relation branch."
-                            {:type :eacl.schema/duplicate-relation-branch
-                             :eacl/error :eacl.schema/duplicate-relation-branch
-                             :resource-type resource-type :relation relation-name :subject-type subject-type})))
-          (doseq [name qualified]
-            (when-not (contains? names name)
-              (throw (ex-info "Relation references an undefined Caveat."
-                              {:type :eacl.schema/invalid-caveat-reference
-                               :eacl/error :eacl.schema/invalid-caveat-reference :caveat name}))))
-          (cond-> (model/Relation (keyword resource-type) (keyword relation-name) (keyword subject-type))
-            (seq qualified)
-            (assoc :eacl.relation/caveats (mapv #(vector :eacl.caveat/name %) qualified)
-                   :eacl.relation/allows-unqualified? (boolean (some nil? allowances)))))))))
+     (for [[resource-type {:keys [relations]}] (sort-by key definitions)
+           [relation-name refs] (sort-by key relations)
+           [subject-type alternatives] (sort-by key (group-by :type refs))]
+       (let [branch (fn [wildcard?]
+                      (mapv :caveat (filter #(= wildcard? (boolean (:wildcard? %)))
+                                            alternatives)))
+             concrete (branch false)
+             wildcard (branch true)]
+         (when strict?
+           (doseq [allowances [concrete wildcard]]
+             (when-not (= (count allowances) (count (set allowances)))
+               (throw (ex-info "Duplicate Relation branch."
+                               {:type :eacl.schema/duplicate-relation-branch
+                                :eacl/error :eacl.schema/duplicate-relation-branch
+                                :resource-type resource-type :relation relation-name :subject-type subject-type})))))
+         (doseq [name (remove nil? (concat concrete wildcard))]
+           (when-not (contains? names name)
+             (throw (ex-info "Relation references an undefined Caveat."
+                             {:type :eacl.schema/invalid-caveat-reference
+                              :eacl/error :eacl.schema/invalid-caveat-reference :caveat name}))))
+         (let [concrete-caveats (sort (distinct (remove nil? concrete)))
+               wildcard-caveats (sort (distinct (remove nil? wildcard)))]
+           (cond-> (model/Relation (keyword resource-type) (keyword relation-name) (keyword subject-type))
+             (seq concrete-caveats)
+             (assoc :eacl.relation/caveats (caveat-refs concrete-caveats)
+                    :eacl.relation/allows-unqualified? (boolean (some nil? concrete)))
+
+             (and (empty? concrete) (seq wildcard))
+             (assoc :eacl.relation/allows-unqualified? false)
+
+             (seq wildcard)
+             (assoc :eacl.relation/allows-unqualified-wildcard? (boolean (some nil? wildcard)))
+
+             (seq wildcard-caveats)
+             (assoc :eacl.relation/wildcard-caveats (caveat-refs wildcard-caveats)))))))))
+
+(defn staged-relation-entities
+  "Groups plain, Caveated and wildcard alternatives under one Relation
+   identity; a repeated branch fails."
+  [transformed]
+  (relation-entities transformed {:strict? true}))
 
 ;; Helper to parse expressions
 (defn parse-permission-expression [expr-str]
@@ -413,19 +445,20 @@
 (defn- collect-relation-issues
   "Check relations for EACL compatibility issues.
    Takes the transformed schema definitions map."
-  [definitions allow-caveats?]
+  [definitions allow-caveats? allow-wildcards?]
   (let [issues (atom [])]
     (doseq [[res-type {:keys [relations]}] definitions
             [rel-name type-refs] relations
             type-ref type-refs]
-      ;; Check for wildcards
-      (when (:wildcard? type-ref)
+      ;; Wildcards need expression storage; the legacy flat projection
+      ;; (->eacl-schema) has no representation for them.
+      (when (and (:wildcard? type-ref) (not allow-wildcards?))
         (swap! issues conj
                {:type          :wildcard-relation
                 :resource-type res-type
                 :relation      rel-name
                 :message       (str "Unsupported feature: Wildcard relation '" (:type type-ref) ":*' in "
-                                    res-type "/" rel-name ". EACL does not support public/wildcard access.")}))
+                                    res-type "/" rel-name ". Flat permission storage cannot represent wildcard access.")}))
 
       ;; Check for subject relations
       (when (:subject-relation type-ref)
@@ -459,16 +492,19 @@
    - No nil keyword
    - No self keyword
    - No namespaced type paths (docs/document)
-   - No wildcards (user:*)
+   - Wildcards (user:*) require explicit wildcard admission
+     (`:allow-wildcards? true`, the expression-storage path)
    - No subject relations (group#member)
    - Caveated branches require explicit qualified schema admission
 
    Returns nil if valid, throws ex-info with :issues vector if invalid."
   ([parse-tree transformed-schema]
    (validate-eacl-restrictions parse-tree transformed-schema {}))
-  ([parse-tree transformed-schema {:keys [allow-caveats?]}]
+  ([parse-tree transformed-schema {:keys [allow-caveats? allow-wildcards?]}]
    (let [parse-issues    (collect-parse-tree-issues parse-tree)
-         relation-issues (collect-relation-issues (:definitions transformed-schema) (true? allow-caveats?))
+         relation-issues (collect-relation-issues (:definitions transformed-schema)
+                                                  (true? allow-caveats?)
+                                                  (true? allow-wildcards?))
          all-issues      (vec (concat parse-issues relation-issues))]
      (when (seq all-issues)
        (let [first-msg (:message (first all-issues))

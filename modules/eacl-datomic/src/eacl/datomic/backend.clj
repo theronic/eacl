@@ -6,7 +6,8 @@
             [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.datomic.db :as ddb]
-            [eacl.schema.expression-persistence :as expression-persistence])
+            [eacl.schema.expression-persistence :as expression-persistence]
+            [eacl.schema.wildcard :as wildcard])
   (:import [java.util.concurrent Future]))
 
 (def adapter-capabilities
@@ -279,12 +280,19 @@
 
 (defn- relation-defs
   [db resource-type relation-name]
-  (mapv (fn [datom]
-          {:relation-id (:e datom)
-           :resource-type resource-type
-           :relation-name relation-name
-           :subject-type (nth (:v datom) 2)})
-        (ddb/relation-datoms db resource-type relation-name)))
+  (let [wildcard-attribute? (some? (d/entid db wildcard/unqualified-attribute))
+        wildcard-eid (delay (d/entid db wildcard/lookup-ref))]
+    (mapv (fn [datom]
+            (cond-> {:relation-id (:e datom)
+                     :resource-type resource-type
+                     :relation-name relation-name
+                     :subject-type (nth (:v datom) 2)}
+              ;; A `T:*` branch derives through the wildcard subject entity.
+              (and wildcard-attribute?
+                   (seq (d/datoms db :eavt (:e datom) wildcard/unqualified-attribute))
+                   @wildcard-eid)
+              (assoc :wildcard-eid @wildcard-eid)))
+          (ddb/relation-datoms db resource-type relation-name))))
 
 (defn- permission-defs
   [db resource-type permission-name]

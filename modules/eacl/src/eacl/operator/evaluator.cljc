@@ -107,18 +107,31 @@
       (if (= :union op) (evidence/has? value) (evidence/no? value))))
 
 (defn- direct-match?
+  "Membership of the subject in one direct relation: its own tuple, or the
+  wildcard subject's tuple when the relation declares `T:*`. Each tuple keeps
+  its own qualifier evidence; the union combines them."
   [direct-match! subject-type subject-eid resource-type resource-eid
    descriptor]
-  (if-let [{:keys [relation-id]}
+  (if-let [{:keys [relation-id wildcard-eid]}
            (operator-plan/relation-partition descriptor subject-type)]
     (do
       ;; The transition check that dispatched this frame ran with no work in
       ;; between; only the post-probe check observes new elapsed time.
       (request-counters/add-probes!)
       (add-stat! :scalar-equivalent-predicates 1)
-      (let [decision
+      (let [own
             (direct-match! subject-type subject-eid relation-id
-                           resource-type resource-eid)]
+                           resource-type resource-eid)
+            decision
+            (if (or (nil? wildcard-eid) (= wildcard-eid subject-eid)
+                    (evidence/has? own) (evidence/fault? own))
+              own
+              (do
+                (request-counters/add-probes!)
+                (evidence/combine
+                 :union own
+                 (direct-match! subject-type wildcard-eid relation-id
+                                resource-type resource-eid))))]
         (execution/check! execution/*contract*
                           :operator-point/direct-after
                           {:probes 1})

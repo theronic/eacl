@@ -138,23 +138,33 @@
        0 (mapcat :evidence-witnesses candidates))))
   nil)
 
-(defn- direct-probe [candidate descriptor]
-  (when-let [{:keys [relation-id]}
-             (operator-plan/relation-partition
-              descriptor (:subject-type candidate))]
-    (if (= :forward (:direction candidate))
-      {:direction :forward
-       :descriptor {:subject-type (:subject-type candidate)
-                    :subject-eid (:subject-eid candidate)
-                    :relation-eid relation-id
-                    :resource-type (:resource-type candidate)}
-       :candidate [(:resource-type candidate) (:resource-eid candidate)]}
-      {:direction :reverse
-       :descriptor {:resource-type (:resource-type candidate)
-                    :resource-eid (:resource-eid candidate)
-                    :relation-eid relation-id
-                    :subject-type (:subject-type candidate)}
-       :candidate [(:subject-type candidate) (:subject-eid candidate)]})))
+(defn- direct-probe [candidate relation-id subject-eid]
+  (if (= :forward (:direction candidate))
+    {:direction :forward
+     :descriptor {:subject-type (:subject-type candidate)
+                  :subject-eid subject-eid
+                  :relation-eid relation-id
+                  :resource-type (:resource-type candidate)}
+     :candidate [(:resource-type candidate) (:resource-eid candidate)]}
+    {:direction :reverse
+     :descriptor {:resource-type (:resource-type candidate)
+                  :resource-eid (:resource-eid candidate)
+                  :relation-eid relation-id
+                  :subject-type (:subject-type candidate)}
+     :candidate [(:subject-type candidate) subject-eid]}))
+
+(defn- direct-probes
+  "The physical probes deciding one candidate's direct membership: the
+  subject's own tuple, and the wildcard subject's tuple when the relation
+  declares `T:*`. The dispatcher deduplicates the shared wildcard probes."
+  [candidate descriptor]
+  (if-let [{:keys [relation-id wildcard-eid]}
+           (operator-plan/relation-partition
+            descriptor (:subject-type candidate))]
+    (cond-> [(direct-probe candidate relation-id (:subject-eid candidate))]
+      (and (some? wildcard-eid) (not= wildcard-eid (:subject-eid candidate)))
+      (conj (direct-probe candidate relation-id wildcard-eid)))
+    []))
 
 (defn- held-decisions
   "Decisions for direct probes from the subject's retained holdings
@@ -331,13 +341,12 @@
                           (case instruction
                             :direct-membership
                             (let [indexed-probes
-                                  (keep (fn [index]
-                                          (when-let [probe
-                                                     (direct-probe
-                                                      (nth candidates index)
-                                                      (:descriptor predicate))]
-                                            [index probe]))
-                                        pending)
+                                  (mapcat (fn [index]
+                                            (map #(vector index %)
+                                                 (direct-probes
+                                                  (nth candidates index)
+                                                  (:descriptor predicate))))
+                                          pending)
                                   probe-indexes (mapv first indexed-probes)
                                   probes (mapv second indexed-probes)
                                   decisions
@@ -360,8 +369,14 @@
                               (finish!
                                (reduce (fn [result index]
                                          (assoc result index false))
+                                       ;; A wildcard probe unions with the
+                                       ;; candidate's own probe.
                                        (reduce (fn [result [index decision]]
-                                                 (assoc result index decision))
+                                                 (let [prior (nth result index)]
+                                                   (assoc result index
+                                                          (if (= unresolved prior)
+                                                            decision
+                                                            (evidence/combine :union prior decision)))))
                                                witnessed
                                                (map vector probe-indexes
                                                     decisions))

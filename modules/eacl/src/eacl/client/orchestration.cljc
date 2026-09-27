@@ -90,6 +90,7 @@
             [eacl.schema.errors :as schema-errors]
             [eacl.schema.expression-persistence :as expression-persistence]
             [eacl.schema.expression-policy :as expression-policy]
+            [eacl.schema.wildcard :as wildcard]
             [eacl.secure-format :as secure]
             [eacl.uuid :as uuid]
             [eacl.security.configuration :as security-config]
@@ -1602,6 +1603,14 @@
     (relationship-filters/validate! filters))
   (when-not authorization-filters/*validated-request?*
     (authorization-filters/validate-scan-authorization! filters))
+  ;; A literal `*` subject filter selects wildcard relationships; a resource
+  ;; can never be the wildcard, and a wildcard cannot be authorized.
+  (when (= wildcard/object-id (:resource/id filters))
+    (wildcard/wildcard-not-allowed!
+     :read-relationships :resource
+     {:type (:resource/type filters) :id (:resource/id filters)}))
+  (wildcard/require-concrete! :read-relationships :subject
+                              (:subject (:authorization filters)))
   (when (and (not *qualified-authorization-enabled?*) (contains? filters :relationship-state))
     (throw (ex-info "Qualified Relationship inspection is not enabled."
                     {:type :eacl/unsupported-capability :eacl/error :eacl/unsupported-capability
@@ -1731,7 +1740,9 @@
         (fn [object]
           (assoc (spice-object->internal db object)
                  :eacl.relationship/identity-guard
-                 (object-id->lookup-ref (:id object))
+                 (if (wildcard/object? object)
+                   wildcard/lookup-ref
+                   (object-id->lookup-ref (:id object)))
                  ;; Resolution is intentionally performed against the selected
                  ;; basis, so an absent endpoint becomes nil in the internal
                  ;; object. Retain the bounded public identity solely for a
@@ -1830,6 +1841,9 @@
 (defn- check-permission-in-context
   [api {:keys [spice-object->internal] :as opts} request-context
    subject permission resource]
+  (let [operation (or (:request-operation opts) :can?)]
+    (wildcard/require-concrete! operation :subject subject)
+    (wildcard/require-concrete! operation :resource resource))
   (let [opts (selected-cache-options opts request-context)
         context-state (::request-context-state opts)
         adapter (:adapter context-state)
@@ -2133,6 +2147,7 @@
    {:as query :keys [subject]}]
   (when-not authorization-filters/*validated-request?*
     (authorization-filters/validate-lookup! :lookup-resources query))
+  (wildcard/require-concrete! :lookup-resources :subject subject)
   (let [opts (ensure-execution-contract opts :lookup-resources query)]
     (with-selected-context
       api source opts (:consistency query)
@@ -2241,6 +2256,7 @@
   [api source
    {:as opts :keys [spice-object->internal]}
    {:as query :keys [subject]}]
+  (wildcard/require-concrete! :count-resources :subject subject)
   (let [opts (ensure-execution-contract opts :count-resources query)]
     (with-selected-context
       api source opts (:consistency query)
@@ -2319,6 +2335,9 @@
    query]
   (when-not authorization-filters/*validated-request?*
     (authorization-filters/validate-lookup! :lookup-subjects query))
+  (wildcard/require-concrete! :lookup-subjects :resource (:resource query))
+  (wildcard/require-concrete! :lookup-subjects :resource
+                              (:resource (:subject/relationship query)))
   (let [opts (ensure-execution-contract opts :lookup-subjects query)]
     (with-selected-context
       api source opts (:consistency query)
@@ -2427,6 +2446,7 @@
   [api source
    {:as opts :keys [spice-object->internal]}
    query]
+  (wildcard/require-concrete! :count-subjects :resource (:resource query))
   (let [opts (ensure-execution-contract opts :count-subjects query)]
     (with-selected-context
       api source opts (:consistency query)
@@ -2503,6 +2523,7 @@
 (defn expand-permission-tree
   [api source opts query]
   (permission-tree/validate-request! query)
+  (wildcard/require-concrete! :expand-permission-tree :resource (:resource query))
   (let [opts (ensure-execution-contract
               opts :expand-permission-tree query)
         contract (:execution-contract opts)]
@@ -3338,6 +3359,23 @@
     ((backend-writer/operation writer :transact!)
      conn {:tx-data (vec tx-data)})))
 
+(defn- validate-relationship-write-schema!
+  "Schema-name and subject-form validation for one relationship update. The
+  reserved wildcard ID is a subject only; `T:*` must be a declared branch."
+  [schema relationship]
+  (let [public (fn [object]
+                 ;; An internalized endpoint keeps its public identity.
+                 (or (:eacl.relationship/public-object object) object))
+        subject (public (:subject relationship))
+        resource (public (:resource relationship))]
+    (wildcard/require-concrete! :write-relationships :resource resource)
+    (schema-errors/validate-relationship-write!
+     schema :write-relationships
+     {:resource-type (:type resource)
+      :subject-type (:type subject)
+      :relation (:relation relationship)
+      :wildcard? (wildcard/object? subject)})))
+
 (defn- writer-write-ordinary-relationships!
   [writer updates app-datoms]
   (let [{:keys [api]} (backend-writer/state writer)
@@ -3367,13 +3405,8 @@
                               ((get-in api [:schema :read-schema]) db)
                               _
                               (doseq [{:keys [relationship]} updates]
-                                (schema-errors/validate-relationship-write!
-                                 schema :write-relationships
-                                 {:resource-type
-                                  (:type (:resource relationship))
-                                  :subject-type
-                                  (:type (:subject relationship))
-                                  :relation (:relation relationship)}))
+                                (validate-relationship-write-schema!
+                                 schema relationship))
                               internal-updates
                               (S/transform
                                [S/ALL :relationship]
@@ -3436,10 +3469,7 @@
       (typed-capability-error! :qualified-relationship-publication (:backend-id api)))
     (mapv
      (fn [{:keys [operation relationship] :as update}]
-       (schema-errors/validate-relationship-write!
-        schema :write-relationships
-        {:resource-type (:type (:resource relationship))
-         :subject-type (:type (:subject relationship)) :relation (:relation relationship)})
+       (validate-relationship-write-schema! schema relationship)
        (let [input (resolve-input db relationship)
              name (:caveat relationship)
              caveat (when (and name (not= :delete operation))
@@ -3562,9 +3592,27 @@
                          {:tx-data prepared :raw-count mid})
                   (recur low (dec mid) best))))))))))
 
+(defn- wildcard-type-deletion
+  "The wildcard subject entity is shared by every type's wildcard. Deleting
+  `T:*` keeps only the endpoint retractions whose subject type is T; other
+  transaction data (guards and generation stamps) is unchanged."
+  [subject-type ops]
+  (filter
+   (fn [op]
+     (if (and (vector? op) (= :db/retract (first op)) (= 4 (count op))
+              (contains? relationship-storage/attributes (nth op 2)))
+       (let [value (nth op 3)]
+         (= subject-type
+            (if (= relationship-storage/forward-attribute (nth op 2))
+              (nth value 0 nil)
+              (nth value 2 nil))))
+       true))
+   ops))
+
 (defn- writer-delete-object!
   "Removes every relationship touching object in final-transaction-bounded
-  batches. Each contention retry reacquires and replans from a fresh basis."
+  batches. Each contention retry reacquires and replans from a fresh basis.
+  For `T:*` it removes every relationship whose subject is that wildcard."
   [writer object]
   (let [{:keys [api qualified-writer]} (backend-writer/state writer)
         native-writer (when *qualified-authorization-enabled?*
@@ -3572,7 +3620,11 @@
                             (typed-capability-error! :qualified-relationship-publication (:backend-id api))))
         options (current-writer-options writer)
         plan-delete
-        (backend-writer/operation writer :plan-delete-object)
+        (let [plan (backend-writer/operation writer :plan-delete-object)]
+          (if (wildcard/object? object)
+            (fn [db object-eid]
+              (wildcard-type-deletion (:type object) (plan db object-eid)))
+            plan))
         contention?
         (backend-writer/operation writer :contention?)
         retraction-count
@@ -3959,10 +4011,7 @@
     (let [schema ((get-in api [:schema :read-schema]) db)
           options (runtime-options runtime)
           _ (doseq [{:keys [relationship]} updates]
-              (schema-errors/validate-relationship-write!
-               schema :write-relationships
-               {:resource-type (:type (:resource relationship))
-                :subject-type (:type (:subject relationship)) :relation (:relation relationship)}))
+              (validate-relationship-write-schema! schema relationship))
           internal-updates
           (relationship-mutations/coalesce-updates
            (mapv (fn [update]
@@ -4711,8 +4760,20 @@
         zed-token-format-options
         (assoc zed-token-format-options :token-ttl-seconds
                (or token-ttl-seconds causal-token/default-token-ttl-seconds))
+        wildcard-entid (fn [db] ((:entid api) db wildcard/lookup-ref))
+        ;; `*` names the one EACL-owned wildcard subject entity, whatever the
+        ;; application codec; no concrete ID may resolve to that entity.
         object-id->entid (fn [db object-id]
-                           ((:entid api) db (object-id->lookup-ref object-id)))
+                           (if (= wildcard/object-id object-id)
+                             (wildcard-entid db)
+                             (let [lookup-ref (object-id->lookup-ref object-id)
+                                   eid ((:entid api) db lookup-ref)]
+                               (if (and (some? eid)
+                                        (or (not (vector? lookup-ref))
+                                            (= wildcard/lookup-ref lookup-ref))
+                                        (= eid (wildcard-entid db)))
+                                 nil
+                                 eid))))
         custom-codec?
         (boolean
          (or entid->object-id
@@ -4748,8 +4809,28 @@
         (:cursor-codec-cache initial-runtime-cache-lifecycle)
         cursor-construction-cache
         (:cursor-construction-cache initial-runtime-cache-lifecycle)
-        entid->object-id (or entid->object-id
-                             (:default-entid->object-id api))
+        entid->object-id (let [external-id (or entid->object-id
+                                               (:default-entid->object-id api))]
+                           ;; The wildcard subject renders as `*`; a concrete
+                           ;; object may not claim that reserved ID.
+                           (fn [db eid]
+                             (let [id (external-id db eid)]
+                               (cond
+                                 (= wildcard/object-id id)
+                                 (if (= eid (wildcard-entid db))
+                                   wildcard/object-id
+                                   (wildcard/reserved-object-id! eid))
+
+                                 (and (= wildcard/entity-id id)
+                                      (= eid (wildcard-entid db)))
+                                 wildcard/object-id
+
+                                 (some? id) id
+
+                                 (and (some? eid) (= eid (wildcard-entid db)))
+                                 wildcard/object-id
+
+                                 :else nil))))
         base-opts
         (merge
          (select-keys config-opts

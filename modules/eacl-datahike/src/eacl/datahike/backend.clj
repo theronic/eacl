@@ -8,7 +8,8 @@
             [eacl.datahike.direct-membership :as direct-membership]
             [eacl.datahike.impl :as impl]
             [eacl.datahike.schema :as schema]
-            [eacl.schema.expression-persistence :as expression-persistence])
+            [eacl.schema.expression-persistence :as expression-persistence]
+            [eacl.schema.wildcard :as wildcard])
   (:import [datahike.db AsOfDB DB FilteredDB HistoricalDB SinceDB]
            [java.util UUID]))
 
@@ -288,12 +289,19 @@
 
        :relation-defs
        (fn [resource-type relation-name]
-         (mapv (fn [{:keys [e v]}]
-                 {:relation-id e
-                  :resource-type resource-type
-                  :relation-name relation-name
-                  :subject-type (nth v 2)})
-               (impl/relation-datoms db resource-type relation-name)))
+         (let [wildcard-attribute? (some? (ddb/entid db wildcard/unqualified-attribute))
+               wildcard-eid (delay (ddb/entid db wildcard/lookup-ref))]
+           (mapv (fn [{:keys [e v]}]
+                   (cond-> {:relation-id e
+                            :resource-type resource-type
+                            :relation-name relation-name
+                            :subject-type (nth v 2)}
+                     ;; A `T:*` branch derives through the wildcard subject.
+                     (and wildcard-attribute?
+                          (seq (ddb/eavt-datoms db e wildcard/unqualified-attribute))
+                          @wildcard-eid)
+                     (assoc :wildcard-eid @wildcard-eid)))
+                 (impl/relation-datoms db resource-type relation-name))))
 
        :permission-defs
        (fn [resource-type permission-name]

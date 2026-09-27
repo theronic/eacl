@@ -120,5 +120,5 @@
   (let [rows (entity-facts database eid)]
     (when (seq rows)
       (reduce (fn [result [a v]]
-                (if (= :eacl.relation/caveats a) (update result a (fnil conj #{}) v) (assoc result a v)))
+                (if (#{:eacl.relation/caveats :eacl.relation/wildcard-caveats} a) (update result a (fnil conj #{}) v) (assoc result a v)))
               {:db/id eid} rows))))

@@ -24,7 +24,9 @@
   (doseq [[branches error] [["user with missing" :eacl.schema/invalid-caveat-reference]
                             ["user with enabled | user with enabled" :eacl.schema/duplicate-relation-branch]
                             ["user | user" :eacl.schema/duplicate-relation-branch]
-                            ["user:* with enabled" :eacl.schema/unsupported-feature]
+                            ["user:* with missing" :eacl.schema/invalid-caveat-reference]
+                            ["user:* | user:*" :eacl.schema/duplicate-relation-branch]
+                            ["user:* with enabled | user:* with enabled" :eacl.schema/duplicate-relation-branch]
                             ["user#member with enabled" :eacl.schema/unsupported-feature]]]
     (is (= error (errors/error-type #(resolver/validate-schema (source branches) nil {:allow-caveats? true}))))))
 

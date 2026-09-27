@@ -159,7 +159,7 @@
     (when (seq rows)
       (reduce (fn [result [a v]]
                 (let [attribute (:db/ident (d/entity database a))]
-                  (if (= :eacl.relation/caveats attribute)
+                  (if (#{:eacl.relation/caveats :eacl.relation/wildcard-caveats} attribute)
                     (update result attribute (fnil conj #{}) v) (assoc result attribute v))))
               {:db/id eid} rows))))
 

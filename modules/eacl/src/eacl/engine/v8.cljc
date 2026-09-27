@@ -1125,6 +1125,37 @@
         #(hash-map :digest (compute))))
       (compute))))
 
+(defn- stable-touch-plan
+  "The relaxed touch cover of an operator plan (see
+  `eacl.operator.cover-plan/seal-plan`), sealed once per plan fingerprint."
+  [db plan]
+  (if-let [plans (:sealed-plans *schema-cache*)]
+    (memoized-map-derived!
+     plans
+     [::operator-touch-cover (:fingerprint plan) (:root plan)]
+     #(operator-cover-plan/seal-plan db plan (:root plan) {:relaxed? true}))
+    (operator-cover-plan/seal-plan db plan (:root plan) {:relaxed? true})))
+
+(defn- rule-subject-type
+  [rule]
+  (case (:rule rule)
+    :relation (:subject-type rule)
+    :arrow-relation (:target-subject-type rule)
+    nil))
+
+(defn- wildcard-touch-route?
+  "A reverse operator lookup routes through the touch cover when its positive
+  cover can grant through a wildcard subject of the requested type: only then
+  can a subject hold the permission without a positive tuple of its own, or
+  be excluded from the wildcard."
+  [cover-plan traversal subject-type]
+  (and (= :reverse traversal)
+       (boolean
+        (some (fn [rule]
+                (and (sealed-plan/wildcard-variant? rule)
+                     (= subject-type (rule-subject-type rule))))
+              (:rules cover-plan)))))
+
 (defn- operator-edge
   [plan cover-plan traversal semantic-scope coords]
   {:kind :operator-least-path-edge
@@ -2052,6 +2083,35 @@
             ;; checkpoint's sorts and digest.
             :checkpoint? false})))))))
 
+(defn- acyclic-batch-evaluator
+  "The exact acyclic operator decision for one aligned batch of cover nodes.
+  An acyclic plan has no delegated operands, so it takes no oracle."
+  [db plan traversal subject-type anchor-eid proof-identity _oracle]
+  (let [resource-type (first (:root plan))]
+    (fn [nodes]
+      (run-routed
+       (fn []
+         (operator-vector/check-cached-many-eids
+          {:adapter db
+           :plan plan
+           :qualification *qualification*
+           :scope-identity proof-identity
+           :candidates
+           (mapv (fn [node]
+                   {:direction traversal
+                    :subject-type subject-type
+                    :subject-eid (if (= :forward traversal) anchor-eid (:id node))
+                    :resource-type resource-type
+                    :resource-eid (if (= :forward traversal) (:id node) anchor-eid)})
+                 nodes)}))))))
+
+(defn- exact-batch-evaluator
+  [db plan traversal subject-type anchor-eid proof-identity oracle]
+  ((if (operator-recursive/recursive-plan? plan)
+     recursive-batch-evaluator
+     acyclic-batch-evaluator)
+   db plan traversal subject-type anchor-eid proof-identity oracle))
+
 (declare first-discovery-lookup-page)
 
 (defn- operator-lookup-page
@@ -2302,10 +2362,16 @@
   "Enumerates the sealed recursive cover and evaluates exact recursive
   operator membership in bounded aligned vectors. The public cursor advances
   only through the cover edge actually examined; physical predicate batching
-  is never cursor progress."
+  is never cursor progress.
+
+  `cover-plan` and `evaluator` default to the positive cover and the
+  recursive evaluator; the wildcard touch route supplies the touch cover and
+  the plan's exact evaluator."
   [db plan traversal query {:keys [bound] :as page-req} cache-fn
-   result-type anchor subject-type candidate-filter]
-  (let [cover-plan (stable-cover-plan db plan)
+   result-type anchor subject-type candidate-filter
+   & {:keys [cover-plan evaluator]
+      :or {evaluator recursive-batch-evaluator}}]
+  (let [cover-plan (or cover-plan (stable-cover-plan db plan))
         proof-identity (operator-snapshot-proof-identity db)
         scope-delay (delay (operator-scope-digest
                             plan cover-plan traversal proof-identity))
@@ -2324,7 +2390,7 @@
             oracle (when (operator-plan/delegation plan)
                      (delegated-operand-oracle db plan :batched))
             recursive-decisions
-            (recursive-batch-evaluator
+            (evaluator
              db plan traversal subject-type anchor-eid proof-identity oracle)
             evaluate-batch
             (fn [nodes]
@@ -2371,6 +2437,81 @@
               (update result field #(when % (recursive-edge %))))
             page-info [:start-cursor :end-cursor])))))))
 
+(defn- wildcard-excluded?
+  [decision]
+  (if (= :detailed *lookup-result-policy*)
+    (evidence/no? decision)
+    (not (evidence/has? decision))))
+
+(defn- wildcard-exclusions
+  "The touch-cover subjects the wildcard entry does not grant: every subject
+  holding a tuple in the permission's relation closure whose exact decision
+  denies it (a conditional decision too, under the definite policy). A
+  subject outside the touch cover has exactly the wildcard's memberships."
+  [db touch-plan evaluate subject-type anchor-eid wildcard-eid]
+  (let [{:keys [fetch-fn attempts]} (stable-fetch-fn db)
+        finished
+        (binding [*qualification* nil]
+          (run-routed
+           (fn []
+             (stable-reducer/run-reverse
+              (merge (stable-limits)
+                     {:adapter db
+                      :fetch-fn (structural-cover-fetch fetch-fn)
+                      :plan touch-plan
+                      :subject-type subject-type
+                      :resource-eid anchor-eid
+                      :target stable-reducer/exhaustion-target
+                      :result-sink :collect
+                      :cut-point! (stable-cut-point)})))))
+        candidates (filterv #(not= wildcard-eid %) (:results finished))
+        decisions (into []
+                        (mapcat (fn [chunk]
+                                  (evaluate (mapv #(spice-object subject-type %) chunk))))
+                        (partition-all operator-batch-schedule/maximum-width candidates))]
+    (report-adapter-attempts! attempts)
+    (into []
+          (keep (fn [[eid decision]]
+                  (evidence/throw-if-fault! decision)
+                  (when (wildcard-excluded? decision)
+                    (spice-object subject-type eid))))
+          (map vector candidates decisions))))
+
+(defn- wildcard-touch-lookup-page
+  "Reverse lookup of an operator permission that can grant through a
+  wildcard subject: candidates are the touch cover's subjects, each decided
+  by the exact operator evaluator. When the wildcard subject is granted, its
+  entry lists the touch subjects it excludes."
+  [db plan traversal query page-req cache-fn result-type anchor subject-type
+   candidate-filter]
+  (let [touch-plan (stable-touch-plan db plan)
+        page (recursive-operator-lookup-page
+              db plan traversal query page-req cache-fn result-type anchor
+              subject-type candidate-filter
+              :cover-plan touch-plan
+              :evaluator exact-batch-evaluator)
+        wildcard-eid (some :wildcard-eid (:rules touch-plan))
+        wildcard-entry? #(and (some? wildcard-eid) (= wildcard-eid (:id %)))]
+    (if (some wildcard-entry? (:data page))
+      (let [anchor-eid (object-eid db (:id anchor))
+            oracle (when (operator-plan/delegation plan)
+                     (delegated-operand-oracle db plan :batched))
+            evaluate (exact-batch-evaluator
+                      db plan traversal subject-type anchor-eid
+                      (operator-snapshot-proof-identity db) oracle)
+            excluded (wildcard-exclusions db touch-plan evaluate subject-type
+                                          anchor-eid wildcard-eid)]
+        (report-adapter-attempts! (:attempts oracle))
+        (if (seq excluded)
+          (update page :data
+                  (fn [objects]
+                    (mapv #(if (wildcard-entry? %)
+                             (assoc % :excluded-subjects excluded)
+                             %)
+                          objects)))
+          page))
+      page)))
+
 (defn- stable-lookup-page
   "`cache-fn` is a thunk producing the continuation cache (or nil): the
   least-path route consults no continuation state, so the context —
@@ -2395,10 +2536,18 @@
       (let [root-node (permission-query-node root-type (:permission query))
             plan (stable-plan db root-node)]
         (if (operator-plan/operator-plan? plan)
-          (if (operator-recursive/recursive-plan? plan)
+          (cond
+            (wildcard-touch-route? (stable-cover-plan db plan) traversal subject-type)
+            (wildcard-touch-lookup-page
+             db plan traversal query page-req cache-fn result-type anchor
+             subject-type candidate-filter)
+
+            (operator-recursive/recursive-plan? plan)
             (recursive-operator-lookup-page
              db plan traversal query page-req cache-fn result-type anchor
              subject-type candidate-filter)
+
+            :else
             (operator-lookup-page
              db plan traversal page-req result-type anchor subject-type
              candidate-filter))
@@ -2599,15 +2748,17 @@
   and anchor resolution happen once per count instead of once per page.
   Budget semantics match the paged path: each iteration is one page run
   with its own reducer budgets, under the same per-page deadline check."
-  [db plan traversal query result-type anchor subject-type count-limit]
-  (let [cover-plan (stable-cover-plan db plan)
+  [db plan traversal query result-type anchor subject-type count-limit
+   & {:keys [cover-plan evaluator]
+      :or {evaluator recursive-batch-evaluator}}]
+  (let [cover-plan (or cover-plan (stable-cover-plan db plan))
         proof-identity (operator-snapshot-proof-identity db)
         anchor-eid (object-eid db (:id anchor))
         continuation-cache (stable-page/make-checkpoint-store)
         cache-fn (constantly continuation-cache)
         oracle (when (operator-plan/delegation plan)
                  (delegated-operand-oracle db plan :batched))
-        evaluate-batch (recursive-batch-evaluator
+        evaluate-batch (evaluator
                         db plan traversal subject-type anchor-eid
                         proof-identity oracle)
         target (when (some? count-limit) (inc count-limit))
@@ -2666,9 +2817,19 @@
 (defn- operator-count
   [db plan traversal query anchor subject-type result-type count-limit]
   (if-let [anchor-eid (object-eid db (:id anchor))]
-    (if (operator-recursive/recursive-plan? plan)
+    (cond
+      ;; Counts the entries lookup-subjects returns: the wildcard entry once.
+      (wildcard-touch-route? (stable-cover-plan db plan) traversal subject-type)
+      (recursive-operator-count
+       db plan traversal query result-type anchor subject-type count-limit
+       :cover-plan (stable-touch-plan db plan)
+       :evaluator exact-batch-evaluator)
+
+      (operator-recursive/recursive-plan? plan)
       (recursive-operator-count
        db plan traversal query result-type anchor subject-type count-limit)
+
+      :else
       (select-keys
        (run-routed
         (fn []

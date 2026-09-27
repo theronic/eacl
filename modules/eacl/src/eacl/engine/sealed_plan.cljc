@@ -22,7 +22,16 @@
     {:rule :arrow-permission :node n :via-relation-eid e
      :intermediate-type it :target-node [it q] ...}
     {:rule :arrow-relation  :node n :via-relation-eid e :intermediate-type it
-     :target-relation-eid te :target-subject-type st ...}"
+     :target-relation-eid te :target-subject-type st ...}
+
+  Wildcard variants. When the relation a `:relation` rule reads (or the
+  target relation of an `:arrow-relation` rule) declares a `T:*` branch, the
+  plan also holds the same rule with `:wildcard-eid` naming the wildcard
+  subject entity. A variant is an independent derivation for any subject of
+  type T through the wildcard's own tuple: forward scans and point probes
+  read the wildcard subject instead of the subject. In reverse the wildcard
+  subject is an ordinary scanned subject of the base rule, so a variant
+  contributes nothing there and reverse witnesses ignore variants."
   (:require [eacl.backend.v8 :as backend]
             [eacl.secure-format :as secure-format]))
 
@@ -93,6 +102,19 @@
        {:resource-type resource-type :permission permission-name}))
     rows))
 
+(defn- with-wildcard-variant
+  "The rule, followed by its wildcard variant when the relation it reads
+  declares a `T:*` branch."
+  [rule wildcard-eid]
+  (if (some? wildcard-eid)
+    [rule (assoc rule :wildcard-eid wildcard-eid)]
+    [rule]))
+
+(defn wildcard-variant?
+  "True for a rule that derives through the wildcard subject's tuple."
+  [rule]
+  (contains? rule :wildcard-eid))
+
 (defn- node-rules
   "Compiles the four-kind rules for one permission node from its
   definition rows."
@@ -104,14 +126,17 @@
       (cond
         ;; permission p = r (direct relation grant)
         (and (= :self source-relation-name) (= :relation target-type))
-        (for [{:keys [relation-id subject-type]}
-              (relation-defs adapter resource-type target-name)]
-          {:rule :relation
-           :node node
-           :resource-type resource-type
-           :permission permission-name
-           :relation-eid relation-id
-           :subject-type subject-type})
+        (for [{:keys [relation-id subject-type wildcard-eid]}
+              (relation-defs adapter resource-type target-name)
+              rule (with-wildcard-variant
+                     {:rule :relation
+                      :node node
+                      :resource-type resource-type
+                      :permission permission-name
+                      :relation-eid relation-id
+                      :subject-type subject-type}
+                     wildcard-eid)]
+          rule)
 
         ;; permission p = q (self permission)
         (and (= :self source-relation-name) (= :permission target-type))
@@ -141,16 +166,20 @@
               (relation-defs adapter resource-type source-relation-name)
               :when (or (nil? source-subject-type)
                         (= source-subject-type intermediate))
-              {target-eid :relation-id target-subject :subject-type}
-              (relation-defs adapter intermediate target-name)]
-          {:rule :arrow-relation
-           :node node
-           :resource-type resource-type
-           :permission permission-name
-           :via-relation-eid via-eid
-           :intermediate-type intermediate
-           :target-relation-eid target-eid
-           :target-subject-type target-subject})
+              {target-eid :relation-id target-subject :subject-type
+               target-wildcard :wildcard-eid}
+              (relation-defs adapter intermediate target-name)
+              rule (with-wildcard-variant
+                     {:rule :arrow-relation
+                      :node node
+                      :resource-type resource-type
+                      :permission permission-name
+                      :via-relation-eid via-eid
+                      :intermediate-type intermediate
+                      :target-relation-eid target-eid
+                      :target-subject-type target-subject}
+                     target-wildcard)]
+          rule)
 
         :else
         (compile-error! "Unrecognized permission definition form."

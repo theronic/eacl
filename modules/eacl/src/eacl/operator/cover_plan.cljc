@@ -94,10 +94,22 @@
           :target-type :permission
           :target-name (second target))])
 
+(defn- touch-children
+  "Every operand of an intersection or exclusion node, for the relaxed touch
+  cover; nil for any other generator."
+  [{:keys [kind source-node predicate-nodes negative-node]}]
+  (case kind
+    :anchor-filter (into [source-node] predicate-nodes)
+    :left-anti-filter [source-node negative-node]
+    nil))
+
 (defn- node-definitions
-  [plan semantic->synthetic [permission node-id :as _semantic] synthetic]
-  (let [{:keys [source-node source-nodes]}
-        (get-in plan [:generators permission node-id])]
+  [plan semantic->synthetic [permission node-id :as _semantic] synthetic
+   relaxed?]
+  (let [{:keys [source-node source-nodes] :as generator}
+        (get-in plan [:generators permission node-id])
+        source-nodes (or (when relaxed? (touch-children generator))
+                         source-nodes)]
     (cond
       (seq source-nodes)
       (vec
@@ -129,8 +141,9 @@
       (apply backend/invoke adapter operation arguments))))
 
 (defn- cover-definitions
-  "The per-node cover's `:permission-defs`: each synthetic node's rows."
-  [operator-plan {:keys [semantic->synthetic synthetic->semantic]}]
+  "The per-node cover's `:permission-defs`: each synthetic node's rows.
+  `relaxed?` selects the touch cover's rows."
+  [operator-plan {:keys [semantic->synthetic synthetic->semantic]} relaxed?]
   (fn [resource-type permission-name]
     (let [synthetic [resource-type permission-name]
           semantic (get synthetic->semantic synthetic)]
@@ -142,7 +155,7 @@
            :eacl/error :eacl.operator/invalid-cover
            :node synthetic})))
       (node-definitions operator-plan semantic->synthetic
-                        semantic synthetic))))
+                        semantic synthetic relaxed?))))
 
 (defn- wrapper-adapter
   "The base adapter, with `permission-defs` serving synthetic definitions.
@@ -195,9 +208,23 @@
                       [:direct-membership :physical-policy]))))))
 
 (defn seal-plan
+  "Seals the positive raw cover of an operator plan: intersections generate
+  from their anchor and exclusions from their left operand, and exact local
+  predicates filter every synthetic node.
+
+  With `{:relaxed? true}` it seals the touch cover instead: every
+  intersection and exclusion generates from all of its operands, and no
+  intermediate node is filtered. Its reverse enumeration is every subject
+  holding a tuple anywhere in the permission's relation closure. A reverse
+  lookup whose positive cover grants through a wildcard subject needs that
+  superset: a subject may hold the permission through the wildcard without a
+  positive tuple of its own, and one the wildcard cannot grant must be
+  reported as an exclusion."
   ([adapter plan]
    (seal-plan adapter plan (:root plan)))
   ([adapter plan permission]
+   (seal-plan adapter plan permission {}))
+  ([adapter plan permission {:keys [relaxed?]}]
    (when-not (operator-plan/operator-plan? plan)
      (throw
       (ex-info "Raw cover sealing requires an operator plan."
@@ -215,8 +242,10 @@
                   :permission permission})))
      (let [cover-plan
            (sealed-plan/seal-plan
-            (wrapper-adapter adapter {:operator-cover (:fingerprint plan)}
-                             (cover-definitions plan maps))
+            (wrapper-adapter adapter
+                             (cond-> {:operator-cover (:fingerprint plan)}
+                               relaxed? (assoc :touch-cover true))
+                             (cover-definitions plan maps (true? relaxed?)))
             root)
            allowed (set (get-in plan [:relation-closures permission :all]))
            outside (vec (remove allowed

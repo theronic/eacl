@@ -28,6 +28,7 @@
   (:require [eacl.backend.v8 :as backend]
             [eacl.authorization.evidence :as evidence]
             [eacl.authorization.qualification :as qualification]
+            [eacl.engine.sealed-plan :as sealed-plan]
             [eacl.relationships.edge :as edge]
             [eacl.request.counters :as request-counters]))
 
@@ -858,13 +859,15 @@
 (defn- reverse-goal-work
   "Expands one reverse goal at `node` for resource `eid` through the sealed
   reverse index, filtered to the requested subject type where the rule
-  binds one."
+  binds one. Wildcard variants contribute nothing in reverse: the wildcard
+  subject is an ordinary scanned subject of the base rule."
   [plan subject-type node eid]
   (into []
         (keep (fn [rule]
                 (case (:rule rule)
                   :relation
-                  (when (= subject-type (:subject-type rule))
+                  (when (and (= subject-type (:subject-type rule))
+                             (not (sealed-plan/wildcard-variant? rule)))
                     {:kind :reverse-direct :rule rule
                      :resource-eid eid :bound-eid nil})
                   :self-permission
@@ -874,7 +877,8 @@
                   {:kind :reverse-via-permission :rule rule
                    :resource-eid eid :bound-eid nil}
                   :arrow-relation
-                  (when (= subject-type (:target-subject-type rule))
+                  (when (and (= subject-type (:target-subject-type rule))
+                             (not (sealed-plan/wildcard-variant? rule)))
                     {:kind :reverse-via-relation :rule rule
                      :resource-eid eid :bound-eid nil}))))
         (get-in plan [:indexes :reverse-rules node])))
@@ -1171,15 +1175,18 @@
   [{:keys [plan subject-type subject-eid target] :as options}]
   (let [context {:plan plan :root (:root plan)
                  :subject-type subject-type}
+        ;; A wildcard variant seeds from the wildcard subject's holdings,
+        ;; which every subject of its type shares.
         seeds (mapv (fn [rule]
-                      (case (:rule rule)
-                        :relation {:kind :seed-relation :rule rule
-                                   :subject-type subject-type
-                                   :subject-eid subject-eid :bound-eid nil}
-                        :arrow-relation {:kind :seed-arrow-relation :rule rule
-                                         :subject-type subject-type
-                                         :subject-eid subject-eid
-                                         :bound-eid nil}))
+                      (let [anchor (or (:wildcard-eid rule) subject-eid)]
+                        (case (:rule rule)
+                          :relation {:kind :seed-relation :rule rule
+                                     :subject-type subject-type
+                                     :subject-eid anchor :bound-eid nil}
+                          :arrow-relation {:kind :seed-arrow-relation :rule rule
+                                           :subject-type subject-type
+                                           :subject-eid anchor
+                                           :bound-eid nil})))
                     (get-in plan [:indexes :forward-seeds subject-type]))
         state (schedule (initial-state options) nil seeds)]
     (report-run! nil (finish (run-loop context state target

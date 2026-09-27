@@ -6,7 +6,8 @@
             [eacl.backend.source :as source]
             [eacl.schema.expression-persistence :as expression-persistence]
             [eacl.backend.v8 :as backend]
-            [eacl.datascript.impl :as impl]))
+            [eacl.datascript.impl :as impl]
+            [eacl.schema.wildcard :as wildcard]))
 
 (defn connection-source-id
   "Returns the process-local stable identity of one DataScript connection."
@@ -172,12 +173,16 @@
 
        :relation-defs
        (fn [resource-type relation-name]
-         (mapv (fn [{:keys [e v]}]
-                 {:relation-id e
-                  :resource-type resource-type
-                  :relation-name relation-name
-                  :subject-type (nth v 2)})
-               (impl/relation-datoms db resource-type relation-name)))
+         (let [wildcard-eid (delay (ds/entid db wildcard/lookup-ref))]
+           (mapv (fn [{:keys [e v]}]
+                   (cond-> {:relation-id e
+                            :resource-type resource-type
+                            :relation-name relation-name
+                            :subject-type (nth v 2)}
+                     (and (seq (ds/datoms db :eavt e wildcard/unqualified-attribute))
+                          @wildcard-eid)
+                     (assoc :wildcard-eid @wildcard-eid)))
+                 (impl/relation-datoms db resource-type relation-name))))
 
        :permission-defs
        (fn [resource-type permission-name]

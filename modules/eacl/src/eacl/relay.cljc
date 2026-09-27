@@ -1151,7 +1151,10 @@
         objects (if detailed? (mapv :object (:data page)) (:data page))
         identities
         (resolve-external-identities!
-         adapter opts operation (map :id objects))
+         adapter opts operation
+         (concat (map :id objects)
+                 ;; A wildcard entry's exclusions render with the page.
+                 (mapcat #(map :id (:excluded-subjects %)) objects)))
         page-info
         (reduce
          (fn [page-info field]
@@ -1197,8 +1200,12 @@
          {:data
           (mapv
            (fn [item]
-             (let [{:keys [type id]} (if detailed? (:object item) item)
-                   object (spice-object type (get identities id))]
+             (let [{:keys [type id excluded-subjects]} (if detailed? (:object item) item)
+                   object (cond-> (spice-object type (get identities id))
+                            (some? excluded-subjects)
+                            (assoc :excluded-subjects
+                                   (mapv #(spice-object (:type %) (get identities (:id %)))
+                                         excluded-subjects)))]
                (if detailed? (assoc item :object object) object)))
            (:data page))
           :page-info page-info})]

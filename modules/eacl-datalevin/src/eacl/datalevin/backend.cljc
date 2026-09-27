@@ -8,7 +8,8 @@
             [eacl.datalevin.db :as ddb]
             [eacl.datalevin.fork :as fork]
             [eacl.datalevin.impl :as impl]
-            [eacl.schema.expression-persistence :as expression-persistence]))
+            [eacl.schema.expression-persistence :as expression-persistence]
+            [eacl.schema.wildcard :as wildcard]))
 
 (def adapter-capabilities
   {:qualification #{qualification-data/capability}
@@ -214,14 +215,21 @@
          (ddb/with-db
            snapshot
            (fn [db]
-             (mapv
-              (fn [{:keys [e v]}]
-                (exact-natural! :relation-id e)
-                {:relation-id e
-                 :resource-type resource-type
-                 :relation-name relation-name
-                 :subject-type (nth v 2)})
-              (impl/relation-datoms db resource-type relation-name)))))
+             (let [wildcard-attribute? (contains? (d/schema db) wildcard/unqualified-attribute)
+                   wildcard-eid (delay (d/entid db wildcard/lookup-ref))]
+               (mapv
+                (fn [{:keys [e v]}]
+                  (exact-natural! :relation-id e)
+                  (cond-> {:relation-id e
+                           :resource-type resource-type
+                           :relation-name relation-name
+                           :subject-type (nth v 2)}
+                    ;; A `T:*` branch derives through the wildcard subject.
+                    (and wildcard-attribute?
+                         (seq (d/datoms db :eav e wildcard/unqualified-attribute))
+                         @wildcard-eid)
+                    (assoc :wildcard-eid @wildcard-eid)))
+                (impl/relation-datoms db resource-type relation-name))))))
 
        :permission-defs
        (fn [resource-type permission-name]

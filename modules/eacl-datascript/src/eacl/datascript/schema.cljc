@@ -10,7 +10,8 @@
             [eacl.schema.expression-resolver :as expression-resolver]
             [eacl.schema.model :as model]
             [eacl.schema.relation-allowance :as relation-allowance]
-            [eacl.schema.replacement-plan :as replacement-plan]))
+            [eacl.schema.replacement-plan :as replacement-plan]
+            [eacl.schema.wildcard :as wildcard]))
 
 (def datascript-schema
   (merge target-storage/metadata-schema caveat-schema/datascript-schema
@@ -73,7 +74,9 @@
                          :eacl.relation/resource-type :eacl.relation/relation-name]
                   true
                   (into [:eacl.relation/allows-unqualified?
-                         {:eacl.relation/caveats [:eacl.caveat/name]}]))]
+                         {:eacl.relation/caveats [:eacl.caveat/name]}
+                         :eacl.relation/allows-unqualified-wildcard?
+                         {:eacl.relation/wildcard-caveats [:eacl.caveat/name]}]))]
     (mapv relation-allowance/canonicalize
           (ds/q '[:find [(pull ?relation pattern) ...]
                   :in $ pattern
@@ -324,6 +327,17 @@
              :eacl/error :eacl.schema/empty-schema-guard
              :existing {:relations (count (:relations existing-schema))
                         :permissions (count (:permissions existing-schema))}})))
+        wildcards? (wildcard/schema-uses-wildcards? (:relations new-schema-map))
+        _ (when (and wildcards?
+                     (not= :db.type/ref
+                           (get-in (:schema db) [wildcard/caveats-attribute :db/valueType])))
+            (throw
+             (ex-info
+              "DataScript connection schema lacks the EACL wildcard Relation attributes; create the connection with eacl.datascript.schema/merge-schema."
+              {:type :eacl.schema/wildcard-attributes-missing
+               :eacl/error :eacl.schema/wildcard-attributes-missing
+               :backend :datascript
+               :attributes (vec (sort wildcard/attributes))})))
         deltas (compare-schema existing-schema new-schema-map)
         _ (relation-allowance/validate-existing! (:relations deltas) #(stored-relation-caveats db %))
         semantic
@@ -365,6 +379,9 @@
         tx-data
         (vec
          (concat
+          ;; The EACL-owned wildcard subject exists before any wildcard
+          ;; relationship can reference it; the upsert is idempotent.
+          (when wildcards? [wildcard/entity])
           (:additions caveats)
           (relation-allowance/attribute-retractions relations)
           relation-additions

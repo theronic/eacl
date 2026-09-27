@@ -135,7 +135,13 @@
          max-values reducer/default-max-values
          max-stack reducer/default-max-stack}
     :as options}]
-  (let [known-witness (validate-known-witness! options)
+  (let [;; Wildcard variants derive through the wildcard subject's own tuple.
+        ;; A reverse witness asks for the subject's own derivations only.
+        wildcards? (not (false? (:wildcards? options)))
+        active-rule? (fn [rule]
+                       (or wildcards? (not (contains? rule :wildcard-eid))))
+        holder-of (fn [rule] (or (:wildcard-eid rule) subject-eid))
+        known-witness (validate-known-witness! options)
         start-node (or (:start-node options) (:root plan))
         known-rule? (fn [node eid rule]
                       (and known-witness (= start-node node) (= resource-eid eid)
@@ -175,12 +181,12 @@
         matching-edge (fn [candidate values]
                         (let [value (first values)]
                           (when (= candidate (edge/endpoint value)) value)))
-        probe? (fn [resource-type eid relation-eid]
+        probe? (fn [holder resource-type eid relation-eid]
                  (qualify relation-eid
-                          (matching-edge subject-eid
+                          (matching-edge holder
                                          (fetch! (reverse-scan resource-type eid
                                                                relation-eid subject-type
-                                                               (dec subject-eid) 1)))))
+                                                               (dec holder) 1)))))
         intermediates (fn [resource-type eid via-relation-eid intermediate-type]
                         (loop [bound nil acc (transient [])]
                           (let [chunk (fetch! (reverse-scan resource-type eid
@@ -196,10 +202,10 @@
         ;; (BidirectionalArrowIntersection.dfy): a via candidate is decided
         ;; on the subject's forward index, a holding candidate on the
         ;; resource's reverse index.
-        holding-probe? (fn [target-relation-eid intermediate-type candidate]
+        holding-probe? (fn [holder target-relation-eid intermediate-type candidate]
                          (matching-edge candidate
                                         (fetch! (forward-scan
-                                                 subject-type subject-eid
+                                                 subject-type holder
                                                  target-relation-eid
                                                  intermediate-type
                                                  (dec candidate) 1))))
@@ -218,7 +224,7 @@
         ;; buffered in physical chunks, probing stays per candidate, so the
         ;; cost is bounded by the smaller side plus one chunk per side.
         intersect-arm?
-        (fn [resource-type eid via-relation-eid intermediate-type
+        (fn [holder resource-type eid via-relation-eid intermediate-type
              target-relation-eid skip-intermediate]
           (loop [vias [] via-index 0 via-bound nil vias-done? false
                  holdings [] holding-index 0 holding-bound nil
@@ -245,7 +251,7 @@
                              (evidence/combine
                               :arrow via
                               (qualify target-relation-eid
-                                       (holding-probe? target-relation-eid intermediate-type
+                                       (holding-probe? holder target-relation-eid intermediate-type
                                                        (edge/endpoint via-edge)))))
                       answer (evidence/combine :union answer path)]
                   (cond
@@ -255,7 +261,7 @@
                           (if (and (>= holding-index (count holdings))
                                    (not holdings-done?))
                             (let [chunk (fetch! (forward-scan
-                                                 subject-type subject-eid
+                                                 subject-type holder
                                                  target-relation-eid
                                                  intermediate-type
                                                  holding-bound
@@ -348,9 +354,11 @@
                   (reduce (fn [answer rule]
                             (let [answer (if (and (= :relation (:rule rule))
                                                   (= subject-type (:subject-type rule))
+                                                  (active-rule? rule)
                                                   (not (known-rule? node eid rule)))
                                            (join-path answer
-                                                      (probe? (:resource-type rule) eid
+                                                      (probe? (holder-of rule)
+                                                              (:resource-type rule) eid
                                                               (:relation-eid rule)))
                                            answer)]
                               (if (done? answer) (reduced answer) answer)))
@@ -380,9 +388,11 @@
                              ;; via fan-in.
                                    (do
                                      (reduce (fn [_ target-rule]
-                                               (when (= subject-type (:subject-type target-rule))
+                                               (when (and (= subject-type (:subject-type target-rule))
+                                                          (active-rule? target-rule))
                                                  (vswap! answer join-path
                                                          (intersect-arm?
+                                                          (holder-of target-rule)
                                                           (:resource-type rule) eid
                                                           (:via-relation-eid rule)
                                                           (:intermediate-type rule)
@@ -412,9 +422,11 @@
 
                                  :arrow-relation
                                  (do
-                                   (when (= subject-type (:target-subject-type rule))
+                                   (when (and (= subject-type (:target-subject-type rule))
+                                              (active-rule? rule))
                                      (vswap! answer join-path
                                              (intersect-arm?
+                                              (holder-of rule)
                                               (:resource-type rule) eid
                                               (:via-relation-eid rule)
                                               (:intermediate-type rule)
@@ -1509,13 +1521,19 @@
     false
     (let [seen (volatile! 0)
           caller-cut-point! (:cut-point! options)
+          ;; A reverse run emits the wildcard subject when a wildcard tuple
+          ;; reaches the resource; it stands for every subject of its type.
+          wildcard-eid (some :wildcard-eid (get-in options [:plan :rules]))
+          member? (fn [eid]
+                    (or (= subject-eid eid)
+                        (and (some? wildcard-eid) (= wildcard-eid eid))))
           watch (fn [state]
                   (when caller-cut-point! (caller-cut-point! state))
                   (let [results (:results state)
                         n (count results)]
                     (when (> n @seen)
                       (vreset! seen n)
-                      (when (= subject-eid (nth results (dec n)))
+                      (when (member? (nth results (dec n)))
                         (found!)))))]
       (try
         (let [finished (reducer/run-reverse
@@ -1523,7 +1541,7 @@
                                {:resource-eid resource-eid
                                 :target exhaustion-target
                                 :cut-point! watch}))]
-          (boolean (some #{subject-eid} (:results finished))))
+          (boolean (some member? (:results finished))))
         (catch #?(:clj clojure.lang.ExceptionInfo
                   :cljs cljs.core/ExceptionInfo) error
           (if (::found (ex-data error))

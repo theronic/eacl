@@ -951,7 +951,18 @@
 (defn- rendered-spice-object-shape?
   [value]
   (and (map? value)
-       (= spice-object-fields (set (keys value)))
+       (let [fields (set (keys value))]
+         (or (= spice-object-fields fields)
+             ;; A lookup-subjects wildcard entry lists the subjects that the
+             ;; wildcard does not grant.
+             (and (= (conj spice-object-fields :excluded-subjects) fields)
+                  (= "*" (:id value))
+                  (vector? (:excluded-subjects value))
+                  (every? #(and (map? %)
+                                (= spice-object-fields (set (keys %)))
+                                (= (:type value) (:type %))
+                                (rendered-spice-object-shape? %))
+                          (:excluded-subjects value)))))
        (unqualified-keyword? (:type value))
        (some? (:id value))
        (canonical-cursor-identity? (:id value))

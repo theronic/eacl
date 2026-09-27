@@ -9,7 +9,6 @@
             [eacl.schema.expression-graph :as expression-graph]
             [eacl.schema.expression-limits :as expression-limits]
             [eacl.schema.expression-policy :as expression-policy]
-            [eacl.schema.model :as model]
             [eacl.spicedb.parser :as parser]))
 
 (defn- catalog
@@ -22,6 +21,14 @@
                   (for [[relation-name type-refs] relations]
                     [(keyword relation-name)
                      (vec (distinct (map (comp keyword :type) type-refs)))]))
+            ;; Relations holding a `T:*` branch cannot be the left side of an
+            ;; arrow (SpiceDB rejects them the same way).
+            :wildcard-relations
+            (into #{}
+                  (keep (fn [[relation-name type-refs]]
+                          (when (some :wildcard? type-refs)
+                            (keyword relation-name))))
+                  relations)
             :permissions (set (map (comp keyword :name) permissions))}])))
 
 (defn- issue
@@ -139,7 +146,7 @@
   [catalog resource-type permission-name path {:keys [base target grouped?]} issues]
   (let [base (keyword base)
         target (keyword target)
-        {:keys [relations permissions]} (get catalog resource-type)
+        {:keys [relations permissions wildcard-relations]} (get catalog resource-type)
         subject-types (get relations base)]
     (cond
       (contains? permissions base)
@@ -156,6 +163,14 @@
                          {:name base
                           :expected :relation
                           :message "Arrow base relation does not exist on the resource type."}))
+
+      (contains? wildcard-relations base)
+      (add-issue! issues
+                  (issue :wildcard-arrow-base resource-type permission-name path
+                         {:name base
+                          :message (str "Relation " (name resource-type) "#" (name base)
+                                        " includes a wildcard subject type: wildcard"
+                                        " relations cannot be used on the left side of arrows.")}))
 
       :else
       (let [partitions
@@ -293,18 +308,13 @@
    (resolve-parse-tree parse-tree limits {}))
   ([parse-tree limits admission]
    (let [transformed (parser/transform-schema parse-tree)
-         _ (parser/validate-eacl-restrictions parse-tree transformed admission)
+         ;; Expression storage represents wildcard branches; only the legacy
+         ;; flat projection (parser/->eacl-schema) keeps rejecting them.
+         _ (parser/validate-eacl-restrictions
+            parse-tree transformed (assoc admission :allow-wildcards? true))
          relations
-         (if (true? (:allow-caveats? admission))
-           (parser/staged-relation-entities transformed)
-           (vec
-            (for [[resource-type {:keys [relations]}]
-                  (sort-by key (:definitions transformed))
-                  [relation-name type-refs] (sort-by key relations)
-                  {:keys [type]} (sort-by :type type-refs)]
-              (model/Relation (keyword resource-type)
-                              (keyword relation-name)
-                              (keyword type)))))
+         (parser/relation-entities
+          transformed {:strict? (true? (:allow-caveats? admission))})
          {:keys [expressions metadata aggregate-metrics]}
          (resolve-definitions-with-metadata (:definitions transformed) limits)
          dependency-certificate

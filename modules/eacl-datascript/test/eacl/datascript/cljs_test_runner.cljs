@@ -125,7 +125,8 @@
             [eacl.engine.wildcard-membership-test]
             [eacl.engine.fault-free-membership-test]
             [eacl.datascript.set-algebra-reuse-differential-test]
-            [eacl.datascript.storage-test]))
+            [eacl.datascript.storage-test]
+            [eacl.datascript.wildcard-test]))
 
 (nodejs/enable-util-print!)
 
@@ -262,6 +263,7 @@
                'eacl.engine.wildcard-membership-test
                'eacl.engine.fault-free-membership-test
                'eacl.datascript.set-algebra-reuse-differential-test
-               'eacl.datascript.storage-test))
+               'eacl.datascript.storage-test
+               'eacl.datascript.wildcard-test))
 
 (set! *main-cli-fn* -main)

@@ -331,7 +331,7 @@
         (let [data (error-data
                     #(eacl/write-schema! client "definition user {}
                                                  definition document {
-                                                   relation reader: user:*
+                                                   relation reader: user#member
                                                    permission view = reader
                                                  }"))]
           (is (= :eacl.schema/unsupported-feature (:type data)))

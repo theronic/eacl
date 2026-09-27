@@ -168,27 +168,36 @@
               "Recursive candidate must contain a complete typed point context."
               {:candidate candidate})))
 
-(defn- direct-probe [q descriptor]
-  (when-let [{:keys [relation-id]}
-             (operator-plan/relation-partition
-              descriptor (question-subject-type q))]
-    (if (= :forward (question-direction q))
-      {:direction :forward
-       :descriptor
-       {:subject-type (question-subject-type q)
-        :subject-eid (question-subject-eid q)
-        :relation-eid relation-id
-        :resource-type (first (question-permission q))}
-       :candidate [(first (question-permission q))
-                   (question-resource-eid q)]}
-      {:direction :reverse
-       :descriptor
-       {:resource-type (first (question-permission q))
-        :resource-eid (question-resource-eid q)
-        :relation-eid relation-id
-        :subject-type (question-subject-type q)}
-       :candidate [(question-subject-type q)
-                   (question-subject-eid q)]})))
+(defn- direct-probe [q relation-id subject-eid]
+  (if (= :forward (question-direction q))
+    {:direction :forward
+     :descriptor
+     {:subject-type (question-subject-type q)
+      :subject-eid subject-eid
+      :relation-eid relation-id
+      :resource-type (first (question-permission q))}
+     :candidate [(first (question-permission q))
+                 (question-resource-eid q)]}
+    {:direction :reverse
+     :descriptor
+     {:resource-type (first (question-permission q))
+      :resource-eid (question-resource-eid q)
+      :relation-eid relation-id
+      :subject-type (question-subject-type q)}
+     :candidate [(question-subject-type q)
+                 subject-eid]}))
+
+(defn- direct-probes
+  "The subject's own direct probe, plus the wildcard subject's probe when the
+  relation declares `T:*`. Base probes of one question combine by union."
+  [q descriptor]
+  (if-let [{:keys [relation-id wildcard-eid]}
+           (operator-plan/relation-partition
+            descriptor (question-subject-type q))]
+    (cond-> [(direct-probe q relation-id (question-subject-eid q))]
+      (and (some? wildcard-eid) (not= wildcard-eid (question-subject-eid q)))
+      (conj (direct-probe q relation-id wildcard-eid)))
+    []))
 
 (defn- arrow-target-question
   [roots q intermediate-eid {:keys [target-node]}]
@@ -258,8 +267,7 @@
     (case instruction
       :direct-membership
       {:key q :kind :base :dependencies []
-       :base-probes (if-let [probe (direct-probe q (:descriptor predicate))]
-                      [probe] [])}
+       :base-probes (direct-probes q (:descriptor predicate))}
 
       :permission-membership
       (let [target (:target-node predicate)
@@ -529,15 +537,19 @@
                       probes probe-vias inactive]
 
                      :else
-                     (if-let [probe (direct-probe
-                                     (question [(:intermediate-type partition) (:target-name partition)]
-                                               -1 (question-direction q) (question-subject-type q)
-                                               (question-subject-eid q) intermediate-eid)
-                                     (:target-relation partition))]
-                       [dependencies (conj probes probe)
-                        (if (true? via) probe-vias (assoc probe-vias (+ first-probe (count probes)) via))
-                        inactive]
-                       [dependencies probes probe-vias inactive]))))
+                     (let [target-probes
+                           (direct-probes
+                            (question [(:intermediate-type partition) (:target-name partition)]
+                                      -1 (question-direction q) (question-subject-type q)
+                                      (question-subject-eid q) intermediate-eid)
+                            (:target-relation partition))]
+                       [dependencies (into probes target-probes)
+                        (if (true? via)
+                          probe-vias
+                          (reduce (fn [vias offset]
+                                    (assoc vias (+ first-probe (count probes) offset) via))
+                                  probe-vias (range (count target-probes))))
+                        inactive]))))
                [[] [] (:base-probe-vias spec) false]
                values)
               short-chunk? (< (count values)

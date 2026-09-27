@@ -11,7 +11,8 @@
             [eacl.schema.expression-policy :as expression-policy]
             [eacl.schema.expression-resolver :as expression-resolver]
             [eacl.schema.model :as model]
-            [eacl.schema.relation-allowance :as relation-allowance]))
+            [eacl.schema.relation-allowance :as relation-allowance]
+            [eacl.schema.wildcard :as wildcard]))
 
 (def datalevin-schema
   (merge target-storage/metadata-schema caveat-schema/datalevin-schema
@@ -312,11 +313,12 @@
   (mapv (fn [row]
           (let [relation (eager-entity db (:e row)
                                        (into relation-pull relation-allowance/attributes))
+                caveat-names (fn [refs] (mapv #(select-keys % [:eacl.caveat/name]) refs))
                 relation (cond-> relation
                            (contains? relation :eacl.relation/caveats)
-                           (update :eacl.relation/caveats
-                                   (fn [refs]
-                                     (mapv #(select-keys % [:eacl.caveat/name]) refs))))]
+                           (update :eacl.relation/caveats caveat-names)
+                           (contains? relation wildcard/caveats-attribute)
+                           (update wildcard/caveats-attribute caveat-names))]
             (relation-allowance/canonicalize relation)))
         (ddb/avet-datoms db :eacl.relation/resource-type+relation-name+subject-type)))
 
@@ -583,6 +585,16 @@
                                           {:type :eacl.schema/empty-schema-guard :eacl/error :eacl.schema/empty-schema-guard
                                            :existing {:relations (count (:relations existing-schema))
                                                       :permissions (count (:permissions existing-schema))}})))
+        wildcards? (wildcard/schema-uses-wildcards? (:relations new-schema-map))
+        _ (when (and wildcards?
+                     (not (every? #(contains? (ds/schema db) %) wildcard/attributes)))
+            (throw
+             (ex-info
+              "Datalevin connection schema lacks the EACL wildcard Relation attributes; open the connection with eacl.datalevin.schema/datalevin-schema."
+              {:type :eacl.schema/wildcard-attributes-missing
+               :eacl/error :eacl.schema/wildcard-attributes-missing
+               :backend :datalevin
+               :attributes (vec (sort wildcard/attributes))})))
         deltas          (compare-schema existing-schema new-schema-map)
         _ (relation-allowance/validate-existing! (:relations deltas) #(stored-relation-caveats db %))
         {:keys [relations permissions caveats]} deltas
@@ -633,6 +645,9 @@
             [[:db.fn/cas schema-eid :eacl.datalevin/schema-write-fence
               schema-write-fence schema-write-fence]]
             relation-commit-guards
+            ;; The EACL-owned wildcard subject exists before any wildcard
+            ;; relationship can reference it; the upsert is idempotent.
+            (when wildcards? [wildcard/entity])
             (:additions caveats)
             (relation-allowance/attribute-retractions relations)
             relation-additions

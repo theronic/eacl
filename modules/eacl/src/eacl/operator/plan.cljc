@@ -415,21 +415,28 @@
                           {:resource-type resource-type
                            :relation relation-name}))
         (doseq [row rows]
-          (when-not (and (= #{:relation-id :resource-type
-                              :relation-name :subject-type}
-                            (set (keys row)))
+          (when-not (and (contains? #{#{:relation-id :resource-type
+                                        :relation-name :subject-type}
+                                      #{:relation-id :resource-type
+                                        :relation-name :subject-type
+                                        :wildcard-eid}}
+                                    (set (keys row)))
                          (= resource-type (:resource-type row))
                          (= relation-name (:relation-name row))
                          (keyword? (:subject-type row))
-                         (exact-integer/natural? (:relation-id row)))
+                         (exact-integer/natural? (:relation-id row))
+                         (or (not (contains? row :wildcard-eid))
+                             (exact-integer/natural? (:wildcard-eid row))))
             (compile-error! :malformed-relation-definition
                             "Backend returned a malformed relation definition."
                             {:resource-type resource-type
                              :relation relation-name
                              :definition row})))
         (let [partitions
+              ;; A partition whose relation declares `T:*` carries the
+              ;; wildcard subject; membership probes it beside the subject.
               (->> rows
-                   (map #(select-keys % [:subject-type :relation-id]))
+                   (map #(select-keys % [:subject-type :relation-id :wildcard-eid]))
                    (sort-by (juxt (comp str :subject-type) :relation-id))
                    vec)
               duplicate (first (for [[subject-type n]
@@ -697,7 +704,14 @@
         (let [children (expression-limits/record-children record)]
           (when (and (contains? #{:intersection :exclusion} op)
                      (every? #(= :relation (get-in nodes-by-id [% :op]))
-                             children))
+                             children)
+                     ;; Seekable direct kernels merge one scan per operand;
+                     ;; a wildcard partition needs a second derivation.
+                     (not-any? (fn [child]
+                                 (some :wildcard-eid
+                                       (get-in nodes-by-id
+                                               [child :descriptor :partitions])))
+                               children))
             (let [ordered-children
                   (if (= :intersection op)
                     (let [anchor (get-in programs [:anchors id])]
