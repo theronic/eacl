@@ -922,7 +922,7 @@
   intermediate whose via edge lasts at `level` contributes its target state
   (arrow to a permission), or its target's decision (arrow to a relation or
   to an oracle's permission). Returns the new stack, ::found, or ::fault."
-  [{:keys [probe intermediates qualify oracle] :as search} notes level stack rule eid]
+  [{:keys [probe intermediates qualify oracle] :as search} notes level stack rule eid memo skips]
   (let [guarded (if-let [guards (:guards rule)]
                   (guards-outcome search notes level guards eid)
                   ::kept)]
@@ -948,8 +948,20 @@
                 (let [outcome (note! notes level via)]
                   (cond
                     (= ::kept outcome)
-                    (recur (dec index)
-                           (conj stack [(:target-node rule) (edge/endpoint compact-edge)]))
+                    (let [state [(:target-node rule) (edge/endpoint compact-edge)]
+                          known (when (= 1 (count edges)) (get @memo state))]
+                      ;; A sole successor would be popped next. Reuse its
+                      ;; answer here instead of allocating another stack and
+                      ;; transition, including the notes of a cached denial.
+                      (cond
+                        (true? known) ::found
+                        (false? known)
+                        (do
+                          (when-let [[skipped conditional?] (get-in @skips [level state])]
+                            (vswap! (:skipped notes) later skipped)
+                            (when conditional? (vreset! (:conditional? notes) true)))
+                          stack)
+                        :else (recur (dec index) (conj stack state))))
                     (= ::fault outcome) ::fault
                     :else (recur (dec index) stack)))
 
@@ -1035,7 +1047,7 @@
               _ (step! (count stack))
               head (nth frame 0)]
           (if (map? head)
-            (let [expanded (expand-arrow search notes level stack head (nth frame 1))]
+            (let [expanded (expand-arrow search notes level stack head (nth frame 1) memo skips)]
               ;; A vector is the grown stack; `case` would hash it to
               ;; dispatch, so the sentinels are tested explicitly.
               (cond
