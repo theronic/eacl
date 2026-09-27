@@ -123,7 +123,7 @@
              slipset/deps-deploy {:mvn/version "0.2.5"}}
             :exec-fn eacl.build.release/deploy}
            ;; The DataScript CLJS runner also compiles the portable evaluator's
-           ;; tests, which inline the JVM module's shared profile 1 corpus.
+           ;; tests, which inline the JVM module's shared Caveat corpus.
            :cljs-test {:extra-paths ["modules/eacl/test"
                                      "modules/eacl-caveats-portable/test"
                                      "modules/eacl-caveats-jvm/test"

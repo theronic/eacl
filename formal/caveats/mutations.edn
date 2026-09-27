@@ -11,4 +11,7 @@
   {:id :prepared-qualifier-authorizes :theorem :preparation-is-inert}
   {:id :publication-stamp-stalls :theorem :publication-is-atomic}
   {:id :qualifier-is-shared :theorem :shared-is-fault}
-  {:id :required-caveat-omitted :theorem :unqualified-requires-plain-branch}]}
+  {:id :required-caveat-omitted :theorem :unqualified-requires-plain-branch}
+  {:id :fault-beats-deciding-element :theorem :deciding-element-absorbs-faults}
+  {:id :absent-range-reports-predicate-fields :theorem :absent-range-is-missing-alone}
+  {:id :comprehension-charged-once :theorem :comprehension-work-charges-every-element}]}

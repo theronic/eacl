@@ -258,6 +258,25 @@ answers to 72 requests, compared by
 (`eacl.datascript.wildcard-differential-test`, CLJ and CLJS), and the backend
 contract in `modules/eacl/test/eacl/wildcard_contract_support.cljc`.
 
+### Caveat comprehension assurance boundary
+
+EACL CEL profile 2 adds `exists` and `all`. `CaveatOutcomes.dfy` defines them
+as folds of the four-valued `Or` from `Falsity` and `And` from `Truth`, and
+proves that a deciding element absorbs faults and missing fields, that a
+fault otherwise wins, that the remaining outcome is the union of the elements'
+missing fields, that keeping only the undecided elements (the residual)
+preserves the outcome, and that the outcome does not depend on the order of
+the elements. `CaveatProfile.dfy` proves that comprehension work saturates at
+the limit, charges every element and multiplies through nesting. The finite
+oracle `formal/caveats/model.clj` evaluates plans independently; the gate
+compares it with the production partial evaluator and the JVM adapter on
+exhaustive element-outcome sequences, scoping and shadowing, residual codec
+round trips and work, and registers three mutation controls for fold
+absorption, absent-range missing fields and per-element work. Production is
+handwritten, and SpiceDB conformance is empirical:
+`formal/fixtures/caveat-comprehensions/` records SpiceDB v1.56.0's answers to
+the shared corpus, compared by `eacl.caveats.portable.spicedb-test`.
+
 ## Temporal models
 
 `formal/tla/EaclTemporal.tla` is the compact safety model.

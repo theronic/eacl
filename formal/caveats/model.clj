@@ -56,33 +56,78 @@
       (* (:container-entries limits) (max-size (second t)))
       (* (:container-entries limits) (+ (:string-utf8-bytes limits) (max-size (nth t 2)))))))
 
-(defn plan-type [parameters [op & args :as plan]]
-  (let [ts (mapv #(plan-type parameters %) (if (#{:literal :param} op) [] args))
-        [a b] ts]
-    (cond
-      ;; Source literals are scalar; partial residuals may substitute a typed
-      ;; list/map parameter. These remain values, never source-level literals.
-      (and (= :literal op) (= 3 (count plan)) (parameter-type? (first args))
-           (value-valid? (first args) (second args))) (first args)
-      (and (= :param op) (= 2 (count plan)) (contains? parameters (first args)))
-      (get parameters (first args))
-      (and (= :not op) (= [:bool] ts)) :bool
-      (and (#{:and :or} op) (= [:bool :bool] ts)) :bool
-      (and (#{:eq :ne} op) (= 2 (count args)) (= a b) (contains? scalar-types a)) :bool
-      (and (#{:lt :le :gt :ge} op) (= 2 (count args)) (= a b) (#{:int :timestamp} a)) :bool
-      (and (#{:contains :starts-with :ends-with} op) (= [:string :string] ts)) :bool
-      (and (= :index op) (= 2 (count args)) (vector? a) (= [:map :string] (subvec a 0 2))
-           (= :string b)) (nth a 2)
-      (and (= :in op) (= 2 (count args))
-           (or (= b [:list a]) (and (= a :string) (vector? b) (= :map (first b))))) :bool
-      :else :invalid)))
+(def reserved-identifiers (set (:reserved-identifiers profile)))
+(def accumulator (:accumulator-identifier profile))
+(def comprehensions #{:exists :all})
 
-(defn shape [[op & args]]
-  (if (#{:literal :param} op)
-    {:nodes 1 :depth 1}
-    (let [children (map shape args)]
-      {:nodes (inc (reduce + 0 (map :nodes children)))
-       :depth (inc (reduce max 0 (map :depth children)))})))
+(defn variable-name? [s]
+  (and (string? s) (<= (count s) (:identifier-ascii-bytes limits))
+       (boolean (re-matches #"[A-Za-z_][A-Za-z0-9_]*" s))
+       (not (contains? reserved-identifiers s))
+       (not (str/starts-with? s "__eacl_"))
+       (not= accumulator s)))
+
+(defn bound-type
+  "A comprehension variable's type: a list's element type, a map's key type."
+  [range-type]
+  (cond (and (vector? range-type) (= :list (first range-type))) (second range-type)
+        (and (vector? range-type) (= :map (first range-type))) :string))
+
+(defn plan-type
+  "Static type or :invalid. `scope` maps each comprehension variable around
+   the plan to its type; it is empty at the root."
+  ([parameters plan] (plan-type parameters {} plan))
+  ([parameters scope [op & args :as plan]]
+   (if (and (comprehensions op) (= 4 (count plan)))
+     (let [[range variable predicate] args
+           item (bound-type (plan-type parameters scope range))]
+       (if (and item (variable-name? variable)
+                (= :bool (plan-type parameters (assoc scope variable item) predicate)))
+         :bool
+         :invalid))
+     (let [ts (mapv #(plan-type parameters scope %) (if (#{:literal :param :var} op) [] args))
+           [a b] ts]
+       (cond
+         ;; Source literals are scalar; partial residuals may substitute a typed
+         ;; list/map parameter. These remain values, never source-level literals.
+         (and (= :literal op) (= 3 (count plan)) (parameter-type? (first args))
+              (value-valid? (first args) (second args))) (first args)
+         (and (= :param op) (= 2 (count plan)) (contains? parameters (first args))
+              ;; Inside a comprehension, cel-go reads this name as its accumulator.
+              (not (and (seq scope) (= accumulator (first args)))))
+         (get parameters (first args))
+         (and (= :var op) (= 2 (count plan)) (contains? scope (first args))) (get scope (first args))
+         (some #{:invalid} ts) :invalid
+         (and (= :not op) (= [:bool] ts)) :bool
+         (and (#{:and :or} op) (= [:bool :bool] ts)) :bool
+         (and (#{:eq :ne} op) (= 2 (count args)) (= a b) (contains? scalar-types a)) :bool
+         (and (#{:lt :le :gt :ge} op) (= 2 (count args)) (= a b) (#{:int :timestamp} a)) :bool
+         (and (#{:contains :starts-with :ends-with} op) (= [:string :string] ts)) :bool
+         (and (= :index op) (= 2 (count args)) (vector? a) (= [:map :string] (subvec a 0 2))
+              (= :string b)) (nth a 2)
+         (and (= :in op) (= 2 (count args))
+              (or (= b [:list a]) (and (= a :string) (vector? b) (= :map (first b))))) :bool
+         :else :invalid)))))
+
+(defn children
+  "Child plans; a comprehension's variable name is not a plan."
+  [[op & args]]
+  (cond (#{:literal :param :var} op) []
+        (comprehensions op) [(first args) (nth args 2)]
+        :else args))
+
+(defn shape [plan]
+  (let [nested (map shape (children plan))]
+    {:nodes (inc (reduce + 0 (map :nodes nested)))
+     :depth (inc (reduce max 0 (map :depth nested)))}))
+
+(defn profile-of
+  "The lowest profile that admits a plan."
+  [plan]
+  (let [[profile-1 profile-2] (:definition-profiles profile)]
+    (if (some comprehensions (map first (tree-seq #(seq (children %)) children plan)))
+      profile-2
+      profile-1)))
 
 (defn selected-value [plan context]
   (case (first plan)
@@ -90,22 +135,49 @@
     :param (if (contains? context (second plan)) {:present true :value (get context (second plan))} {})
     {}))
 
-(defn estimate-work [parameters plan context]
-  (let [[op & args] plan
-        [a b] args
-        size (fn [p]
-               (let [t (plan-type parameters p) selected (selected-value p context)]
-                 (if (:present selected) (value-size t (:value selected)) (max-size t))))]
-    (if (#{:literal :param} op)
-      1
-      (let [child-cost (reduce + (map #(estimate-work parameters % context) args))
-            cost (cond
-                   (= op :contains) (* (size a) (size b))
-                   (= op :in) (let [t (plan-type parameters b)]
-                                (+ (size b) (* (if (= :list (first t)) (:container-entries limits) 1) (size a))))
-                   (#{:eq :ne :lt :le :gt :ge :index :starts-with :ends-with} op) (+ (size a) (size b))
-                   :else 0)]
-        (min (inc (:work-units limits)) (+ 1 child-cost cost))))))
+(defn elements
+  "What a comprehension binds: list items, or map keys (in any order; the
+   outcome and residual do not depend on it)."
+  [range-type value]
+  (if (= :list (first range-type)) (vec value) (vec (keys value))))
+
+(defn estimate-work
+  "`scope` maps each comprehension variable to {:type t :size largest-element}."
+  ([parameters plan context] (estimate-work parameters plan context {}))
+  ([parameters plan context scope]
+   (let [[op & args] plan
+         [a b c] args
+         types (update-vals scope :type)
+         size (fn [p]
+                (let [t (plan-type parameters types p) selected (selected-value p context)]
+                  (cond (:present selected) (value-size t (:value selected))
+                        (= :var (first p)) (get-in scope [(second p) :size])
+                        :else (max-size t))))
+         limit (:work-units limits)]
+     (cond
+       (#{:literal :param :var} op) 1
+       (comprehensions op)
+       (let [range-type (plan-type parameters types a)
+             item (bound-type range-type)
+             selected (selected-value a context)
+             iterations
+             (if (:present selected)
+               (let [bound (elements range-type (:value selected))
+                     widest (reduce max 0 (map #(value-size item %) bound))]
+                 (* (count bound)
+                    (+ 1 (estimate-work parameters c context (assoc scope b {:type item :size widest})))))
+               ;; Not iterated: the predicate is copied into the residual.
+               (:nodes (shape c)))]
+         (min (inc limit) (+ 1 (estimate-work parameters a context scope) (size a) iterations)))
+       :else
+       (let [child-cost (reduce + (map #(estimate-work parameters % context scope) args))
+             cost (cond
+                    (= op :contains) (* (size a) (size b))
+                    (= op :in) (let [t (plan-type parameters types b)]
+                                 (+ (size b) (* (if (= :list (first t)) (:container-entries limits) 1) (size a))))
+                    (#{:eq :ne :lt :le :gt :ge :index :starts-with :ends-with} op) (+ (size a) (size b))
+                    :else 0)]
+         (min (inc limit) (+ 1 child-cost cost)))))))
 
 (defn fault [reason] {:fault reason})
 (defn known [type value] {:type type :value value :residual [:literal type value]})
@@ -140,21 +212,70 @@
       :ends-with (known :bool (str/ends-with? x y))
       (fault :unsupported-operation))))
 
-(defn partial-value [parameters [op & args :as plan] context]
+(defn bind
+  "Replaces supplied parameters and bound variables by their literals. A
+   comprehension's variable hides an outer one of the same name."
+  [parameters context scope [op & args :as plan]]
   (case op
-    :literal (known (first args) (second args))
+    :literal plan
     :param (if (contains? context (first args))
-             (known (get parameters (first args)) (get context (first args)))
-             (missing #{(first args)} plan))
-    (let [children (mapv #(partial-value parameters % context) args)
-          [a b] children]
-      (cond
-        (#{:and :or} op) (logical op a b)
-        (some :fault children) (fault (first (sort (keep :fault children))))
-        (some :missing children) (missing (apply set/union #{} (keep :missing children))
-                                         (into [op] (map :residual children)))
-        (= :not op) (known :bool (not (:value a)))
-        :else (concrete op a b)))))
+             [:literal (get parameters (first args)) (get context (first args))]
+             plan)
+    :var (if-let [[t v] (get scope (first args))] [:literal t v] plan)
+    (:exists :all) (let [[range variable predicate] args]
+                     [op (bind parameters context scope range) variable
+                      (bind parameters context (dissoc scope variable) predicate)])
+    (into [op] (map #(bind parameters context scope %) args))))
+
+(declare partial-value)
+
+(defn comprehension-value
+  "exists folds `||` from false and all folds `&&` from true over the elements,
+   with the four-valued `logical`. An absent range is missing on its own; its
+   predicate is not evaluated. The residual of an undecided fold is the same
+   comprehension over the undecided elements."
+  [parameters [op range variable predicate] context scope]
+  (let [r (partial-value parameters range context scope)
+        rest-of #(bind parameters context (dissoc scope variable) predicate)]
+    (cond
+      (:fault r) r
+      (:missing r) (missing (:missing r) [op (:residual r) variable (rest-of)])
+      :else
+      (let [range-type (:type r)
+            item (bound-type range-type)
+            outcomes (mapv (fn [x] [x (partial-value parameters predicate context (assoc scope variable [item x]))])
+                           (elements range-type (:value r)))
+            folded (reduce (fn [acc [_ outcome]] (logical (if (= :exists op) :or :and) acc outcome))
+                           (known :bool (= :all op)) outcomes)
+            undecided (vec (for [[x outcome] outcomes :when (:missing outcome)] x))]
+        (if (:missing folded)
+          (missing (:missing folded)
+                   [op [:literal range-type (if (= :list (first range-type))
+                                              undecided
+                                              (select-keys (:value r) undecided))]
+                    variable (rest-of)])
+          folded)))))
+
+(defn partial-value
+  "`scope` maps each comprehension variable to [type value]."
+  ([parameters plan context] (partial-value parameters plan context {}))
+  ([parameters [op & args :as plan] context scope]
+   (case op
+     :literal (known (first args) (second args))
+     :param (if (contains? context (first args))
+              (known (get parameters (first args)) (get context (first args)))
+              (missing #{(first args)} plan))
+     :var (let [[t v] (get scope (first args))] (known t v))
+     (:exists :all) (comprehension-value parameters plan context scope)
+     (let [children (mapv #(partial-value parameters % context scope) args)
+           [a b] children]
+       (cond
+         (#{:and :or} op) (logical op a b)
+         (some :fault children) (fault (first (sort (keep :fault children))))
+         (some :missing children) (missing (apply set/union #{} (keep :missing children))
+                                          (into [op] (map :residual children)))
+         (= :not op) (known :bool (not (:value a)))
+         :else (concrete op a b))))))
 
 (defn evaluate [parameters plan request bound]
   (let [context (merge request bound)
@@ -246,7 +367,7 @@
 (defn valid-definitions? [definitions]
   (and (= (count definitions) (count (set (map :name definitions))))
        (every? (fn [{:keys [name parameters plan profile-version]}]
-                 (and (string? name) (= "eacl-cel/1" profile-version)
+                 (and (string? name) (= (profile-of plan) profile-version)
                       (<= (count parameters) (:parameters limits))
                       (= (count parameters) (count (set (map first parameters))))
                       (every? parameter-type? (map second parameters))

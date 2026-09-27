@@ -1,5 +1,5 @@
 (ns eacl.caveats.portable.corpus
-  "The shared profile 1 corpus from the JVM module's test resources. The macro
+  "The shared Caveat corpus from the JVM module's test resources. The macro
    reads it at compile time, so ClojureScript on Node checks the same file."
   #?(:clj (:require [clojure.edn :as edn]
                     [clojure.java.io :as io]))

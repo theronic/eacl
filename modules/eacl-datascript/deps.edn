@@ -12,7 +12,7 @@
                   :exec-fn cognitect.test-runner.api/test
                   :exec-args {:dirs ["test" "../eacl/test"]}}
            ;; The runner also compiles the portable Caveat evaluator's tests,
-           ;; which inline the JVM module's shared profile 1 corpus.
+           ;; which inline the JVM module's shared Caveat corpus.
            :cljs-test {:extra-paths ["test" "../eacl/test" "../eacl-caveats-portable/test"
                                      "../eacl-caveats-jvm/test"]
                        :extra-deps {org.clojure/clojurescript {:mvn/version "1.12.42"}

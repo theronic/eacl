@@ -1,8 +1,10 @@
-# EACL CEL profile 1
+# EACL CEL profiles 1 and 2
 
 This is the model contract for Phase 2, selected from the pinned independent
 qualification in `exploration/caveats/`. It does not activate serving. The
 machine-readable limits and operation inventory are in `profile.edn`.
+Profile 2 is profile 1 plus the `exists` and `all` comprehensions described
+at the end; everything else below applies to both.
 
 ## Values, source, and identity
 
@@ -33,7 +35,8 @@ Names use ASCII `[A-Za-z_][A-Za-z0-9_]*`, at most 64 bytes. CEL keywords, type
 names, and names beginning `__eacl_` are reserved. Parameter declarations are
 sorted by name. Definition identity includes its name, canonical parameters,
 source with CRLF/CR converted to LF, profile version, and semantic adapter
-version. Whitespace/source changes may invalidate identity harmlessly. The
+version. The profile version is the lowest that admits the source, so a
+definition without comprehensions is profile 1 and keeps its stored content. Whitespace/source changes may invalidate identity harmlessly. The
 evaluator fingerprint additionally pins the candidate and ANTLR artifacts and
 the value/literal adapter; a dependency update cannot retain the old identity.
 
@@ -52,7 +55,8 @@ Repeated ungrouped unary operators are rejected. Negative decimal integers
 are literals, not general arithmetic negation. Comparisons require equal
 scalar types, and ordering is restricted to int/timestamp. Strings compare
 for equality without normalization. Container literals, list indexing,
-aggregate equality, arithmetic, ternary, macros, regex, size, string ordering,
+aggregate equality, arithmetic, ternary, macros other than profile 2's
+`exists` and `all`, regex, size, string ordering,
 conversions, durations, doubles, uints, bytes, null, dyn/any, optional values,
 and protobuf/custom functions are rejected. Unsupported syntax is never
 forwarded speculatively to the library to decide whether it works.
@@ -135,3 +139,36 @@ missing entities are faults. Snapshot integrity detects dangling, shared,
 malformed, and asymmetric data; mutation-in-place evidence requires native
 history/assertion versions or an explicit before/after proof input. A single
 snapshot alone is not claimed to prove immutability history.
+
+## Profile 2: `exists` and `all`
+
+`range.exists(x, p)` and `range.all(x, p)` range over a list's elements or a
+map's keys; `range` has a list or string-keyed map type and `p` is Boolean.
+The plan is `[:exists range "x" p]` (or `:all`). The parser resolves each name
+to the innermost enclosing comprehension variable of that name, as
+`[:var "x"]`, or else to a parameter, so a variable hides a parameter or outer
+variable only inside its predicate. A variable is a parameter-shaped name
+other than `__result__`, and no parameter named `__result__` may be read inside
+a comprehension: cel-go, and so SpiceDB, binds that name to the macro's
+accumulator. `has`, `exists_one`, `map`, `filter` and two-variable
+comprehensions stay excluded.
+
+With a supplied range, exists folds `||` from false and all folds `&&` from
+true over the element outcomes, with the four-valued absorption above: a
+deciding element (true for exists, false for all) wins over faults and missing
+fields; otherwise a fault is the result; otherwise missing fields make it
+conditional, missing the union of the undecided elements' fields; otherwise
+the unit. The residual is the same comprehension over the undecided elements
+only, with supplied parameters and enclosing variables bound as literals.
+Because `||` and `&&` are commutative and associative, the outcome does not
+depend on element order. An absent range makes the result conditional on the
+range alone, as in cel-go, without evaluating the predicate; the residual is
+the comprehension with supplied values bound.
+
+A comprehension over a supplied range costs one, plus its range leaf and the
+range's size, plus one and the predicate's cost per element, with the
+variable's size the largest element's. Every element is charged, even after a
+deciding one. Nested comprehensions multiply. An absent range is charged at
+its declared maximum size, like any absent operand, plus one per predicate
+node for the residual copy, and is not iterated. No bound is added: the
+container and work limits bound every comprehension.

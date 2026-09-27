@@ -1,5 +1,12 @@
 (ns eacl.caveats.plan
-  "Portable bounded parser and static checker for EACL CEL profile 1."
+  "Portable bounded parser and static checker for EACL CEL profile 2: profile 1
+   plus the `exists` and `all` comprehension macros over lists and map keys.
+
+   Plans are vectors. A comprehension `xs.exists(x, p)` is
+   `[:exists xs \"x\" p]`; inside `p`, `x` is `[:var \"x\"]`, never a parameter.
+   The parser resolves every name to the innermost enclosing comprehension
+   variable of that name, or else to a parameter, so shadowing needs no rule
+   at evaluation."
   (:require [clojure.string :as str]
             [eacl.caveats.values :as values]
             [eacl.exact-integer :as integer]))
@@ -98,29 +105,58 @@
             (when (neg? new-depth) (fail! :syntax-error i))
             (recur next-i (conj tokens token) new-depth)))))))
 
-(defn- node [op children offset]
-  (let [leaf? (#{:literal :param} op)
-        nodes (if leaf? 1 (inc (reduce + 0 (map #(or (:nodes (meta %)) 1) children))))
-        depth (if leaf? 1 (inc (reduce max 0 (map #(or (:depth (meta %)) 1) children))))]
+(defn- counted
+  "Attaches node count and depth to a plan vector, counting only its child
+   plans; a comprehension's variable name is not a node."
+  [plan children offset]
+  (let [nodes (inc (reduce + 0 (map #(or (:nodes (meta %)) 1) children)))
+        depth (inc (reduce max 0 (map #(or (:depth (meta %)) 1) children)))]
     (when (or (> nodes (:plan-nodes values/limits)) (> depth (:plan-depth values/limits)))
       (fail! :resource-limit offset))
-    (with-meta (into [op] children) {:nodes nodes :depth depth :offset offset})))
+    (with-meta plan {:nodes nodes :depth depth :offset offset})))
+
+(defn- node [op children offset]
+  (counted (into [op] children) (if (#{:literal :param :var} op) [] children) offset))
+
+(def comprehension-ops #{:exists :all})
+
+(def ^:private macros {"exists" :exists "all" :all})
 
 (def ^:private binary-operators
   {"||" [1 :or] "&&" [2 :and] "==" [3 :eq] "!=" [3 :ne]
    "<" [3 :lt] "<=" [3 :le] ">" [3 :gt] ">=" [3 :ge] "in" [3 :in]})
 
 (defn- parse-tokens [tokens]
-  (let [position (volatile! 0)]
+  (let [position (volatile! 0)
+        ;; Comprehension variables in scope, innermost first.
+        scope (volatile! ())]
     (letfn [(current [] (nth tokens (min @position (dec (count tokens)))))
             (take-token [] (let [t (current)] (vswap! position inc) t))
             (accept [s] (when (and (= :operator (:kind (current))) (= s (:value (current)))) (take-token)))
             (expect [s] (or (accept s) (fail! :syntax-error (:offset (current)))))
+            (identifier [value offset]
+              (cond
+                (some #{value} @scope) (node :var [value] offset)
+                ;; Inside a comprehension, cel-go reads `__result__` as the
+                ;; macro's accumulator, not as this parameter.
+                (and (seq @scope) (= "__result__" value)) (fail! :unsupported-operation offset)
+                :else (node :param [value] offset)))
+            (comprehension [op range offset]
+              ;; `range.op(variable, predicate)`, with the opening parenthesis read.
+              (let [variable (take-token)]
+                (when-not (and (= :name (:kind variable)) (values/variable-name? (:value variable)))
+                  (fail! :syntax-error (:offset variable)))
+                (expect ",")
+                (vswap! scope conj (:value variable))
+                (let [predicate (expression 1)]
+                  (vswap! scope pop)
+                  (expect ")")
+                  (counted [op range (:value variable) predicate] [range predicate] offset))))
             (primary []
               (let [{:keys [kind type value offset]} (take-token)
                     base (cond
                            (= :literal kind) (node :literal [type value] offset)
-                           (= :name kind) (node :param [value] offset)
+                           (= :name kind) (identifier value offset)
                            (= "(" value) (let [p (expression 1)] (expect ")") p)
                            (= "!" value) (fail! :unsupported-operation offset)
                            :else (fail! :syntax-error offset))]
@@ -131,9 +167,11 @@
                     (let [member (take-token)]
                       (when-not (= :name (:kind member)) (fail! :syntax-error (:offset member)))
                       (if (accept "(")
-                        (let [op (get {"contains" :contains "startsWith" :starts-with "endsWith" :ends-with} (:value member))]
-                          (when-not op (fail! :unsupported-operation (:offset member)))
-                          (let [arg (expression 1)] (expect ")") (recur (node op [p arg] offset))))
+                        (if-let [macro (get macros (:value member))]
+                          (recur (comprehension macro p offset))
+                          (let [op (get {"contains" :contains "startsWith" :starts-with "endsWith" :ends-with} (:value member))]
+                            (when-not op (fail! :unsupported-operation (:offset member)))
+                            (let [arg (expression 1)] (expect ")") (recur (node op [p arg] offset)))))
                         (recur (node :index [p (node :literal [:string (:value member)] (:offset member))] offset))))
                     :else p))))
             (unary []
@@ -149,49 +187,86 @@
         (when-not (= :eof (:kind (current))) (fail! :unsupported-operation (:offset (current))))
         plan))))
 
-(defn node-type [parameter-types [op & args :as plan]]
-  (let [offset (or (:offset (meta plan)) 0)
-        wrong #(fail! :unsupported-overload offset)]
-    (case op
-      :literal (first args)
-      :param (or (get parameter-types (first args)) (fail! :unknown-parameter offset))
-      (let [types (mapv #(node-type parameter-types %) args) [a b] types]
-        (case op
-          :not (if (= [:bool] types) :bool (wrong))
-          (:and :or) (if (= [:bool :bool] types) :bool (wrong))
-          (:eq :ne) (if (and (= a b) (contains? values/scalar-types a)) :bool (wrong))
-          (:lt :le :gt :ge) (if (and (= a b) (#{:int :timestamp} a)) :bool (wrong))
-          (:contains :starts-with :ends-with) (if (= [:string :string] types) :bool (wrong))
-          :in (if (or (= b [:list a]) (and (= a :string) (vector? b) (= :map (first b)))) :bool (wrong))
-          :index (if (and (vector? a) (= :map (first a)) (= b :string)) (nth a 2) (wrong))
-          (fail! :unsupported-operation offset))))))
+(defn item-type
+  "The type of a comprehension variable over a range of this type: a list's
+   element type or a map's key type (string); nil for any other type."
+  [range-type]
+  (when (vector? range-type)
+    (case (first range-type) :list (second range-type) :map :string nil)))
+
+(defn node-type
+  "The static type of a plan node. `variable-types` maps each comprehension
+   variable in scope to its type."
+  ([parameter-types plan] (node-type parameter-types {} plan))
+  ([parameter-types variable-types [op & args :as plan]]
+   (let [offset (or (:offset (meta plan)) 0)
+         wrong #(fail! :unsupported-overload offset)]
+     (case op
+       :literal (first args)
+       :param (or (get parameter-types (first args)) (fail! :unknown-parameter offset))
+       :var (or (get variable-types (first args)) (fail! :malformed-plan offset))
+       (:exists :all)
+       (let [[range variable predicate] args
+             variable-type (item-type (node-type parameter-types variable-types range))]
+         (when-not variable-type (wrong))
+         (if (= :bool (node-type parameter-types (assoc variable-types variable variable-type) predicate))
+           :bool
+           (wrong)))
+       (let [types (mapv #(node-type parameter-types variable-types %) args) [a b] types]
+         (case op
+           :not (if (= [:bool] types) :bool (wrong))
+           (:and :or) (if (= [:bool :bool] types) :bool (wrong))
+           (:eq :ne) (if (and (= a b) (contains? values/scalar-types a)) :bool (wrong))
+           (:lt :le :gt :ge) (if (and (= a b) (#{:int :timestamp} a)) :bool (wrong))
+           (:contains :starts-with :ends-with) (if (= [:string :string] types) :bool (wrong))
+           :in (if (or (= b [:list a]) (and (= a :string) (vector? b) (= :map (first b)))) :bool (wrong))
+           :index (if (and (vector? a) (= :map (first a)) (= b :string)) (nth a 2) (wrong))
+           (fail! :unsupported-operation offset)))))))
 
 (defn validate-plan
   "Checks a portable Boolean plan, including typed values in partial residuals.
-   Source-level container literals remain excluded by the parser."
+   Source-level container literals remain excluded by the parser. Every
+   `[:var v]` must be bound by an enclosing comprehension, and no parameter
+   named `__result__` may appear inside one, as the parser requires."
   [parameters plan]
   (let [parameters (values/normalize-parameters parameters)
         visited (volatile! 0)]
-    (letfn [(visit [p depth]
+    (letfn [(visit [p depth scope]
               (when (or (> depth (:plan-depth values/limits))
                         (> (vswap! visited inc) (:plan-nodes values/limits)))
                 (fail! :resource-limit 0))
-              (when-not (and (vector? p) (<= 2 (count p) 3)) (fail! :malformed-plan 0))
-              (let [[op a b] p]
+              (when-not (and (vector? p) (<= 2 (count p) 4)) (fail! :malformed-plan 0))
+              (let [[op a b c] p]
                 (case op
                   :literal (do (when-not (= 3 (count p)) (fail! :malformed-plan 0))
                                (values/normalize-value a b))
-                  :param (when-not (and (= 2 (count p)) (values/parameter-name? a))
+                  :param (when-not (and (= 2 (count p)) (values/parameter-name? a)
+                                        (not (and (seq scope) (= "__result__" a))))
                            (fail! :malformed-plan 0))
+                  :var (when-not (and (= 2 (count p)) (contains? scope a))
+                         (fail! :malformed-plan 0))
+                  (:exists :all)
+                  (do (when-not (and (= 4 (count p)) (values/variable-name? b)) (fail! :malformed-plan 0))
+                      (visit a (inc depth) scope) (visit c (inc depth) (conj scope b)))
                   :not (do (when-not (= 2 (count p)) (fail! :malformed-plan 0))
-                           (visit a (inc depth)))
+                           (visit a (inc depth) scope))
                   (:and :or :eq :ne :lt :le :gt :ge :in :index :contains :starts-with :ends-with)
                   (do (when-not (= 3 (count p)) (fail! :malformed-plan 0))
-                      (visit a (inc depth)) (visit b (inc depth)))
+                      (visit a (inc depth) scope) (visit b (inc depth) scope))
                   (fail! :unsupported-operation 0))))]
-      (visit plan 1)
+      (visit plan 1 #{})
       (when-not (= :bool (node-type (into {} parameters) plan)) (fail! :non-boolean-root 0))
       plan)))
+
+(defn required-profile
+  "The lowest profile that admits a plan: profile 2 when it has a
+   comprehension, profile 1 otherwise."
+  [[op & args]]
+  (if (or (contains? comprehension-ops op)
+          (and (not (#{:literal :param :var} op))
+               (some #(= (second values/definition-profiles) (required-profile %)) args)))
+    (second values/definition-profiles)
+    (first values/definition-profiles)))
 
 ;; Substitution can repeat a bounded context value at every plan node. Wire
 ;; limits are derived from those existing bounds, including envelope overhead.
@@ -203,7 +278,9 @@
 (defn- transform-literals [f [op & args]]
   (case op
     :literal [:literal (first args) (f (first args) (second args))]
-    :param [:param (first args)]
+    (:param :var) [op (first args)]
+    (:exists :all) (let [[range variable predicate] args]
+                     [op (transform-literals f range) variable (transform-literals f predicate)])
     (into [op] (map #(transform-literals f %) args))))
 
 (defn encode-plan [parameters plan]
@@ -226,22 +303,27 @@
                 (when (or (> depth (:plan-depth values/limits))
                           (> (vswap! visited inc) (:plan-nodes values/limits)))
                   (fail! :resource-limit 0))
-                (when-not (and (vector? p) (<= 2 (count p) 3)) (fail! :malformed-plan 0))
-                (let [[op a b] p]
+                (when-not (and (vector? p) (<= 2 (count p) 4)) (fail! :malformed-plan 0))
+                (let [[op a b c] p]
                   (case op
                     :literal (do (when-not (= 3 (count p)) (fail! :malformed-plan 0))
                                  [:literal a (values/untag-value a b)])
-                    :param p
+                    (:param :var) p
+                    (:exists :all) (do (when-not (= 4 (count p)) (fail! :malformed-plan 0))
+                                       [op (read-node a (inc depth)) b (read-node c (inc depth))])
                     (into [op] (map #(read-node % (inc depth)) (rest p))))))]
         (let [plan (validate-plan parameters (read-node wire 1))]
           (when-not (= payload (encode-plan parameters plan)) (fail! :noncanonical-payload 0))
           {:parameters parameters :plan plan})))))
 
-(defn compile-plan [source parameters]
+(defn compile-plan
+  "Parses and type-checks source. `:profile` is the lowest profile that
+   admits it, which a stored definition records."
+  [source parameters]
   (let [parameters (values/normalize-parameters parameters)
         source (if (string? source) (str/replace source #"\r\n|\r" "\n") source)
         plan (parse-tokens (tokenize source))
         result-type (node-type (into {} parameters) plan)]
     (when-not (= :bool result-type) (fail! :non-boolean-root 0))
-    {:profile values/profile-id :parameters parameters :source source :plan plan
+    {:profile (required-profile plan) :parameters parameters :source source :plan plan
      :result-type result-type :nodes (:nodes (meta plan)) :depth (:depth (meta plan))}))

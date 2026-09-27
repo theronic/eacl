@@ -211,7 +211,8 @@
                :schema-generation-cas-and-retained-caveat-references
                :bound-context-overrides-request-context
                :four-valued-logical-composition
-               :typed-profile-and-bounded-progress]
+               :typed-profile-and-bounded-progress
+               :absorbing-comprehension-folds-and-per-element-work]
     :dafny ["formal/dafny/CaveatOutcomes.dfy"
             "formal/dafny/CaveatProfile.dfy"
             "formal/dafny/CaveatSchema.dfy"

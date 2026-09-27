@@ -242,7 +242,11 @@ compatibility. Invalid requests, cancellation, execution limits and backend
 errors still propagate. Detailed checks and collections expose faults; they
 never erase a malformed subtracting edge into an absent ban.
 
-## Profile 1 values and operations
+## Profile values and operations
+
+EACL evaluates Caveats in EACL CEL profile 2: profile 1 plus the `exists` and
+`all` macros. A stored definition records the lowest profile its expression
+needs, so a Caveat without these macros stays profile 1.
 
 | Type | Portable Clojure/CLJS value |
 | --- | --- |
@@ -261,6 +265,7 @@ never erase a malformed subtracting edge into an absent ban.
 | List or map membership | `in` |
 | String-keyed map access | `m[key]`, `m.member` |
 | String matching | `contains`, `startsWith`, `endsWith` |
+| List elements or map keys (profile 2) | `xs.exists(x, p)`, `xs.all(x, p)` |
 
 Source literals are Boolean, exact integer, and JSON-style double-quoted
 strings. Grouping and `//` comments are supported. Relational operators follow
@@ -269,9 +274,10 @@ CEL's shared precedence; use parentheses when mixing comparisons.
 Unsupported forms include:
 
 - Nested containers and container literals in source.
-- Macros, arithmetic, regex, and conditional expressions.
+- Other macros (`has`, `exists_one`, `map`, `filter`), arithmetic, regex, and
+  conditional expressions.
 - Null, floats, unsigned integers, bytes, and durations.
-- Conversions, timestamp selectors, and string ordering or size.
+- Conversions, list indexing, timestamp selectors, and string ordering or size.
 
 Repeated ungrouped unary operators are rejected; `!(!a)` is supported.
 These are explicit profile limits, not full CEL or SpiceDB compatibility.
@@ -290,8 +296,55 @@ Time values use exact epoch milliseconds from -62135596800000 through
 253402300799999. Input, encoded payload and plan limits are checked before
 expensive parsing or evaluation. Work preflight includes both logical branches;
 an oversized branch is rejected even behind an absorbing `true` or `false`.
+An absent parameter is charged at its declared maximum size: an absent
+`list<string>` costs about half the work limit (128 entries of 4096 bytes).
 Limits bound admitted work and retained programs, not wall-clock latency or
 all JVM heap allocations.
+
+### `exists` and `all`
+
+`xs.exists(x, p)` is true when `p` holds for some element of the list `xs`,
+and `xs.all(x, p)` when it holds for every element. On a map, they range over
+its keys. This Caveat lets the caller say both what someone carries and what
+is sensitive:
+
+```zed
+caveat nothing_sensitive(inventory list<string>, sensitive list<string>) {
+  !inventory.exists(item, item in sensitive)
+}
+```
+
+The variable is visible only inside `p`, where it hides a parameter or outer
+variable of the same name. It must be a simple name other than `__result__`,
+which SpiceDB uses for the macro's accumulator; for the same reason, a
+parameter named `__result__` cannot be read inside a comprehension. Results
+follow CEL and SpiceDB:
+
+- A deciding element settles the result even when another element faults:
+  `true` for `exists`, `false` for `all`.
+- Otherwise a fault, such as a missing map key, is an error.
+- Otherwise elements whose predicate needs a missing field make the result
+  conditional on the fields they need. The residual keeps only those elements.
+- Otherwise `exists` is false and `all` is true, as they are for an empty list.
+- A missing list makes the result conditional on that list alone, as in
+  SpiceDB: the predicate is not evaluated without elements.
+
+When one element faults and another needs a missing field, EACL reports the
+fault, as its `&&` and `||` do; SpiceDB reports the missing field. The
+[SpiceDB fixture](../formal/fixtures/caveat-comprehensions/README.md) lists
+every recorded difference.
+
+A comprehension over a supplied list or map is charged for the range once,
+then for one unit plus its predicate's work for every element, with the
+variable as long as the longest element. Every element is charged, even when
+an early one decides the result. Nested comprehensions multiply: an `exists`
+over 128 elements inside another over 128 elements pays for 16,384
+predicates. An absent range is charged at its declared maximum size and is not
+iterated, since its result is conditional. An absent operand inside the
+predicate is charged for every element, so `xs.exists(x, x in ys)` with
+`ys` absent exceeds the limit once `xs` has two elements. Profile 2 adds no
+limit: the 128-entry container bound and the work limit bound every
+comprehension.
 
 ## Context, outcomes and implementation capability
 
@@ -445,6 +498,24 @@ For retained databases:
 Older readers cannot safely interpret qualified data. Rolling back to them
 requires stopping writes and restoring the compatible data and schema
 checkpoint. Removing the evaluator alone does not make a rollback safe.
+
+### Rolling out `exists` and `all`
+
+Upgrade every serving Peer, core and evaluator module together, before writing
+a schema whose Caveats use `exists` or `all`. Such a Caveat is stored as
+profile 2. A Peer from an earlier release rejects that profile
+(`:unsupported-profile`): its checks through the Caveat report an evaluation
+fault, `can?` returns false, and it can neither read nor write the schema.
+Caveats without the macros stay profile 1 and keep their stored form, so an
+upgrade rewrites no definition and needs no coordination on its own.
+
+Profile 2 changes the evaluator profile fingerprint, so an evaluator module
+must be the same release as core; an older one is refused with
+`:eacl.caveat/evaluator-unavailable`. Cached qualified answers are not reused
+across the upgrade, and a cursor from a qualified lookup must be restarted
+when a Peer on the other release continues it. To roll back, first write a
+schema whose Caveats do not use `exists` or `all`; a Caveat keeps its
+relationships when only its expression changes.
 
 For verification details, see the [acceptance crosswalk](../formal/qualified/acceptance.md)
 and [performance workloads](benchmarks/qualified-authorization.md).

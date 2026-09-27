@@ -4,7 +4,15 @@
             [eacl.exact-integer :as integer]
             [eacl.secure-format :as secure]))
 
-(def profile-id "eacl-cel/1")
+(def profile-id
+  "The profile evaluators implement. Profile 2 is profile 1 plus the `exists`
+   and `all` comprehension macros over lists and map keys."
+  "eacl-cel/2")
+(def definition-profiles
+  "Profiles a stored Caveat definition may record, oldest first. A definition
+   records the lowest one that admits its expression, so a definition without
+   comprehensions keeps profile 1 and its stored content."
+  ["eacl-cel/1" "eacl-cel/2"])
 (def format-version 1)
 (def limits
   {:source-utf8-bytes 8192 :tokens 1024 :source-group-depth 32
@@ -34,6 +42,12 @@
   (and (string? s) (<= (count s) (:identifier-ascii-bytes limits))
        (boolean (re-matches #"[A-Za-z_][A-Za-z0-9_]*" s))
        (not (contains? reserved-names s)) (not (str/starts-with? s "__eacl_"))))
+
+(defn variable-name?
+  "A comprehension variable is named like a parameter, but never `__result__`:
+   cel-go, and so SpiceDB, binds that name to the macro's accumulator."
+  [s]
+  (and (parameter-name? s) (not= "__result__" s)))
 
 (defn parameter-type? [t]
   (or (contains? scalar-types t)
@@ -76,6 +90,12 @@
         (compare nx ny)
         (let [c (compare (nth x i) (nth y i))]
           (if (zero? c) (recur (inc i)) c))))))
+
+(defn sorted-keys
+  "A string-keyed map's keys in canonical Unicode scalar order, the order in
+   which comprehensions visit them."
+  [m]
+  (sort scalar-order (keys m)))
 
 (defn- charge! [budget size]
   (vswap! budget (fn [[entries bytes]] [(inc entries) (+ bytes size)]))

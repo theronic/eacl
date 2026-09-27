@@ -1,10 +1,12 @@
 # EACL portable Caveat evaluator
 
-`dev.eacl/eacl-caveats-portable` evaluates named Caveats (EACL CEL profile 1)
-in portable Clojure. Use it with EACL on DataScript in ClojureScript, where the
-cel-parser-based [JVM evaluator](../eacl-caveats-jvm/README.md) cannot run. It
-also runs on the JVM. It depends only on `dev.eacl/eacl`, uses no host interop,
-and calls only core functions that `8.0.0-RC-2026-09-12` already publishes.
+`dev.eacl/eacl-caveats-portable` evaluates named Caveats in portable Clojure.
+Use it with EACL on DataScript in ClojureScript, where the cel-parser-based
+[JVM evaluator](../eacl-caveats-jvm/README.md) cannot run. It also runs on the
+JVM. It depends only on `dev.eacl/eacl`, uses no host interop, and calls only
+core functions that `8.0.0-RC-2026-09-12` already publishes. It serves the
+profile of the core it runs with: EACL CEL profile 1 with that release, and
+profile 2, which adds `exists` and `all`, with a core that includes them.
 Use the coordinated core version: this change also fixes context normalization
 before parameter projection, bound-value merging and authorization cache identity.
 Expiring relationships need no evaluator; named Caveats do.
@@ -103,32 +105,41 @@ the evaluator also canonicalizes its prepared bindings. A JVM `Boolean` object
 has its primitive value and its corresponding true/false identity. Sorted-map
 comparators cannot make distinct parameter names or map keys match.
 
-The descriptor advertises profile 1 and a fingerprint of its own, so cached
-answers never mix evaluators. Plans are cached by complete definition content,
+The descriptor advertises core's profile and a fingerprint of its own, so
+cached answers never mix evaluators. Plans are cached by complete definition content,
 never by database ID. ClojureScript is single-threaded; on the JVM, concurrent
 misses may decode the same plan twice, which changes work only.
 
 The work preflight charges an absent parameter at its declared maximum size. An
 absent `list<string>` costs about half the work limit per membership test, so
 a Caveat with two such tests fails with `:resource-limit` unless the request
-supplies the list, even as `[]`. The JVM evaluator behaves the same.
+supplies the list, even as `[]`. A test inside `exists` or `all` is charged
+for every element of the range. The JVM evaluator behaves the same.
 
-The profile is unchanged. Macros such as `exists` and `all`, arithmetic, regex
-and the other exclusions listed in the Caveats guide remain unsupported.
+`exists` and `all` are core's comprehension semantics: the partial evaluator
+folds the predicate over the elements, a deciding element winning over faults,
+and an absent range makes the result conditional on that range alone. The
+[Caveats guide](../../docs/caveats.md#exists-and-all) describes them, their
+cost and the remaining exclusions (other macros, arithmetic, regex and more).
 
 ## Conformance
 
 The tests certify this module against the JVM evaluator:
 
-- `evaluator_test.cljc` runs the shared 24-case corpus
+- `evaluator_test.cljc` runs the shared 59-case corpus
   (`modules/eacl-caveats-jvm/test/eacl/caveats/corpus.edn`), profile semantics,
   identity, plan reuse and bounds on the JVM and in ClojureScript.
 - `differential_test.clj` compares outcomes, reasons, missing fields and
   residuals with `eacl.caveats.jvm` for generated definitions using every
-  operator and type, with complete, incomplete, bound-over-request and
-  wrongly typed contexts, plus finite enumerations and resource limits.
+  operator and type, `exists` and `all` with nested and shadowing variables,
+  with complete, incomplete, bound-over-request and wrongly typed contexts,
+  plus finite enumerations and resource limits.
+- `spicedb_test.clj` compares both evaluators with SpiceDB v1.56.0's recorded
+  answer to every corpus case
+  ([fixture](../../formal/fixtures/caveat-comprehensions/README.md)).
 - `datascript_test.cljc` exercises the public DataScript client end to end,
-  including detailed lookups, counts and expiry.
+  including detailed lookups, counts, expiry and the `nothing_sensitive`
+  exit, whose request supplies both the inventory and the sensitive items.
 
 The DataScript ClojureScript runner (`eacl.datascript.cljs-test-runner`)
 includes the portable suites. From the repository root, the CI-equivalent
@@ -136,5 +147,5 @@ battery in `AGENTS.md` covers the JVM side. For this module alone, start an
 nREPL with `clojure -M:test:nrepl --port 7794` in this directory and run:
 
 ```sh
-clj-nrepl-eval -p 7794 '(do (require (quote eacl.caveats.portable.evaluator-test) (quote eacl.caveats.portable.differential-test) (quote eacl.caveats.portable.datascript-test)) (clojure.test/run-tests (quote eacl.caveats.portable.evaluator-test) (quote eacl.caveats.portable.differential-test) (quote eacl.caveats.portable.datascript-test)))'
+clj-nrepl-eval -p 7794 '(do (require (quote eacl.caveats.portable.evaluator-test) (quote eacl.caveats.portable.differential-test) (quote eacl.caveats.portable.spicedb-test) (quote eacl.caveats.portable.datascript-test)) (clojure.test/run-tests (quote eacl.caveats.portable.evaluator-test) (quote eacl.caveats.portable.differential-test) (quote eacl.caveats.portable.spicedb-test) (quote eacl.caveats.portable.datascript-test)))'
 ```

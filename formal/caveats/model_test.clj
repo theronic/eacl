@@ -154,6 +154,81 @@
       (is (= (contains? allowed caveat)
              (m/allowed? {:allowances {:viewer allowed}} :viewer caveat))))))
 
+;; Each element's predicate outcome is chosen by its tag: "t" true, "f" false,
+;; "u" missing b, "e" a missing map key (m is empty).
+(def fold-parameters {"xs" [:list :string] "b" :bool "m" [:map :string :bool]})
+(def fold-predicate
+  [:or [:eq [:var "x"] [:literal :string "t"]]
+   [:or [:and [:eq [:var "x"] [:literal :string "u"]] [:param "b"]]
+    [:and [:eq [:var "x"] [:literal :string "e"]] [:index [:param "m"] [:var "x"]]]]])
+
+(defn tag-sequences [n]
+  (if (zero? n) [[]] (for [s (tag-sequences (dec n)) tag ["t" "f" "u" "e"]] (conj s tag))))
+
+(defn expected-fold
+  "CEL's exists and all over tagged outcomes, stated as decision rules: the
+   deciding value wins, then a fault, then a missing field, else the unit."
+  [op tags]
+  (let [[decider unit] (if (= :exists op) ["t" false] ["f" true])
+        undecided (filterv #{"u"} tags)]
+    (cond
+      (some #{decider} tags) {:outcome (if (= :exists op) :true :false)}
+      (some #{"e"} tags) {:outcome :error :reason :missing-map-key}
+      (seq undecided)
+      {:outcome :conditional :missing-fields #{"b"}
+       :residual [op [:literal [:list :string] undecided] "x"
+                  (m/bind fold-parameters {"m" {}} {} fold-predicate)]}
+      :else {:outcome (if unit :true :false)})))
+
+(deftest exhaustive-comprehension-folds
+  (doseq [op [:exists :all] n (range 5) tags (tag-sequences n)]
+    (is (= (expected-fold op tags)
+           (m/evaluate fold-parameters [op [:param "xs"] "x" fold-predicate] {"xs" tags "m" {}} {}))
+        (pr-str op tags)))
+  (testing "an absent range is missing on its own; its predicate is not evaluated"
+    (doseq [op [:exists :all] context [{} {"m" {}} {"b" true}]]
+      (let [plan [op [:param "xs"] "x" fold-predicate]]
+        (is (= {:outcome :conditional :missing-fields #{"xs"}
+                :residual [op [:param "xs"] "x" (m/bind fold-parameters context {} fold-predicate)]}
+               (m/evaluate fold-parameters plan context {})))))))
+
+(deftest comprehension-scopes
+  (let [parameters {"xs" [:list :string] "ys" [:list :int] "x" :int "m" [:map :string :int]
+                    "__result__" :bool}]
+    (doseq [[plan expected]
+            [[[:exists [:param "xs"] "x" [:eq [:var "x"] [:literal :string "a"]]] :bool]
+             ;; The variable hides the parameter x (an int) inside its predicate.
+             [[:exists [:param "xs"] "x" [:eq [:var "x"] [:literal :int 1]]] :invalid]
+             [[:and [:exists [:param "xs"] "x" [:literal :bool true]] [:eq [:param "x"] [:literal :int 1]]] :bool]
+             [[:and [:exists [:param "xs"] "x" [:literal :bool true]] [:eq [:var "x"] [:literal :string "a"]]] :invalid]
+             ;; An inner variable hides an outer one of the same name.
+             [[:exists [:param "xs"] "x" [:exists [:param "ys"] "x" [:lt [:var "x"] [:literal :int 2]]]] :bool]
+             [[:exists [:param "xs"] "x" [:exists [:param "ys"] "y" [:eq [:var "x"] [:literal :string "a"]]]] :bool]
+             [[:all [:param "m"] "k" [:ge [:index [:param "m"] [:var "k"]] [:literal :int 0]]] :bool]
+             [[:all [:param "x"] "k" [:literal :bool true]] :invalid]
+             [[:all [:param "xs"] "k" [:var "k"]] :invalid]
+             [[:all [:param "xs"] "__result__" [:literal :bool true]] :invalid]
+             [[:all [:param "xs"] "if" [:literal :bool true]] :invalid]
+             [[:all [:param "xs"] "k" [:param "__result__"]] :invalid]
+             [[:param "__result__"] :bool]]]
+      (is (= expected (m/plan-type parameters plan)) (pr-str plan)))
+    (is (= "eacl-cel/1" (m/profile-of [:param "__result__"])))
+    (is (= "eacl-cel/2" (m/profile-of [:not [:all [:param "xs"] "k" [:literal :bool true]]])))))
+
+(deftest comprehension-work-charges-every-element
+  (let [parameters {"xs" [:list :string] "ys" [:list :string]}
+        plan [:exists [:param "xs"] "x" [:in [:var "x"] [:param "ys"]]]
+        work #(m/estimate-work parameters plan %)]
+    (doseq [n (range 5)]
+      (is (< (work {"xs" (vec (repeat n "ab")) "ys" ["c"]})
+             (work {"xs" (vec (repeat (inc n) "ab")) "ys" ["c"]}))))
+    (is (= (+ 2 (:nodes (m/shape (nth plan 3))) (m/max-size [:list :string]))
+           (work {"ys" ["c"]}))
+        "an absent range is charged at its maximum size and is not iterated")
+    (is (= {:outcome :error :reason :resource-limit}
+           (m/evaluate parameters plan {"xs" ["a" "b"]} {}))
+        "an absent operand is charged at its maximum size for every element")))
+
 (deftest container-substitution-preserves-residual-type
   (doseq [[type value] [[[:list :int] [1 2]] [[:map :string :bool] {"enabled" true}]]]
     (let [parameters {"x" :string "items" type}

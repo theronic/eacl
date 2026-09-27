@@ -782,3 +782,39 @@ The behavior is compared with SpiceDB v1.56.0's answers to 72 requests
 ([fixture](../formal/fixtures/wildcards/README.md)), with an independent
 reference over 40 seeded stores, and modeled in
 `formal/dafny/WildcardSubjects.dfy`.
+
+## `exists` and `all` in Caveats
+
+Caveats can use CEL's `exists` and `all` macros over a list or a map's keys,
+in EACL CEL profile 2. For example, this Caveat receives both what someone
+carries and what is sensitive in the request:
+
+```zed
+caveat nothing_sensitive(inventory list<string>, sensitive list<string>) {
+  !inventory.exists(item, item in sensitive)
+}
+```
+
+- Results follow CEL and SpiceDB. A deciding element, `true` for `exists` and
+  `false` for `all`, wins over another element's fault, and a missing list
+  gives a conditional result on that list alone. The variable hides a
+  parameter or outer variable of the same name inside its predicate. `has`,
+  `exists_one`, `map` and `filter` remain excluded. See the
+  [Caveat guide](caveats.md#exists-and-all).
+- Both evaluators support them. The JVM evaluator parses each predicate once
+  and folds it over the range itself, rather than using cel-parser's macros,
+  which reparse the predicate for every element.
+- The work preflight charges every element of a supplied range, and nested
+  comprehensions multiply. No limit is added.
+- A definition records the lowest profile its expression needs, so Caveats
+  without the macros stay `eacl-cel/1`, unchanged in storage. Evaluators now
+  advertise profile `eacl-cel/2` with a new profile fingerprint: core and the
+  evaluator modules must be the same release, and qualified cache entries and
+  cursors are not reused across the upgrade. Upgrade every serving Peer before
+  writing a schema that uses `exists` or `all`; an earlier Peer fails closed
+  on such a Caveat with `:unsupported-profile`.
+
+The behavior is compared with SpiceDB v1.56.0's answers to all 59 corpus
+cases ([fixture](../formal/fixtures/caveat-comprehensions/README.md)), checked
+against the finite model in `formal/caveats/`, and its fold algebra is proved
+in `formal/dafny/CaveatOutcomes.dfy`.

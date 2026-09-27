@@ -51,52 +51,83 @@
       (gen/map (gen/one-of [(gen/elements key-pool) gen/string-alphanumeric])
                (gen-value (nth type 2)) {:max-elements 4}))))
 
-(defn- gen-leaf [type]
-  (gen/one-of
-   (cond-> [(gen/fmap #(vector :param %) (gen/elements (names-of type)))]
-     (= :bool type) (conj (gen/fmap #(vector :literal :bool %) gen/boolean))
-     (= :int type) (conj (gen/fmap #(vector :literal :int %) gen-int))
-     ;; Short literals keep deep plans inside the 8192-byte source bound.
-     (= :string type) (conj (gen/fmap #(vector :literal :string %)
-                                      (gen/one-of [(gen/elements string-pool)
-                                                   (gen/resize 12 gen/string)]))))))
+(defn- visible
+  "Parameters of a type that no variable in scope hides."
+  [scope type]
+  (remove #(contains? scope %) (names-of type)))
+
+(defn- gen-leaf
+  "A literal, a parameter the scope does not hide, or a variable in scope."
+  [type scope]
+  (let [params (visible scope type)
+        variables (sort (keep (fn [[name t]] (when (= t type) name)) scope))]
+    (gen/one-of
+     (cond-> []
+       (seq params) (conj (gen/fmap #(vector :param %) (gen/elements params)))
+       (seq variables) (conj (gen/fmap #(vector :var %) (gen/elements variables)))
+       (= :bool type) (conj (gen/fmap #(vector :literal :bool %) gen/boolean))
+       (= :int type) (conj (gen/fmap #(vector :literal :int %) gen-int))
+       ;; Short literals keep deep plans inside the 8192-byte source bound.
+       (= :string type) (conj (gen/fmap #(vector :literal :string %)
+                                        (gen/one-of [(gen/elements string-pool)
+                                                     (gen/resize 12 gen/string)])))))))
 
 (declare gen-expression)
 
-(defn- gen-binary [ops type depth]
-  (gen/tuple (gen/elements ops) (gen-expression type depth) (gen-expression type depth)))
+(defn- gen-binary [ops type depth scope]
+  (gen/tuple (gen/elements ops) (gen-expression type depth scope) (gen-expression type depth scope)))
 
-(defn- gen-index [type depth]
+(defn- gen-index [type depth scope]
   ;; m[key] and m.key both select a string key; a missing key is a fault.
   (gen/fmap (fn [[m key]] [:index [:param m] key])
-            (gen/tuple (gen/elements (names-of [:map :string type]))
+            (gen/tuple (gen/elements (visible scope [:map :string type]))
                        (gen/one-of [(gen/fmap #(vector :literal :string %) (gen/elements key-pool))
-                                    (gen-expression :string depth)]))))
+                                    (gen-expression :string depth scope)]))))
+
+;; Variable names include parameter names, so a variable can hide a parameter
+;; or an outer variable of the same name.
+(def ^:private variable-pool ["x" "y" "s" "i" "ss"])
+
+(defn- gen-comprehension [depth scope]
+  (gen/bind
+   (gen/tuple (gen/elements [:exists :all])
+              (gen/elements (remove #(contains? scope %)
+                                    (sort (keep (fn [[name t]] (when (vector? t) name)) parameters))))
+              (gen/elements variable-pool))
+   (fn [[op range variable]]
+     (let [range-type (get parameters range)
+           item-type (if (= :list (first range-type)) (second range-type) :string)]
+       (gen/fmap #(vector op [:param range] variable %)
+                 (gen-expression :bool depth (assoc scope variable item-type)))))))
 
 (defn gen-expression
-  "Well-typed plans over every profile 1 operator and parameter type."
-  [type depth]
-  (if (zero? depth)
-    (gen-leaf type)
-    (let [depth (dec depth)]
-      (case type
-        :bool
-        (gen/frequency
-         [[1 (gen-leaf :bool)]
-          [3 (gen/fmap #(vector :not %) (gen-expression :bool depth))]
-          [10 (gen-binary [:and :or] :bool depth)]
-          [2 (gen/bind (gen/elements scalar-types) #(gen-binary [:eq :ne] % depth))]
-          [2 (gen/bind (gen/elements [:int :timestamp]) #(gen-binary [:lt :le :gt :ge] % depth))]
-          [2 (gen/bind (gen/elements scalar-types)
-                       (fn [t] (gen/fmap (fn [[item list]] [:in item [:param list]])
-                                         (gen/tuple (gen-expression t depth)
-                                                    (gen/elements (names-of [:list t]))))))]
-          [1 (gen/fmap (fn [[key m]] [:in key [:param m]])
-                       (gen/tuple (gen-expression :string depth)
-                                  (gen/elements (mapcat #(names-of [:map :string %]) scalar-types))))]
-          [2 (gen-binary [:contains :starts-with :ends-with] :string depth)]
-          [2 (gen-index :bool depth)]])
-        (gen/frequency [[3 (gen-leaf type)] [1 (gen-index type depth)]])))))
+  "Well-typed plans over every profile 2 operator and parameter type.
+   `scope` maps each comprehension variable around the plan to its type."
+  ([type depth] (gen-expression type depth {}))
+  ([type depth scope]
+   (if (zero? depth)
+     (gen-leaf type scope)
+     (let [depth (dec depth)]
+       (case type
+         :bool
+         (gen/frequency
+          [[1 (gen-leaf :bool scope)]
+           [3 (gen/fmap #(vector :not %) (gen-expression :bool depth scope))]
+           [10 (gen-binary [:and :or] :bool depth scope)]
+           [2 (gen/bind (gen/elements scalar-types) #(gen-binary [:eq :ne] % depth scope))]
+           [2 (gen/bind (gen/elements [:int :timestamp]) #(gen-binary [:lt :le :gt :ge] % depth scope))]
+           [2 (gen/bind (gen/elements (filter #(seq (visible scope [:list %])) scalar-types))
+                        (fn [t] (gen/fmap (fn [[item list]] [:in item [:param list]])
+                                          (gen/tuple (gen-expression t depth scope)
+                                                     (gen/elements (visible scope [:list t]))))))]
+           [1 (gen/fmap (fn [[key m]] [:in key [:param m]])
+                        (gen/tuple (gen-expression :string depth scope)
+                                   (gen/elements (remove #(contains? scope %)
+                                                         (mapcat #(names-of [:map :string %]) scalar-types)))))]
+           [2 (gen-binary [:contains :starts-with :ends-with] :string depth scope)]
+           [2 (gen-index :bool depth scope)]
+           [4 (gen-comprehension depth scope)]])
+         (gen/frequency [[3 (gen-leaf type scope)] [1 (gen-index type depth scope)]]))))))
 
 (def ^:private operators {:and "&&" :or "||" :eq "==" :ne "!=" :lt "<" :le "<=" :gt ">" :ge ">=" :in "in"})
 (def ^:private method-names {:contains "contains" :starts-with "startsWith" :ends-with "endsWith"})
@@ -114,15 +145,16 @@
   (and (re-matches #"[A-Za-z_][A-Za-z0-9_]*" key) (not (#{"true" "false" "in"} key))))
 
 (defn source
-  "Renders a plan as fully grouped profile 1 source."
-  [[op a b]]
+  "Renders a plan as fully grouped profile 2 source."
+  [[op a b c]]
   (case op
     :literal (if (= :string a) (string-literal b) (str b))
-    :param a
+    (:param :var) a
     :not (str "!(" (source a) ")")
     :index (if (and (= :literal (first b)) (member? (nth b 2)))
              (str "(" (source a) ")." (nth b 2))
              (str "(" (source a) ")[" (source b) "]"))
+    (:exists :all) (str "(" (source a) ")." (name op) "(" b ", " (source c) ")")
     (if-let [method (method-names op)]
       (str "(" (source a) ")." method "(" (source b) ")")
       (str "(" (source a) " " (operators op) " " (source b) ")"))))
@@ -173,16 +205,23 @@
                 ;; The renderer must reproduce the generated plan exactly.
                 parsed (:plan (plan/compile-plan text parameters))
                 [expected actual] (outcomes (definition/entity "generated" parameters text) request bound)]
-            (swap! seen update [mode (:outcome expected) (:reason expected)] (fnil inc 0))
+            (swap! seen update [mode (:outcome expected) (:reason expected)
+                                (= "eacl-cel/2" (plan/required-profile expression))]
+                   (fnil inc 0))
             (and (= expression parsed) (= expected actual))))
         result (tc/quick-check 4000 property :seed 20260927 :max-size 72)]
     (is (:pass? result) (pr-str (select-keys result [:seed :fail :shrunk])))
     (testing "the generator reaches every outcome and fault from complete contexts"
-      (let [complete (set (keep (fn [[[mode outcome reason] _]]
-                                  (when (#{:complete :bound-over-request} mode) [outcome reason]))
-                                @seen))]
-        (is (every? complete [[:true nil] [:false nil] [:error :missing-map-key]]) (pr-str complete))
-        (is (some (fn [[[_ outcome] _]] (= :conditional outcome)) @seen))
+      (let [complete (fn [comprehension?]
+                       (set (keep (fn [[[mode outcome reason with-comprehension] _]]
+                                    (when (and (#{:complete :bound-over-request} mode)
+                                               (= comprehension? with-comprehension))
+                                      [outcome reason]))
+                                  @seen)))]
+        (doseq [comprehension? [false true]]
+          (is (every? (complete comprehension?) [[:true nil] [:false nil] [:error :missing-map-key]])
+              (pr-str (complete comprehension?))))
+        (is (some (fn [[[_ outcome _ comprehension?] _]] (and comprehension? (= :conditional outcome))) @seen))
         (is (some (fn [[[_ _ reason] _]] (= :context-type reason)) @seen))))))
 
 (deftest finite-four-valued-logic-matches-the-jvm-evaluator

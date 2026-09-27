@@ -29,6 +29,7 @@ the qualified gate. The stable-discovery engine gate remains
 | True/false/conditional/error; commutative absorbers | `And`, `Or`, `Not`, outcome lemmas | Full four-by-four truth tables and independent SpiceDB/CEL fixtures | Canonical residual refinement and native returned-error detection |
 | Selected scalar/container operations | `CaveatProfile.Eval`, typed/index/equality lemmas | Candidate 2,849-assertion native corpus; model type matrix | Portable parser/plan and JVM value adapter refinement |
 | Total evaluation and bounded progress | Structural `Plan`, `Nodes`, `Bounded`; saturating cost lemmas | Size/type/time/Unicode/substring hostile fixtures | Bounded lexical parsing, exact UTF-8 sizes, cache/build admission |
+| Profile 2 `exists`/`all`: absorption, residual, order, work | `Exists`, `All`, `TruthDecidesExists`, `FaultWithoutTruthFaultsExists`, `UndecidedExists`, `ResidualKeepsUndecided`, `OrderIndependent`; `ComprehensionWorkBound`, `NestedComprehensionsMultiply` | Exhaustive element-outcome sequences, scoping and shadowing, model/production and model/JVM bridges, three mutation controls, SpiceDB v1.56.0 answers to the corpus | JVM adapter fold and portable evaluator refinement is finite and generated, not proved |
 
 The model uses finite maps and structural recursion. Exhaustive state checking
 is explicitly bounded; the Dafny lifecycle preservation lemmas quantify over

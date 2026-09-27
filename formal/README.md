@@ -100,6 +100,14 @@ union-only split. Its production correspondence is the pinned SpiceDB fixture
 in `fixtures/wildcards/`, the seeded reference differential and the backend
 contracts listed in [the assurance boundary](../docs/formal-verification.md).
 
+`dafny/CaveatOutcomes.dfy` and `dafny/CaveatProfile.dfy` also model EACL CEL
+profile 2's `exists` and `all`: four-valued folds whose deciding element
+absorbs faults, whose residual keeps the undecided elements, and whose work
+charges every element. The `caveats/` finite gate compares its oracle with the
+production evaluators, and `fixtures/caveat-comprehensions/` records SpiceDB's
+answers to the shared Caveat corpus; see
+[the assurance boundary](../docs/formal-verification.md).
+
 The abstract operator Phase A consists of
 `PermissionSetAlgebra.dfy`, `SignedDependencyStratification.dfy`,
 `CandidateCover.dfy`, `WitnessPredicate.dfy`, `VectorPredicate.dfy`,

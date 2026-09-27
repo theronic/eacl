@@ -6,6 +6,7 @@
             [eacl.caveats.jvm :as jvm]
             [eacl.caveats.jvm.evaluator-test :as jvm-test]
             [eacl.caveats.partial :as partial]
+            [eacl.caveats.plan :as caveat-plan]
             [eacl.caveats.partial-test :as partial-test]
             [eacl.caveats.values :as values]
             [eacl.caveats.publication-contract :as publication]
@@ -48,7 +49,10 @@
 (defn mutation-cases []
   (let [merge-context values/merge-context plan staged/plan prepare staged/prepare!
         decode qualifier/decode allowance qualifier/relation-allowance
-        prepared-value @#'staged/prepared-value]
+        prepared-value @#'staged/prepared-value
+        comprehension @#'partial/comprehension reduce-node @#'partial/reduce-node
+        estimate-work partial/estimate-work
+        elements (fn [value] (if (map? value) (keys value) value))]
     {:bound-context-loses
      {:gate #'partial-test/partial-results-and-faults
       :redefs {#'values/merge-context (fn [p request bound] (merge-context p bound request))}}
@@ -111,7 +115,43 @@
                  (prepared-value writer db (.-relationship ^eacl.relationships.staged.PreparedQualifier handle) handle generation?))}}
      :required-caveat-omitted
      {:gate required-branch-gate
-      :redefs {#'qualifier/relation-allowance (fn [relation] (conj (allowance relation) nil))}}}))
+      :redefs {#'qualifier/relation-allowance (fn [relation] (conj (allowance relation) nil))}}
+     :fault-beats-deciding-element
+     {:gate #'partial-test/comprehension-results-missing-fields-and-work
+      :redefs {#'partial/comprehension
+               (fn [types context variables [_ range variable predicate :as expression]]
+                 (let [r (reduce-node types context variables range)
+                       faults (when (contains? r :known)
+                                (keep #(:error (reduce-node types context
+                                                            (assoc variables variable [(caveat-plan/item-type (:type r)) %])
+                                                            predicate))
+                                      (elements (:known r))))]
+                   (if (seq faults)
+                     {:error (first (sort faults))}
+                     (comprehension types context variables expression))))}}
+     :absent-range-reports-predicate-fields
+     {:gate #'partial-test/comprehension-results-missing-fields-and-work
+      :redefs {#'partial/comprehension
+               (fn [types context variables [_ range _ predicate :as expression]]
+                 (let [result (comprehension types context variables expression)
+                       named (keep #(when (and (vector? %) (= :param (first %))) (second %))
+                                   (tree-seq vector? seq predicate))]
+                   (if (:missing (reduce-node types context variables range))
+                     (update result :missing into (remove #(contains? context %) named))
+                     result)))}}
+     :comprehension-charged-once
+     {:gate #'partial-test/comprehension-results-missing-fields-and-work
+      :redefs {#'partial/estimate-work
+               (fn charged-once
+                 ([types expression context] (charged-once types expression context {}))
+                 ([types [op a b c :as expression] context variables]
+                  (if (and (caveat-plan/comprehension-ops op) (= :param (first a)) (contains? context (second a)))
+                    (let [v (get context (second a))]
+                      (estimate-work types [op [:literal (get types (second a))
+                                                (if (map? v) (select-keys v (take 1 (keys v))) (vec (take 1 v)))]
+                                            b c]
+                                     context variables))
+                    (estimate-work types expression context variables))))}}}))
 
 (deftest production-mutations-are-killed-by-mapped-gates
   (let [cases (mutation-cases)

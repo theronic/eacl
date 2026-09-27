@@ -1,4 +1,7 @@
-{:profile "eacl-cel/1"
+{:profile "eacl-cel/2"
+ ;; A definition records the lowest profile that admits it. Profile 2 adds
+ ;; the comprehensions below to profile 1 and changes nothing else.
+ :definition-profiles ["eacl-cel/1" "eacl-cel/2"]
  :canonical-format 1
  :scalar-types [:bool :int :string :timestamp]
  :container-types [[:list :scalar] [:map :string :scalar]]
@@ -8,7 +11,18 @@
   :ordered-types {:int [:lt :le :gt :ge] :timestamp [:lt :le :gt :ge]}
   :membership [:scalar-in-list :string-in-map]
   :index [:string-map-key]
-  :string [:contains :starts-with :ends-with]}
+  :string [:contains :starts-with :ends-with]
+  :comprehension {:profile "eacl-cel/2" :macros [:exists :all]
+                  :ranges [:list-elements :map-keys]}}
+ ;; Parameter and comprehension-variable names may not be these. A
+ ;; comprehension variable may also not be __result__, cel-go's accumulator,
+ ;; and no parameter of that name may be read inside a comprehension.
+ :reserved-identifiers
+ ["true" "false" "null" "in" "as" "break" "const" "continue" "else" "for"
+  "function" "if" "import" "let" "loop" "package" "namespace" "return" "var"
+  "void" "while" "bool" "int" "uint" "double" "string" "bytes" "list" "map"
+  "type" "null_type" "timestamp" "duration" "dyn" "any"]
+ :accumulator-identifier "__result__"
  :bounds
  {:source-utf8-bytes 8192
   :tokens 1024
@@ -29,7 +43,8 @@
   :timestamp-min-ms -62135596800000
   :timestamp-max-ms 253402300799999}
  :excluded
- [:arithmetic :repeated-unary :conditional-operator :macros :comprehensions
+ [:arithmetic :repeated-unary :conditional-operator :has-macro :exists-one-macro
+  :map-macro :filter-macro :two-variable-comprehensions
   :regex :string-order :size :list-index :container-literals :aggregate-equality
   :list-concatenation :null :double :uint :bytes :duration :dyn :any
   :nested-container-types :timestamp-conversion :timestamp-selector

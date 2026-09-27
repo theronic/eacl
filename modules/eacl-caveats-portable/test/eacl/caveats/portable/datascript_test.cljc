@@ -3,6 +3,7 @@
    through the public client API. Runs in ClojureScript and on the JVM."
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is testing]]
             [datascript.core :as ds]
+            #?(:clj [eacl.caveats.jvm :as jvm])
             [clojure.string :as str]
             [eacl.caveats.portable :as portable]
             [eacl.core :as eacl]
@@ -155,6 +156,55 @@ definition building {
            (decision client "intern" {"carrying" []})))
     (is (= {:allowed? false :permissionship :no-permission} (decision client "intern" {}))
         "an expired relationship's Caveat is not evaluated")))
+
+(def exit-schema
+  "The request says what the person carries and what is sensitive; neither
+   list is in the schema or on the relationship."
+  "caveat nothing_sensitive(inventory list<string>, sensitive list<string>) {
+  !inventory.exists(item, item in sensitive)
+}
+
+definition user {}
+
+definition area {
+  relation anyone: user with nothing_sensitive
+  permission exit = anyone
+}")
+
+(def ^:private exit-configurations
+  (merge {"portable evaluator" {:caveat-evaluator (portable/evaluator)}
+          "process default" {}}
+         #?(:clj {"JVM evaluator" {:caveat-evaluator (jvm/evaluator)}})))
+
+(deftest exits-are-denied-to-anyone-carrying-something-sensitive
+  (doseq [[label options] exit-configurations]
+    (testing label
+      (let [conn (datascript/create-conn)
+            client (datascript/make-client conn options)
+            lobby (eacl/spice-object :area "lobby")
+            exit (fn [context]
+                   {:subject (user "visitor") :permission :exit :resource lobby :caveat-context context})
+            decision #(select-keys (eacl/check-permission client (exit %))
+                                   [:allowed? :permissionship :missing-fields])
+            sensitive ["launch-codes" "customer-list"]]
+        (eacl/write-schema! client exit-schema)
+        (ds/transact! conn [{:eacl/id "visitor"} {:eacl/id "lobby"}])
+        (eacl/write-relationship! client (assoc (eacl/->Relationship (user "visitor") :anyone lobby)
+                                                :operation :touch :caveat "nothing_sensitive"))
+        (is (= {:allowed? false :permissionship :no-permission}
+               (decision {"inventory" ["badge" "customer-list"] "sensitive" sensitive}))
+            "carrying a sensitive item")
+        (is (= {:allowed? true :permissionship :has-permission}
+               (decision {"inventory" ["badge"] "sensitive" sensitive}))
+            "carrying only harmless items")
+        (is (= {:allowed? true :permissionship :has-permission}
+               (decision {"inventory" [] "sensitive" sensitive}))
+            "carrying nothing")
+        (is (= {:allowed? false :permissionship :conditional-permission :missing-fields ["inventory"]}
+               (decision {"sensitive" sensitive}))
+            "without an inventory the answer waits for one")
+        (is (false? (eacl/can? client (exit {"sensitive" sensitive}))))
+        (is (true? (eacl/can? client (exit {"inventory" ["badge"] "sensitive" sensitive}))))))))
 
 (deftest evaluation-faults-deny-and-are-reported
   (let [{:keys [client]} (building {:caveat-evaluator (portable/evaluator)})]

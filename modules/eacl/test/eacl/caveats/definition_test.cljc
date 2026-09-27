@@ -17,6 +17,26 @@
     (is (= [:in [:param "region"] [:param "accepted"]] (:plan decoded)))
     (is (= entity (definition/entity (:name decoded) (:parameters decoded) (:source decoded))))))
 
+(defn- reason [f]
+  (try (f) nil (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) e (:reason (ex-data e)))))
+
+(deftest definitions-record-the-lowest-admitting-profile
+  (let [parameters {"inventory" [:list :string] "sensitive" [:list :string]}
+        plain (definition/entity "plain" parameters "\"passport\" in inventory")
+        macro (definition/entity "nothing_sensitive" parameters "!inventory.exists(item, item in sensitive)")]
+    (is (= "eacl-cel/1" (:eacl.caveat/profile-version plain))
+        "a definition without comprehensions keeps its profile 1 content")
+    (is (= "eacl-cel/2" (:eacl.caveat/profile-version macro)))
+    (is (= "eacl-cel/2" (:profile (definition/decode-entity macro))))
+    (is (= [:not [:exists [:param "inventory"] "item" [:in [:var "item"] [:param "sensitive"]]]]
+           (:plan (definition/decode-entity macro))))
+    (doseq [changed [(assoc macro :eacl.caveat/profile-version "eacl-cel/1")
+                     (assoc plain :eacl.caveat/profile-version "eacl-cel/2")]]
+      (is (= :definition-shape (reason #(definition/decode-entity changed)))
+          "a recorded profile other than the lowest admitting one is not canonical"))
+    (is (= :unsupported-profile
+           (reason #(definition/decode-header (assoc plain :eacl.caveat/profile-version "eacl-cel/3")))))))
+
 (defn error-type [f]
   (try (f) nil (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) e (:type (ex-data e)))))
 
