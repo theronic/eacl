@@ -86,11 +86,11 @@
 (defn- encode-value [type value budget]
   (charge! budget 1)
   (case type
-    :bool (if (boolean? value) [:bool value] (error! :context-type))
+    :bool (if (boolean? value) [:bool (boolean value)] (error! :context-type))
     :int (if (integer/exact? value) [:int value] (error! :context-type))
     :string (let [s (checked-string value)] (charge! budget (utf8-size s)) [:string s])
     :timestamp (if (and (vector? value) (= 2 (count value)) (= :timestamp (first value))
-                         (valid-time? (second value))) value (error! :context-type))
+                        (valid-time? (second value))) value (error! :context-type))
     (case (first type)
       :list (do
               (when-not (vector? value) (error! :context-type))
@@ -130,9 +130,9 @@
         _ (doseq [key (keys context)] (when-not (contains? types key) (error! :unknown-parameter)))
         budget (volatile! [0 0])
         pairs (mapv (fn [key]
-                       (charge! budget (count key))
-                       [key (encode-value (get types key) (get context key) budget)])
-                     (sort (keys context)))]
+                      (charge! budget (count key))
+                      [key (encode-value (get types key) (get context key) budget)])
+                    (sort (keys context)))]
     (encode-payload [:eacl.caveat/context format-version pairs])))
 
 (defn- bounded-source! [payload {:keys [maximum-size maximum-depth]}]
@@ -149,7 +149,7 @@
         (= c \u0022) (recur (next chars) depth (not quoted?) false)
         quoted? (recur (next chars) depth true false)
         (#{\[ \{ \(} c) (if (>= depth maximum-depth) (error! :resource-limit {:limit :payload-depth})
-                             (recur (next chars) (inc depth) false false))
+                            (recur (next chars) (inc depth) false false))
         (#{\] \} \)} c) (recur (next chars) (dec depth) false false)
         :else (recur (next chars) depth false false)))))
 
@@ -195,17 +195,27 @@
     (when-not (every? #(and (vector? %) (= 2 (count %))) pairs) (error! :malformed-payload))
     (when-not (= (count pairs) (count (set (map first pairs)))) (error! :malformed-payload))
     (let [context (into {} (map (fn [[key value]]
-                                 (when-not (contains? types key) (error! :unknown-parameter))
-                                 [key (decode-value (get types key) value)])) pairs)]
+                                  (when-not (contains? types key) (error! :unknown-parameter))
+                                  [key (decode-value (get types key) value)])) pairs)]
       (when-not (= payload (encode-context parameters context)) (error! :noncanonical-payload))
       context)))
 
+(defn canonical-host-value
+  "Rebuilds an already admitted, bounded context value with exact map keys and
+   canonical Booleans. Call only after checking types and collection bounds;
+   a host map comparator or boxed Boolean must not affect authorization."
+  [value]
+  (cond
+    (boolean? value) (boolean value)
+    (map? value) (reduce-kv (fn [m k v] (assoc m k (canonical-host-value v))) {} value)
+    (vector? value) (mapv canonical-host-value value)
+    :else value))
+
 (defn normalize-context [parameters context]
-  ;; Host values already have their portable representation. The encoder
-  ;; validates every type and aggregate wire bound; reading that freshly
-  ;; produced payload adds no admission check and needlessly rebuilds it.
+  ;; Validate every type and aggregate wire bound before rebuilding. Reading
+  ;; the freshly encoded payload would duplicate parsing and admission work.
   (encode-context parameters context)
-  context)
+  (canonical-host-value context))
 
 (defn normalize-value [type value]
   (get (normalize-context [["value" type]] {"value" value}) "value"))

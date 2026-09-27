@@ -3,6 +3,7 @@
    through the public client API. Runs in ClojureScript and on the JVM."
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is testing]]
             [datascript.core :as ds]
+            [clojure.string :as str]
             [eacl.caveats.portable :as portable]
             [eacl.core :as eacl]
             [eacl.datascript.core :as datascript]))
@@ -65,6 +66,38 @@ definition building {
   ;; keeps priority when it is also loaded.
   {"explicit evaluator" {:caveat-evaluator (portable/evaluator)}
    "process default" {}})
+
+(deftest host-contexts-cannot-change-grants-or-reuse-another-contexts-answer
+  (doseq [[label options] configurations]
+    (testing label
+      (let [conn (datascript/create-conn)
+            client (datascript/make-client conn (assoc options :clock (constantly 1000)))
+            subject (user "guest")
+            resource (eacl/spice-object :door "front")]
+        (eacl/write-schema! client
+                            "caveat enabled(flag bool) { flag }
+                            definition user {}
+                            definition door {
+                              relation visitor: user with enabled
+                              permission enter = visitor
+                            }")
+        (ds/transact! conn [{:eacl/id "guest"} {:eacl/id "front"}])
+        (eacl/write-relationships! client
+                                   [{:operation :touch
+                                     :relationship (assoc (eacl/->Relationship subject :visitor resource)
+                                                          :caveat "enabled")}])
+        (let [check #(select-keys (eacl/check-permission client
+                                                         {:subject subject :resource resource :permission :enter
+                                                          :caveat-context %})
+                                  [:permissionship :missing-fields])
+              folded (sorted-map-by #(compare (str/lower-case %1) (str/lower-case %2)) "FLAG" true)]
+          (is (= {:permissionship :conditional-permission :missing-fields ["flag"]} (check folded)))
+          (is (= {:permissionship :has-permission} (check {"flag" true})))
+          #?(:clj
+             (doseq [_ (range 2)]
+               (is (= {:permissionship :has-permission} (check {"flag" (Boolean. true)})))
+               (is (= {:permissionship :no-permission} (check {"flag" (Boolean. false)})))))
+          (is (= {:permissionship :no-permission} (check {"flag" false}))))))))
 
 (deftest caveated-checks-distinguish-grants-denials-and-missing-context
   (doseq [[label options] configurations

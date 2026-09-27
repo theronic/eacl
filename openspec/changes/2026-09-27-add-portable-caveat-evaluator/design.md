@@ -15,8 +15,9 @@ contexts it calls `eacl.caveats.partial/evaluate-prepared`.
 
 **Goals:** identical outcomes, reasons, missing fields and residuals to the JVM
 evaluator for every admitted definition, request context and bound context;
-ClojureScript and JVM from one source; no dependency or core change, so the
-published `8.0.0-RC-2026-09-12` core suffices; clean `:advanced` compilation.
+ClojureScript and JVM from one source; no new dependency; clean `:advanced`
+compilation. The evaluator uses APIs already published in `8.0.0-RC-2026-09-12`,
+but the coordinated core includes the context normalization fixes below.
 
 **Non-Goals:** a general CEL interpreter, profile extensions, or changes to the
 JVM evaluator.
@@ -57,8 +58,17 @@ canonically, by declared type, after admission and before evaluation. It
 matches cel-parser for complete contexts and stays consistent for incomplete
 ones. Admission, sizes and work are computed before this step and are unchanged.
 In ClojureScript, `boolean?` rejects boxed booleans, so only the map case
-applies. The JVM module's inconsistency is reported separately; this change
-does not alter it.
+applies.
+
+Adversarial review found that normalization after merging is too late: a
+request map comparator can alias parameter names, and nested map equality can
+discard a bound override. Core now rebuilds admitted contexts before merging
+and before public parameter projection and cache identity. Boolean encoding
+also canonicalizes boxed values, preventing opposite values from sharing an
+identity or producing malformed bound payloads. Prepared contexts retain their
+original immutable input reference so public operations still admit it once.
+This also fixes the JVM evaluator's partial path. Consumers need the updated
+core for these guarantees.
 
 ### 4. Registration never displaces an earlier evaluator
 

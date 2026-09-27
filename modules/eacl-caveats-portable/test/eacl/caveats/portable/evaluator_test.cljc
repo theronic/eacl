@@ -102,6 +102,14 @@
          (is (= {:outcome :true} (check engine "!(a)" parameters {"a" false-object} nil)))
          (is (= {:outcome :true} (check engine "i == 1" parameters {"i" 1N} nil)))))))
 
+(deftest canonicalization-precedes-bound-context-merge
+  (let [engine (portable/evaluator)
+        folded #(sorted-map-by (fn [a b] (compare (str/lower-case a) (str/lower-case b))) %1 %2)
+        parameters {"a" :bool "A" :bool "m" [:map :string :bool]}]
+    (is (= {:outcome :false} (check engine "a" parameters (folded "a" false) {"A" true})))
+    (is (= {:outcome :error :reason :missing-map-key}
+           (check engine "m.a" parameters {"m" (folded "a" true)} {"m" {"A" true}})))))
+
 (deftest capability-and-process-default
   (let [engine (portable/evaluator)]
     (is (= portable/capability (caveat-evaluator/descriptor engine)))

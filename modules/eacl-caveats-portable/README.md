@@ -5,6 +5,8 @@ in portable Clojure. Use it with EACL on DataScript in ClojureScript, where the
 cel-parser-based [JVM evaluator](../eacl-caveats-jvm/README.md) cannot run. It
 also runs on the JVM. It depends only on `dev.eacl/eacl`, uses no host interop,
 and calls only core functions that `8.0.0-RC-2026-09-12` already publishes.
+Use the coordinated core version: this change also fixes context normalization
+before parameter projection, bound-value merging and authorization cache identity.
 Expiring relationships need no evaluator; named Caveats do.
 
 ## Install
@@ -23,10 +25,10 @@ EACL modules. A ClojureScript build also needs EACL's cache fork, as the
 
 Before then, use a checkout. Its `deps.edn` points core at the checkout, so pin
 core at the top level; otherwise tools.deps cannot choose between the local and
-Maven versions. The module works with the published `8.0.0-RC-2026-09-12` core:
+Maven versions. Use this checkout's core to include those normalization fixes:
 
 ```clojure
-{:deps {dev.eacl/eacl                  {:mvn/version "8.0.0-RC-2026-09-12"}
+{:deps {dev.eacl/eacl                  {:local/root "/path/to/eacl/modules/eacl"}
         dev.eacl/eacl-datascript       {:mvn/version "8.0.0-RC-2026-09-12"}
         dev.eacl/eacl-caveats-portable {:local/root "/path/to/eacl/modules/eacl-caveats-portable"}
         com.github.theronic/cljs-cache
@@ -96,9 +98,10 @@ admission of the request and saved contexts, saved values overriding request
 values, and the work preflight. It then runs core's portable plan evaluator
 (`eacl.caveats.partial`) for complete and incomplete contexts. The JVM module
 uses cel-parser for complete contexts and the same portable evaluator
-otherwise. Before evaluating, admitted values are rebuilt in canonical form, as
-the JVM module does for cel-parser. A JVM `Boolean` object is its primitive
-value, and a sorted map's comparator cannot make different keys match.
+otherwise. Core rebuilds admitted values before projection, identity and merging;
+the evaluator also canonicalizes its prepared bindings. A JVM `Boolean` object
+has its primitive value and its corresponding true/false identity. Sorted-map
+comparators cannot make distinct parameter names or map keys match.
 
 The descriptor advertises profile 1 and a fingerprint of its own, so cached
 answers never mix evaluators. Plans are cached by complete definition content,

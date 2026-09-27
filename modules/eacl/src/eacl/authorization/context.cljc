@@ -9,11 +9,20 @@
    :maximum-entries (:context-total-entries values/limits)
    :maximum-depth 8})
 
-(deftype ^:private PreparedContext [value identity])
+(deftype ^:private PreparedContext [input value identity])
 
 (defn prepared? [context] (instance? PreparedContext context))
 (defn value [context] (.-value ^PreparedContext context))
 (defn identity [context] (.-identity ^PreparedContext context))
+
+(defn prepared-for?
+  "Whether this preparation belongs to the exact immutable input or its
+   canonical value. Never use map equality to recognize a prepared input."
+  [prepared input]
+  (and (prepared? prepared)
+       (or (identical? input (.-input ^PreparedContext prepared))
+           (identical? input (value prepared))
+           (and (map? input) (empty? input) (empty? (value prepared))))))
 
 (defn- string! [s]
   (when-not (string? s) (values/error! :context-type))
@@ -50,7 +59,7 @@
                   (+ size (if (= :timestamp expected) 3 1)))
                 (if (map? v) (inc (count v)) 1) items)))))
 
-(def ^:private empty-context (PreparedContext. {} (values/encode-bounded {} encoding-options)))
+(def ^:private empty-context (PreparedContext. {} {} (values/encode-bounded {} encoding-options)))
 
 (defn prepare
   "Validates all supplied fields before I/O or reuse. Declared parameter types
@@ -71,7 +80,8 @@
              (values/error! :resource-limit {:limit :context-size}))
            size))
        1 context)
-      (PreparedContext. context (values/encode-bounded context encoding-options)))))
+      (let [canonical (values/canonical-host-value context)]
+        (PreparedContext. context canonical (values/encode-bounded canonical encoding-options))))))
 
 (defn project
   "Projects a validated request onto one admitted Caveat's parameter names."

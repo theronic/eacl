@@ -20,7 +20,7 @@ for incomplete contexts.
 - Add the optional module `dev.eacl/eacl-caveats-portable`, one `.cljc`
   namespace `eacl.caveats.portable`. It depends only on `dev.eacl/eacl`, uses no
   host interop, and calls only core functions present in `8.0.0-RC-2026-09-12`,
-  so applications can adopt it without upgrading core.
+  with coordinated core fixes for exact context keys and canonical Boolean identities.
 - Evaluate complete and incomplete contexts with core's plan evaluator, after the
   same definition validation, context admission, bound-over-request merge and
   work preflight as the JVM module. Rebuild admitted host values in canonical

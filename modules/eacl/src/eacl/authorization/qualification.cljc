@@ -34,7 +34,7 @@
     (qualifier/error! :qualification-context))
   (let [prepared (if (and prepared-context
                           (or (not (contains? options :context))
-                              (identical? context (context/value prepared-context))))
+                              (context/prepared-for? prepared-context context)))
                    prepared-context
                    (context/prepare (or context {})))]
     (->Qualification time (context/value prepared) evaluator entity version basis cache
