@@ -67,8 +67,17 @@ expires.
 An operand whose dependency closure declares Caveats uses ordered point
 checks. A Caveat can fault, and reordering witnesses must not turn a demanded
 fault into a grant through a later witness. This decision is retained with the
-schema generation; plain and expiration-only operands keep the batched search.
-Evidence that could let access appear later also requires exact evaluation.
+schema generation. Other qualified operands use batching only after a
+request-local check certifies that their reachable relationship metadata is
+fault-free. Expiration qualifiers can be malformed too. This check includes
+guards and branches that the reordered search might skip, and reuses completed
+closures across the batch. Complete holding slices containing no qualifiers
+already certify their relation leaves and need no repeated validation.
+
+If this conservative check finds a fault or uncertain evidence, ordered
+evaluation decides whether it is actually demanded. Evidence that could let
+access appear later also requires exact evaluation. The extra verification
+uses the same bounded reads and graph-work limits as membership search.
 
 The same holds when the operator sits under a union, or when a union is an
 intersection's anchor:

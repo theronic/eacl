@@ -454,7 +454,7 @@
 ;; Membership decisions in the client cache
 ;; ---------------------------------------------------------------------------
 
-(def ^:private membership-point-version 1)
+(def ^:private membership-point-version 2)
 
 (defn- membership-key
   "The subproblem key of one subject's membership in the root of the plan
@@ -531,9 +531,9 @@
   nil)
 
 (def holdings-limit
-  "The largest per-relation holding set `check-many-eids` retains for one
-  subject. A relation the subject holds more often is decided per candidate
-  by the exact-bound probe instead."
+  "The default per-relation holding bound for one subject. Engine callers
+  may select `:holding-limit` for their point/page workload. Truncated slices
+  remain exact through bounded probes and extensions."
   256)
 
 (defn membership-context
@@ -708,7 +708,7 @@
   rules name for this subject type. The entry also retains, for the
   request, each resource's decided answer and one memo per evidence level;
   `:memo` is the plain level's."
-  [context fetch! plan subject-type subject-eid]
+  [context fetch! plan subject-type subject-eid holding-limit]
   (let [key [:subject (:fingerprint plan) subject-type subject-eid]]
     (or (get @context key)
         (let [reverse-rules (get-in plan [:indexes :reverse-rules])
@@ -724,9 +724,9 @@
                     (map (fn [[relation-eid resource-type wildcard-eid :as slice]]
                            (let [edges (fetch! (forward-scan subject-type (or wildcard-eid subject-eid)
                                                              relation-eid resource-type
-                                                             nil holdings-limit))]
+                                                             nil holding-limit))]
                              [slice {:any? (boolean (seq edges))
-                                     :complete? (< (count edges) holdings-limit)
+                                     :complete? (< (count edges) holding-limit)
                                      ;; Scans are strictly ordered by endpoint,
                                      ;; so a truncated scan still decides every
                                      ;; endpoint up to its last.
@@ -735,14 +735,43 @@
                                      :edges (into {} (map (juxt edge/endpoint identity))
                                                   edges)}])))
                     slices)
+              plain-relations
+              (into #{}
+                    (filter (fn [rule]
+                              (when (= :relation (:rule rule))
+                                (let [held (get holdings (holding-key subject-type rule))]
+                                  (and (:complete? held)
+                                       (every? (comp not vector?) (vals (:edges held))))))))
+                    (mapcat (fn [rule] (cons rule (mapcat :alternatives (:guards rule))))
+                            (mapcat identity (vals reverse-rules))))
+              ;; Complete unqualified holdings prove a leaf total at every
+              ;; resource. Remove these leaves/guards from the audit graph.
+              fault-rules
+              (update-vals
+               reverse-rules
+               (fn [rules]
+                 (into []
+                       (keep (fn [rule]
+                               (let [guards (filterv #(not (every? (fn [alternative]
+                                                                     (contains? plain-relations alternative))
+                                                                   (:alternatives %)))
+                                                     (:guards rule))]
+                                 (when-not (and (empty? guards) (contains? plain-relations rule))
+                                   (if (seq guards)
+                                     (assoc rule :guards guards)
+                                     (dissoc rule :guards))))))
+                       rules)))
               plain-memo (volatile! {})
               entry {:reverse-rules reverse-rules
                      :holdings holdings
+                     :plain-relations plain-relations
+                     :fault-rules fault-rules
                      :possible (possible-nodes reverse-rules subject-type holdings)
                      :memo plain-memo
                      :memos (volatile! {plain-level plain-memo})
                      :skips (volatile! {})
                      :answers (volatile! {})
+                     :fault-free (volatile! #{})
                      :guard-classes (volatile! {})
                      :extended (volatile! {})}]
           (add-membership-stats! {:holding-scans (count slices)})
@@ -1017,6 +1046,101 @@
                                                   holdings possible)
                                  (conj! visited frame))))))))))))
 
+(defn- fault-free-checker
+  "Certifies a request-local overapproximation of every relationship the
+   reordered search could skip. Absence of declared Caveats alone is not a
+   proof: an expiration qualifier can be malformed. Only a fully explored
+   closure is retained, including cycles; encountering uncertain evidence
+   defers the root to ordered evaluation without publishing any certificate.
+
+   Guards are included even when another guard would suppress their rule.
+   This can conservatively defer extra roots, but cannot hide a demanded
+   fault. All reads and graph work use the search's ordinary limits."
+  [{:keys [root subject-type probe intermediates qualify oracle step! admit!] :as search}
+   {:keys [fault-rules fault-free plain-relations]}]
+  (let [certain? (fn [value]
+                   (or (boolean? value)
+                       (and (evidence/complete? value)
+                            (boolean? (evidence/value value)))))
+        certain-edge? (fn [relation compact-edge]
+                        (or (not (vector? compact-edge))
+                            (certain? (qualify relation compact-edge))))
+        held (fn [rule eid]
+               (certain-edge? (:relation-eid rule)
+                              (probe (:relation-eid rule) (:resource-type rule) eid
+                                     (:wildcard-eid rule))))
+        successor (fn [stack target eid]
+                    (let [state [target eid]]
+                      (if (contains? @fault-free state) stack (conj stack state))))
+        expand
+        (fn [stack rule eid]
+          (case (:rule rule)
+            :relation
+            (when (or (contains? plain-relations rule)
+                      (not= subject-type (:subject-type rule)) (held rule eid))
+              stack)
+            :oracle
+            (when (certain? (oracle (:target-node rule) eid)) stack)
+            :self-permission
+            (successor stack (:target-node rule) eid)
+            (:arrow-relation :arrow-permission :arrow-oracle)
+            (if (and (= :arrow-relation (:rule rule))
+                     (not= subject-type (:target-subject-type rule)))
+              stack
+              (reduce
+               (fn [stack compact-edge]
+                 (let [via (if (vector? compact-edge)
+                             (qualify (:via-relation-eid rule) compact-edge)
+                             true)
+                       endpoint (edge/endpoint compact-edge)]
+                   (cond
+                     (not (certain? via)) (reduced nil)
+                     (evidence/no? via) stack
+                     (= :arrow-permission (:rule rule)) (successor stack (:target-node rule) endpoint)
+                     :else
+                     (if (if (= :arrow-oracle (:rule rule))
+                           (certain? (oracle (:target-node rule) endpoint))
+                           (certain-edge? (:target-relation-eid rule)
+                                          (probe (:target-relation-eid rule)
+                                                 (:intermediate-type rule) endpoint
+                                                 (:wildcard-eid rule))))
+                       stack (reduced nil)))))
+               stack
+               (intermediates (:resource-type rule) eid (:via-relation-eid rule)
+                              (:intermediate-type rule))))))]
+    (fn [resource-eid]
+      (loop [stack [[root resource-eid]] visited #{}]
+        (if (empty? stack)
+          (do (vswap! fault-free into visited) true)
+          (let [[node eid :as frame] (peek stack)
+                stack (pop stack)]
+            (step! (count stack))
+            (if (or (contains? @fault-free frame) (contains? visited frame))
+              (recur stack visited)
+              (do
+                (admit!)
+                (if-let [next-stack
+                         (reduce
+                          (fn [stack rule]
+                            (if (if-let [guards (:guards rule)]
+                                  (every? (fn [guard]
+                                            (or (every? #(contains? plain-relations %) (:alternatives guard))
+                                                (every? #(or (= :absent %) (vector? %))
+                                                        (guard-classes search guard eid))))
+                                          guards)
+                                  true)
+                              (or (expand stack rule eid) (reduced nil))
+                              (reduced nil)))
+                          stack (get fault-rules node))]
+                  (if (empty? next-stack)
+                    (do
+                      (if (empty? visited)
+                        (vswap! fault-free conj frame)
+                        (vswap! fault-free #(into (conj % frame) visited)))
+                      true)
+                    (recur next-stack (conj visited frame)))
+                  false)))))))))
+
 (defn ^:no-doc decide-leveled
   "Decides one resource level by level. The first search keeps only plain
   evidence; each later one keeps the evidence lasting until the latest
@@ -1082,6 +1206,10 @@
   falling back on an encountered fault cannot recover a fault hidden by an
   earlier decisive witness. Engine operand admission enforces this condition
   by routing closures that declare Caveats to ordered evaluation instead.
+  Production callers also set `:verify-fault-freedom?` to discharge the
+  data-dependent part of this precondition, including malformed expiration
+  qualifiers. Direct kernel/model callers can supply their own total-input
+  proof instead.
 
   - A decisive answer is plain true, or true until the latest first-expiry
     over its witness paths (`decide-leveled`). That certificate is sound and
@@ -1114,9 +1242,11 @@
   resource the search defers. An oracle's false that ends at a deadline is
   conditional (`oracle-class`), so a search that meets it defers too."
   [{:keys [fetch-fn adapter plan subject-type subject-eid resource-eids
-           context cut-point! physical-chunk-size qualification oracle fallback
+           context cut-point! physical-chunk-size qualification oracle fallback verify-fault-freedom?
+           holding-limit
            max-admissions max-commands max-transitions max-values max-stack]
-    :or {physical-chunk-size reducer/default-physical-chunk-size
+    :or {holding-limit holdings-limit
+         physical-chunk-size reducer/default-physical-chunk-size
          max-admissions reducer/default-max-admissions
          max-commands reducer/default-max-commands
          max-transitions reducer/default-max-transitions
@@ -1149,7 +1279,7 @@
                      (aset counts 2 (inc (aget counts 2)))
                      (aset counts 3 (+ (aget counts 3) (count values)))
                      values))
-          entry (membership-entry context fetch! plan subject-type subject-eid)
+          entry (membership-entry context fetch! plan subject-type subject-eid holding-limit)
           holdings (:holdings entry)
           answers (:answers entry)
           root (:root plan)
@@ -1218,6 +1348,8 @@
                                        {:max-admissions max-admissions
                                         :staged 1}))
                      (aset counts 0 (inc (aget counts 0))))}
+          fault-free? (when (and qualification verify-fault-freedom?)
+                        (fault-free-checker search entry))
           searched (volatile! 0)
           reused (volatile! 0)
           computed (volatile! #{})
@@ -1250,7 +1382,9 @@
                             (do (vswap! reused inc)
                                 (vswap! answers assoc resource-eid cached)
                                 cached)
-                            (let [value (decide-leveled search entry resource-eid)]
+                            (let [value (if (and fault-free? (not (fault-free? resource-eid)))
+                                          ::qualified
+                                          (decide-leveled search entry resource-eid))]
                               (vswap! searched inc)
                               (vswap! computed conj resource-eid)
                               (when-not (= ::qualified value)

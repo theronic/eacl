@@ -944,7 +944,7 @@
     ;; delegated operand's own union plan, or else by the flattened
     ;; generator over the union-only permissions' union plans.
     :recursive-generator :flattened-guarded-generator-v1
-    :qualified-membership :ordered-caveat-operands-v1
+    :qualified-membership :certified-fault-free-operands-v2
     :membership-subjects :typed-wildcard-variants-v1
     :versions
     {:cover operator-plan/cover-version
@@ -1912,6 +1912,10 @@
                        {:adapter db
                         :fetch-fn fetch-fn
                         :qualification *qualification*
+                        :verify-fault-freedom? true
+                        ;; A point visits few resources; a page amortizes a
+                        ;; larger holding slice and its metadata certificate.
+                        :holding-limit (if (= :point mode) 64 512)
                         :cut-point! (stable-cut-point)})
         point (fn [permission candidates]
                 (let [options (assoc options :plan (stable-plan db permission))]

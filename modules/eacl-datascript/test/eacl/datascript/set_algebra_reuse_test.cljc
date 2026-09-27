@@ -145,7 +145,7 @@
                                [:folder :reader :user]])
           caveat (ds/entid db [:eacl.caveat/name "enabled"])]
       (ds/transact! conn [{:db/id reader :eacl.relation/caveats [caveat]
-                          :eacl.relation/allows-unqualified? true}])
+                           :eacl.relation/allows-unqualified? true}])
       (staged/write! (qualifiers/writer conn) :create
                      [:user (ds/entid db [:eacl/id "alice"]) reader :folder (ds/entid db [:eacl/id "f1"])]
                      {:caveat caveat :valid-until-ms 200}))
@@ -279,7 +279,12 @@
                 (update-in snapshot [:entries (index membership) :value :valid-until-ms]
                            (fnil inc 1000))]
                [:certified-value-under-a-plain-key
-                (update-in snapshot [:entries (index membership) :key 2 4] pop)]]]
+                (update-in snapshot [:entries (index membership) :key 2 4] pop)]
+               [:before-fault-free-admission
+                (assoc-in snapshot
+                          [:entries (index membership) :key 2 3 :compiler-plan-compatibility
+                           :operator-plan :qualified-membership]
+                          :ordered-caveat-operands-v1)]]]
         (let [target (datascript/make-client conn options)]
           (is (= :eacl/incompatible-cache-snapshot
                  (error-type #(datascript/restore-cache-snapshot! target tampered bounds)))

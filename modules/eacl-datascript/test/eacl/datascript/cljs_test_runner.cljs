@@ -121,6 +121,7 @@
             [eacl.datascript.set-algebra-reuse-test]
             [eacl.datascript.operator-fault-demand-test]
             [eacl.engine.wildcard-membership-test]
+            [eacl.engine.fault-free-membership-test]
             [eacl.datascript.set-algebra-reuse-differential-test]
             [eacl.datascript.storage-test]))
 
@@ -255,6 +256,7 @@
                'eacl.datascript.set-algebra-reuse-test
                'eacl.datascript.operator-fault-demand-test
                'eacl.engine.wildcard-membership-test
+               'eacl.engine.fault-free-membership-test
                'eacl.datascript.set-algebra-reuse-differential-test
                'eacl.datascript.storage-test))
 
