@@ -66,8 +66,9 @@ inputs. The whole-tree formal gate retains its stronger existing reporting
 requirements. Production refinement, native conformance, mutation controls
 against production, performance qualification, and semantic activation remain
 Phase 3 implementation obligations. The repository's broader mechanized host
-refinement and independent review obligations remain explicit in the assurance
-manifest; model success does not discharge them.
+refinement obligations remain explicit in the assurance manifest; model success
+does not discharge them. Independent review is deferred to a later
+external-certification stage.
 
 Bundled adapters expose a bounded `:qualification-data` operation only with the paired `:bounded-snapshot-data-v1` capability. The read preserves unknown attributes, returns the qualifier marker assertion version from the same basis, and charges every consumed fact, including the overflow witness. Datalevin uses its native prefix limit within the selected owned read snapshot and returns no uncertified assertion version. Shared native fixtures cover the four adapters, Datahike attribute refs, ordinary zero-read behavior, per-request fetch reuse, and fact/command accounting.
 

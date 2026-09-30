@@ -5,7 +5,8 @@ complementary. Models never execute in the authorization dependency closure.
 `bin/formal fast` runs both the foundation and qualified gates. Every production
 mutation first runs its unchanged test gate successfully, then must make that
 same gate fail. These checks do not substitute for the broader host refinement
-and independent review obligations recorded in the assurance manifest.
+obligations recorded in the assurance manifest. Independent review is deferred
+to a later external-certification stage.
 
 | Obligation | Production refinement / conformance |
 |---|---|

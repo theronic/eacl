@@ -52,8 +52,9 @@ single-snapshot test is represented as proof of unavailable history.
 
 Qualifiers and Caveat definitions remain inert for serving in Phase 2. The
 release assurance status remains conditional, including the repository's
-existing independent-review and host/backend refinement obligations. Passing
-this gate is permission to implement the staged foundation, not a claim that
+existing host/backend refinement obligations. Independent review is deferred
+to a later external-certification stage. Passing this gate is permission to
+implement the staged foundation, not a claim that
 qualified authorization has shipped.
 
 ## Pre-implementation checkpoint

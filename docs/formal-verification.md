@@ -5,8 +5,9 @@ adapter, runtime, and cryptographic assumptions. It does not verify Clojure,
 ClojureScript, storage engines, compilers, cryptographic primitives, or a
 customer's policy intent. The current release manifest reports
 `:conditionally-verified`: production routing, cross-adapter campaigns, and
-performance gates pass, while independent security/formal-methods review
-remains an explicit unmet release obligation. Two verified bodies now coexist.
+performance gates pass, while mechanized host, cache, ClojureScript, and
+backend-adapter source refinements remain open. Independent review is deferred
+to a later external-certification stage. Two verified bodies now coexist.
 Enumeration, point checks, and counts run on the hand-written CLJC
 stable-discovery engine (`eacl.engine.sealed-plan`, `stable-reducer`,
 `stable-page`, `stable-route`) on both targets; its evidence is the

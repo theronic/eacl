@@ -122,8 +122,8 @@ sequence and therefore that the modeled production fold equals the canonical
 balanced fold, rather than relying on that implication informally.
 Generated Java and JavaScript execute that source model against the CLJ/CLJS
 implementation. The final Clojure-language/sequence-semantics correspondence is
-digest-locked trusted refinement pending independent review, not a Dafny proof
-of the Clojure runtime.
+digest-locked trusted refinement pending mechanized Clojure source refinement,
+not a Dafny proof of the Clojure runtime.
 
 The acyclic arrow intersection fast path has the same source-specialization
 discipline. `AcyclicEngine.dfy` models the 16-element linear probe, inclusive

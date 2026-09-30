@@ -185,9 +185,9 @@ section-10 source-refinement obligation.
 
 `formal/assurance_contract.clj` records the proof-count ratchets and remaining
 obligations. Current proof counts, source digests, temporal checks, mutations,
-and cross-runtime vectors are derived or executed by CI. No independent proof
-review has been performed, and the release policy records that absence rather
-than claiming external certification.
+and cross-runtime vectors are derived or executed by CI. Independent review is
+deferred to a later external-certification stage; it is not a current release
+obligation. No external certification is claimed.
 
 ### Concrete operator Phase B boundary
 
@@ -210,9 +210,9 @@ current digests and results are generated under `target/formal/verification/`. T
 measured production performance and the explicit route/write enablement gates
 have passed. Public expression writes and public routing are enabled by
 default; explicit dynamic bindings exercise both disabled paths, and the four
-gate combinations preserve union-only public behavior. The absence of an
-independent review remains recorded as a qualification and is not an operator
-action or execution prerequisite.
+gate combinations preserve union-only public behavior. Independent review is
+reserved for a later external-certification stage and is not an operator
+action, execution prerequisite, or current release gate.
 
 ### Portable ClojureScript authority boundary
 

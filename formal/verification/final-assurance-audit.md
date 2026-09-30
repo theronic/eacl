@@ -2,6 +2,8 @@
 
 > Supersession note (2026-08-15). This audit describes the interim v8 engines in which the generated indexed kernel was the JVM traversal authority. `adopt-stable-discovery-enumeration` (routed 2026-08-14) replaced traversal with the hand-written CLJC stable-discovery engine; the generated kernel now serves only the four surrounding pure decisions. Read the traversal-authority claims below as the state audited on 2026-08-07, not the current one; the cursor note that follows already records the earlier supersession.
 
+> Release-policy update (2026-09-30). The independent-review requirement described below was deferred to a later external-certification stage. The live obligations are in `formal/assurance_contract.clj`.
+
 Date: 2026-08-07
 
 Supersession note (2026-08-08): the cursor-rebase/restart conclusions and

@@ -183,8 +183,7 @@
     :runtime-targets [:clj-java :cljs-javascript]
     :remaining [:production-refinement-and-mutations
                 :performance-and-cross-backend-qualification
-                :semantic-epoch-activation
-                :independent-review]}
+                :semantic-epoch-activation]}
    {:operation :staged-caveat-qualifier-foundation
     :entry-points ['eacl.relationships.qualifier/normalize
                    'eacl.relationships.qualifier/decode
@@ -218,8 +217,7 @@
                           :canonical-context-and-plan-encoding
                           :bounded-cel-value-and-error-conversion]
     :runtime-targets [:clj-java :cljs-javascript]
-    :remaining [:phase-3-serving-activation
-                :independent-review]}
+    :remaining [:phase-3-serving-activation]}
    {:operation :qualifier-cleanup-sweep
     :entry-points ['eacl.relationships.qualifier-integrity/cleanup-sweep!]
     :theorems [:own-cleanup-preserves-remaining-absence
@@ -230,7 +228,7 @@
                           :candidate-fact-assertions
                           :bounded-streaming-proof-capture]
     :runtime-targets [:clj-java :cljs-javascript]
-    :remaining [:independent-review]}
+    :remaining []}
    {:operation :execution-contract
     :entry-points
     ['eacl.execution/normalize 'eacl.engine.v8/lookup-resources]
@@ -252,8 +250,7 @@
     :runtime-targets [:clj-java :cljs-javascript]
     :remaining
     [:mechanized-host-control-source-refinement
-     :trusted-monotonic-clock-platform-contract
-     :independent-review]}
+     :trusted-monotonic-clock-platform-contract]}
    {:operation :expand-permission-tree
     :entry-points ['eacl.permission-tree/expand]
     :theorems
@@ -280,8 +277,7 @@
     :remaining
     [:adapter-query-and-codec-source-refinement
      :deadline-and-host-integer-platform-contracts
-     :causal-token-authentication
-     :independent-review]}
+     :causal-token-authentication]}
    {:operation :can?
     :entry-points ['eacl.core/can?]
     :theorems
@@ -315,9 +311,8 @@
     :runtime-targets [:clj-java :cljs-javascript]
     :remaining
     [:acyclic-direct-callback-semantic-refinement
-     :acyclic-optimized-clojure-language-refinement-and-independent-review
-     :backend-permission-path-to-indexed-routing-edge-source-refinement
-     :independent-review]}
+     :acyclic-optimized-clojure-language-refinement
+     :backend-permission-path-to-indexed-routing-edge-source-refinement]}
    {:operation :lookup
     :entry-points ['eacl.core/lookup-resources 'eacl.core/lookup-subjects]
     :theorems
@@ -349,9 +344,8 @@
      :permission-node-completeness]
     :runtime-targets [:clj-java :cljs-javascript]
     :remaining
-    [:acyclic-optimized-clojure-language-refinement-and-independent-review
-     :backend-permission-path-to-indexed-routing-edge-source-refinement
-     :independent-review]}
+    [:acyclic-optimized-clojure-language-refinement
+     :backend-permission-path-to-indexed-routing-edge-source-refinement]}
    {:operation :count
     :entry-points ['eacl.core/count-resources 'eacl.core/count-subjects]
     :theorems
@@ -371,9 +365,8 @@
      :ordered-complete-scans]
     :runtime-targets [:clj-java :cljs-javascript]
     :remaining
-    [:acyclic-optimized-clojure-language-refinement-and-independent-review
-     :backend-permission-path-to-indexed-routing-edge-source-refinement
-     :independent-review]}
+    [:acyclic-optimized-clojure-language-refinement
+     :backend-permission-path-to-indexed-routing-edge-source-refinement]}
    {:operation :snapshot-consistency-selection
     :entry-points
     ['eacl.consistency/selection-plan
@@ -403,8 +396,7 @@
     :runtime-targets [:clj-java :cljs-javascript]
     :remaining
     [:backend-selection-source-refinement
-     :authenticated-token-decoder-refinement
-     :independent-review]}
+     :authenticated-token-decoder-refinement]}
    {:operation :lookup-cursor-continuation
     :entry-points ['eacl.client.orchestration/cursor-options 'eacl.relay]
     :theorems
@@ -443,8 +435,7 @@
     :runtime-targets [:clj-java :cljs-javascript]
     :remaining
     [:mechanized-host-cursor-proof-strategy-source-refinement
-     :backend-proof-construction-refinement
-     :independent-review]}
+     :backend-proof-construction-refinement]}
    {:operation :frame-keyed-checkpoint-resume
     :entry-points
     ['eacl.engine.v8/checkpoint-key
@@ -474,8 +465,7 @@
     :runtime-targets [:clj-java :cljs-javascript]
     :remaining
     [:mechanized-host-checkpoint-key-source-refinement
-     :backend-proof-construction-refinement
-     :independent-review]}
+     :backend-proof-construction-refinement]}
    {:operation :acyclic-frontier-alias-canonicalization
     :entry-points ['eacl.engine.sealed-plan/derive-execution-frontier]
     :theorems
@@ -490,8 +480,7 @@
     :runtime-targets [:clj-java :cljs-javascript]
     :remaining
     [:mechanized-host-alias-canonicalization-source-refinement
-     :backend-permission-body-materialization-refinement
-     :independent-review]}
+     :backend-permission-body-materialization-refinement]}
    {:operation :relationship-pagination
     :entry-points
     ['eacl.engine.relationships/execute-page
@@ -541,7 +530,7 @@
     :remaining
     [:backend-permission-path-materialization-source-refinement
      :proofless-and-raw-snapshot-generated-authority
-     :independent-host-source-refinement-review
+     :independent-host-source-refinement
      :allocation-retained-heap-and-latency-platform-contracts]}
    {:operation :indexed-traversal-transition
     :entry-points
@@ -597,7 +586,7 @@
      :identity-round-trip
      :compiled-plan-refinement]
     :runtime-targets [:clj-java :cljs-javascript]
-    :remaining [:production-adapter-source-refinement :independent-review]}
+    :remaining [:production-adapter-source-refinement]}
    {:operation :abstract-operator-engine-phase-a
     :entry-points
     ["EaclKernel.__default/DecideOperatorBatch"
@@ -732,8 +721,7 @@
      :strictly-ordered-unique-eid-scans]
     :runtime-targets [:clj-java :cljs-javascript]
     :remaining
-    [:mechanized-host-search-source-refinement
-     :independent-review]}
+    [:mechanized-host-search-source-refinement]}
    {:operation :set-algebra-result-reuse
     ;; Operand and operator point decisions are reused across the requests of
     ;; one client, across evaluation times within their certificates, and
@@ -777,8 +765,7 @@
      :deterministic-evaluation-at-one-basis-and-time]
     :runtime-targets [:clj-java :cljs-javascript]
     :remaining
-    [:mechanized-host-cache-source-refinement
-     :independent-review]}
+    [:mechanized-host-cache-source-refinement]}
    {:operation :cache-reuse
     :entry-points ['eacl.cache 'eacl.subproblem-cache]
     :theorems
@@ -841,27 +828,27 @@
      :complete-portable-error-comparison]
     :converter-categories
     '{:schema-ir
-     [object->dafny dafny-object->object permission-node relation-node
-      rule-definition]
-     :relationships [relationship->dafny]
-     :queries
-     [authorization-inputs traversal-limits page-presence indexed-render-mode]
-     :adapter-callbacks
-     [indexed-projection indexed-scan-decision indexed-rule relation-binding
-      indexed-plan-decision indexed-seed-decision indexed-limits
-      indexed-projection-value indexed-command-value indexed-counters-value
-      compile-indexed-plan indexed-init indexed-drive indexed-continue-page
-     indexed-resume]
-     :cache-and-cursors
-     [exact-selection continuation-decision]
-     :results
-     [work-counters sequence-outcome boolean-outcome count-outcome
-      authorization-outcome page-decision keyset-page-decision
-      consistency-plan-decision consistency-selection-decision
-      ordered-merge-decision ordered-merge-chunk indexed-public-result]
-     :typed-errors
-     [limit-kind page-error consistency-error indexed-scan-rejection-reason
-      indexed-plan-rejection-reason indexed-limit-kind indexed-render-error]}
+      [object->dafny dafny-object->object permission-node relation-node
+       rule-definition]
+      :relationships [relationship->dafny]
+      :queries
+      [authorization-inputs traversal-limits page-presence indexed-render-mode]
+      :adapter-callbacks
+      [indexed-projection indexed-scan-decision indexed-rule relation-binding
+       indexed-plan-decision indexed-seed-decision indexed-limits
+       indexed-projection-value indexed-command-value indexed-counters-value
+       compile-indexed-plan indexed-init indexed-drive indexed-continue-page
+       indexed-resume]
+      :cache-and-cursors
+      [exact-selection continuation-decision]
+      :results
+      [work-counters sequence-outcome boolean-outcome count-outcome
+       authorization-outcome page-decision keyset-page-decision
+       consistency-plan-decision consistency-selection-decision
+       ordered-merge-decision ordered-merge-chunk indexed-public-result]
+      :typed-errors
+      [limit-kind page-error consistency-error indexed-scan-rejection-reason
+       indexed-plan-rejection-reason indexed-limit-kind indexed-render-error]}
     :runtime-sources
     {:clj-java "modules/eacl/src/eacl/formal/production_kernel.clj"
      :cljs-javascript
@@ -892,8 +879,7 @@
    [:mechanized-host-control-source-refinement
     :mechanized-clj-cache-transition-source-refinement
     :mechanized-cljs-production-authority-refinement
-    :mechanized-backend-adapter-conversion-refinement
-    :independent-security-formal-review]
+    :mechanized-backend-adapter-conversion-refinement]
    :residual-assumptions
    [:verification-toolchain
     :generated-code-compilers
