@@ -32,6 +32,18 @@
 (def order-abi 2)
 (def token-domain "eacl/stable-page/v2")
 (def token-prefix "eacl_sd2.")
+(def maximum-token-size
+  ;; The canonical encoder bounds UTF-16 units. Four UTF-8 bytes per unit is
+  ;; conservative, and Base64 expansion is at most four characters per three
+  ;; bytes. Reject larger input before decoding or consulting an adapter.
+  (+ (count token-prefix)
+     (* 4 (quot (+ (* 4 secure-format/default-maximum-size) 2) 3))
+     1 43))
+
+(defn ^:no-doc now-seconds []
+  (quot #?(:clj (System/currentTimeMillis)
+           :cljs (.now js/Date))
+        1000))
 
 (defn- page-error!
   [error message data]
@@ -92,9 +104,7 @@
                     (assoc :ordinal ordinal :boundary boundary)
                     (cond-> (:token-ttl-seconds options)
                       (assoc :expires-at
-                             (+ (quot #?(:clj (System/currentTimeMillis)
-                                         :cljs (.now js/Date))
-                                      1000)
+                             (+ (now-seconds)
                                 (long (:token-ttl-seconds options))))))
         encoded (secure-format/encode-canonical payload)
         payload-bytes (secure-format/utf8-bytes encoded)
@@ -111,7 +121,9 @@
       (and (string? token) (string/starts-with? token "eacl_sd1."))
       (page-error! :eacl.page/cursor-upgrade-required "Obsolete cursor format; obtain a fresh first page." {})
 
-      (and (string? token) (string/starts-with? token token-prefix)) nil
+      (and (string? token)
+           (<= (count token) maximum-token-size)
+           (string/starts-with? token token-prefix)) nil
 
       :else (page-error! :eacl.page/invalid-cursor "Unrecognized cursor format." {}))))
 
@@ -139,11 +151,19 @@
                          "Cursor failed authentication." {}))
         payload (secure-format/decode-canonical
                  (secure-format/bytes->utf8 payload-bytes))]
+    (when-not (and (map? payload)
+                   (contains? #{(conj (set (keys binding)) :ordinal :boundary)
+                                (conj (set (keys binding)) :ordinal :boundary :expires-at)}
+                              (set (keys payload)))
+                   (integer? (:ordinal payload))
+                   (<= 1 (:ordinal payload) secure-format/maximum-safe-integer)
+                   (some? (:boundary payload))
+                   (or (not (contains? payload :expires-at))
+                       (and (integer? (:expires-at payload))
+                            (<= 0 (:expires-at payload) secure-format/maximum-safe-integer))))
+      (page-error! :eacl.page/invalid-cursor "Malformed cursor payload." {}))
     (when-let [expires-at (:expires-at payload)]
-      (when (> (quot #?(:clj (System/currentTimeMillis)
-                        :cljs (.now js/Date))
-                     1000)
-               (long expires-at))
+      (when (>= (now-seconds) expires-at)
         (page-error! :eacl.page/expired-cursor "Cursor expired."
                      {:expires-at expires-at})))
     (doseq [field [:v :order-abi :fingerprint :source-scope :lifecycle :direction
@@ -560,12 +580,19 @@
   [{:keys [adapter anchor after before checkpoints] :as options}]
   (require-token-format! after)
   (require-token-format! before)
+  (when (and after before)
+    (page-error! :eacl.page/invalid-cursor
+                 "A page accepts only one cursor direction." {}))
+  (when-not (and (integer? (:page-size options))
+                 (<= 1 (:page-size options) secure-format/maximum-safe-integer))
+    (page-error! :eacl.page/invalid-page-size
+                 "Page size must be a positive exact integer." {}))
   (let [binding (execution-binding options)
         key (checkpoint-key binding)
-        anchor-eid (backend/invoke adapter :object-id->internal
-                                   (second anchor))
         payload (when-let [token (or after before)]
                   (decode-token options binding token))
+        anchor-eid (backend/invoke adapter :object-id->internal
+                                   (second anchor))
         boundary-eid (when payload
                        (backend/invoke (:adapter options)
                                        :object-id->internal

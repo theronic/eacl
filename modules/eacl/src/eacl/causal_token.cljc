@@ -149,7 +149,7 @@
                (invalid-token! (:reason (ex-data error)) {}))))
          payload (validate-payload! payload)
          now (or (:now-seconds options) (now-seconds))]
-     (when (> now (:expires-at payload))
+     (when (>= now (:expires-at payload))
        (invalid-token! :expired {:expired-at (:expires-at payload)}))
      (when (and expected-scope
                 (not= expected-scope

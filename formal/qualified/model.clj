@@ -4,7 +4,16 @@
   (:require [clojure.set :as set]
             [eacl.formal.caveats.model :as lifecycle]))
 
-(defn worlds [fields] (set (range (bit-shift-left 1 fields))))
+(def maximum-fields 16)
+
+(defn worlds [fields]
+  ;; A JVM bit shift wraps its distance at the machine word width. Reject
+  ;; unsupported finite domains instead of proving claims over an accidental
+  ;; empty universe when the requested field count is too large.
+  (when-not (and (integer? fields) (<= 0 fields maximum-fields))
+    (throw (ex-info "Qualified model field count is outside its finite domain."
+                    {:fields fields :maximum-fields maximum-fields})))
+  (set (range (bit-shift-left 1 fields))))
 (defn value [xs] {:worlds xs})
 (defn fault [reason] {:fault #{reason}})
 (defn kind [universe x]
@@ -98,13 +107,13 @@
 
 (defn recursive-step [universe base rules prior]
   (reduce-kv
-    (fn [out node initial]
-      (assoc out node
-             (reduce (fn [acc [edge-evidence target]]
-                       (combine universe :union acc
-                                (combine universe :arrow edge-evidence (get prior target))))
-                     initial (get rules node))))
-    {} base))
+   (fn [out node initial]
+     (assoc out node
+            (reduce (fn [acc [edge-evidence target]]
+                      (combine universe :union acc
+                               (combine universe :arrow edge-evidence (get prior target))))
+                    initial (get rules node))))
+   {} base))
 
 (defn fixed-point
   "Bounded positive SCC iteration. Fault propagation is an additional finite
@@ -132,13 +141,13 @@
   (let [{:keys [scope basis ancestors time]} selected
         {:keys [start evidence]} entry]
     (boolean
-      (and (:authenticated? entry) (scope-valid? scope) (= scope (:scope entry))
-           (before? start (:end evidence))
-           (or (= basis (:basis entry)) (contains? ancestors (:basis entry)))
-           (= (:kind entry) (kind universe (:value evidence)))
-           (not= :failure (:kind entry))
-           (or (and (= basis (:basis entry)) (= time start))
-               (and (:complete? evidence) (<= start time) (before? time (:end evidence))))))))
+     (and (:authenticated? entry) (scope-valid? scope) (= scope (:scope entry))
+          (before? start (:end evidence))
+          (or (= basis (:basis entry)) (contains? ancestors (:basis entry)))
+          (= (:kind entry) (kind universe (:value evidence)))
+          (not= :failure (:kind entry))
+          (or (and (= basis (:basis entry)) (= time start))
+              (and (:complete? evidence) (<= start time) (before? time (:end evidence))))))))
 
 (defn cursor-decision [universe cursor selected]
   (let [{:keys [entry mode token-expiry retained-complete?]} cursor
@@ -148,12 +157,12 @@
       (not= (:scope entry) (:scope selected)) :scope-mismatch
       (not (accept-cache? universe entry selected)) :restart-required
       (= :pinned mode) (if (and (= basis (:basis entry)) (= time (:start entry)))
-                        :continue :restart-required)
+                         :continue :restart-required)
       (= :live mode) (if (and (<= (:start entry) time)
-                             (or (= (:start entry) time)
-                                 (and retained-complete? (get-in entry [:evidence :complete?])
-                                      (before? time (get-in entry [:evidence :end])))))
-                      :continue :restart-required)
+                              (or (= (:start entry) time)
+                                  (and retained-complete? (get-in entry [:evidence :complete?])
+                                       (before? time (get-in entry [:evidence :end])))))
+                       :continue :restart-required)
       :else :invalid-token)))
 
 (defn cursor-certificate

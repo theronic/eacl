@@ -120,8 +120,8 @@
       (is (= (:fetched-values after) (:fetched-values consumed)))
       (is (= (+ 3 (:fetched-values after) 1) (:allocation-proxy consumed)))
       (doseq [[limit maximum kind] [[:max-commands 2 :commands]
-                                   [:max-fetched-values 1 :fetched-values]
-                                   [:max-allocation-proxy 3 :allocation-proxy]]]
+                                    [:max-fetched-values 1 :fetched-values]
+                                    [:max-allocation-proxy 3 :allocation-proxy]]]
         (is (= kind
                (try (batch/check-aggregate-limits! (batch/normalize-client-limits {limit maximum}) consumed 0) nil
                     (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
@@ -130,6 +130,8 @@
 (deftest ordinary-edges-touch-no-request-state
   (is (true? (q/qualify nil nil 123)))
   (is (false? (q/qualify nil nil nil)))
+  (doseq [invalid [false true "123" {:eid 123} -1]]
+    (is (evidence/fault? (q/qualify nil nil invalid))))
   (let [r (request)]
     (dotimes [i 100] (is (true? (q/qualify r 1 i))))
     (is (not (realized? (:memos r))))))
@@ -170,7 +172,7 @@
     (is (= 1 (get @reads 3)))
     (is (= 1 (lru/entry-count cache)))
     (doseq [basis [{:source "s" :lifecycle "reset" :revision 1}
-                  {:source "s" :lifecycle "l" :revision 2}]]
+                   {:source "s" :lifecycle "l" :revision 2}]]
       (let [db (assoc-in fixture [3 :eacl.relationship-qualifier/valid-until-ms] 98)
             r (request {:db db :basis basis :cache cache :reads reads})]
         (is (false? (q/qualify r 1 [10 3])))))

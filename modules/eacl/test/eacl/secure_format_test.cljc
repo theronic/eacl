@@ -113,7 +113,7 @@
     (str prefix
          (secure/b64url-encode
           (secure/utf8-bytes
-          (secure/encode-canonical envelope'))))))
+           (secure/encode-canonical envelope'))))))
 
 (defn- tamper-compact-authenticator
   [token]
@@ -380,8 +380,8 @@
             (error-data
              #(token/token-data
                (assoc options :now-seconds
-                      (inc (:expires-at
-                            (token/token-data options encoded))))
+                      (:expires-at
+                       (token/token-data options encoded)))
                encoded)))))
     (is (= :malformed-token
            (:reason
@@ -459,7 +459,7 @@
                     "proof-secret-98bd"]]
       (is (not (str/includes? token-a secret))))
     (is (= value (cursor/token->cursor token-a
-                                      (assoc options :now-seconds 100))))))
+                                       (assoc options :now-seconds 100))))))
 
 (deftest encrypted-cursor-size-bound-rejects-instead-of-truncating-test
   (let [value {:v 12 :scope (apply str (repeat 80 "x"))}
@@ -518,7 +518,7 @@
     (testing "a token minted by this cache skips repeated authenticated decode"
       (let [decode-work (atom {})]
         (binding [cursor/*codec-work* decode-work]
-        (is (= value
+          (is (= value
                  (cursor/token->cursor encoded cached-options)))
           (is (empty? @decode-work)))))
     (testing "an unknown token still passes through authenticated decoding"

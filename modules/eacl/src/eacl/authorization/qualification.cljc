@@ -257,7 +257,11 @@
    faults remain faults, including faults on subtracting edges."
   [request relation-id compact-edge]
   (if-not (vector? compact-edge)
-    (some? compact-edge)
+    (if (nil? compact-edge)
+      false
+      (if (edge/valid? compact-edge)
+        true
+        (evidence/fault :eacl.qualifier/invalid :qualifier-ref)))
     (do
       (execution/check! :qualifier-resolution)
       (try

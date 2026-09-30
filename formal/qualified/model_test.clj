@@ -9,6 +9,12 @@
 (def subsets (mapv (fn [mask] (set (filter #(bit-test mask %) universe))) (range 16)))
 (def outcomes (into (mapv m/value subsets) [(m/fault :invalid) (m/fault :evaluator)]))
 
+(deftest finite-world-enumeration-never-wraps
+  (is (= #{0} (m/worlds 0)))
+  (is (= #{0 1 2 3} (m/worlds 2)))
+  (doseq [fields [-1 1.5 (inc m/maximum-fields) 32]]
+    (is (thrown? clojure.lang.ExceptionInfo (m/worlds fields)))))
+
 (defn boolean-compose [op a b]
   (case op :union (or a b) :intersection (and a b)
         :arrow (and a b) :exclusion (and a (not b))))
@@ -152,8 +158,8 @@
         certificate (m/cursor-certificate [skipped-ban emitted] [lookahead] true)]
     (is (= {:end 100 :complete? true} certificate))
     (is (not (:complete? (m/cursor-certificate [emitted] [] false))))
-      (is (not (:complete? (m/cursor-certificate [emitted]
-                                                 [(assoc lookahead :complete? false)] true))))))
+    (is (not (:complete? (m/cursor-certificate [emitted]
+                                               [(assoc lookahead :complete? false)] true))))))
 
 (deftest recursive-certificate-follows-expiring-subtracting-base-evidence
   (doseq [mask (range 512)]
