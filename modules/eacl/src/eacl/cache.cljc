@@ -1246,10 +1246,20 @@
         original-snapshot snapshot
         ;; JVM UUIDs are immutable. CLJS trusted decoded inputs still need
         ;; capture: freezing an ingress option does not own imported keys.
+        ;; Each entry is captured under the value bound; `max-entries` already
+        ;; bounds their number. One value bound over the whole snapshot
+        ;; rejected a client's own export once its cache held a few hundred
+        ;; entries.
         snapshot #?(:clj snapshot
                     :cljs (try
-                            (secure/capture-portable snapshot {:maximum-depth 64
-                                                               :maximum-entries 131072})
+                            (let [entries (:entries snapshot)
+                                  captured (mapv #(secure/capture-portable
+                                                   % {:maximum-depth 64
+                                                      :maximum-entries 131072})
+                                                 entries)]
+                              (if (every? true? (map identical? entries captured))
+                                snapshot
+                                (assoc snapshot :entries captured)))
                             (catch :default error
                               (incompatible-snapshot! "Cache snapshot contains invalid portable data."
                                                       {:cause-type (:type (ex-data error))}))))
