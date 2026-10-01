@@ -100,6 +100,15 @@ Seekable direct specializations are not selected for partitions with a
 wildcard. Plans without wildcards contain no variants and keep their
 fingerprints.
 
+The recursive operator routes beneath this change take the same variants.
+The membership search (`stable-route/check-many-eids`: leveled expiring
+search and guarded programs) holds the wildcard subject's relation slices
+beside the subject's own, including in guards and subtracted guards; and the
+delegated operand oracle decides union operands through their sealed union
+plans. The touch route passes that oracle to the exact evaluator. Closures
+whose wildcard branch declares a Caveat use the ordered evaluators, as for
+concrete branches.
+
 ### D5. Reverse evaluation: the wildcard is one subject
 
 Reverse traversal enumerates the subjects that hold a permission through
