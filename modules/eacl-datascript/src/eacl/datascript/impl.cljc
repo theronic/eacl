@@ -411,6 +411,7 @@
                  {:spec-idx    (:idx spec)
                   :subject-id  subject-id
                   :resource-id resource-id
+                  :qualifier-id qualifier-id
                   :relationship
                   (inspection/row
                    (eacl/->Relationship
@@ -424,7 +425,8 @@
                     {:subject-id (or (:subject-id cursor)
                                      (:subject cursor))
                      :resource-id (or (:resource-id cursor)
-                                      (:resource cursor))}
+                                      (:resource cursor))
+                     :qualifier-id (:qualifier-id cursor)}
                      (:resume-inclusive? cursor)
                      (assoc :resume-inclusive? true))))
                (drop-until-beyond-cursor [spec cursor direction rows]
@@ -496,7 +498,11 @@
                         (:resource-type spec)]
                        (or (:resource-id cursor)
                            (:resource cursor))
-                       direction include-qualifier?)
+                       direction include-qualifier?
+                       (when cursor
+                         {:qualifier-eid (:qualifier-id cursor)
+                          :owner-eid (or (:subject-id cursor)
+                                         (:subject cursor))}))
                       (map
                        (fn [{:keys [e v]}]
                          (relationship-row spec e (nth v 3) (nth v 4))))
@@ -511,7 +517,11 @@
                         (:subject-type spec)]
                        (or (:subject-id cursor)
                            (:subject cursor))
-                       direction include-qualifier?)
+                       direction include-qualifier?
+                       (when cursor
+                         {:qualifier-eid (:qualifier-id cursor)
+                          :owner-eid (or (:resource-id cursor)
+                                         (:resource cursor))}))
                       (map
                        (fn [{:keys [e v]}]
                          (relationship-row spec (nth v 3) e (nth v 4))))

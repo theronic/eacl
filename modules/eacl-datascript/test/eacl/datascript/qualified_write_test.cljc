@@ -6,6 +6,7 @@
             [eacl.caveats.write-contention-contract :as contention]
             [eacl.caveats.schema-allowance-contract :as allowance]
             [eacl.caveats.inspection-contract :as inspection]
+            [eacl.caveats.partial-scan-contract :as partial-scan]
             [eacl.caveats.deletion-contract :as deletion]
             [eacl.caveats.cache-trace-contract :as cache-trace]
             [eacl.core :as eacl]
@@ -51,6 +52,13 @@
         client (api/make-client conn {:clock #(deref now)
                                       :caveat-evaluator (fixtures/portable-evaluator (atom 0))})]
     (inspection/check! {:client client :writer #(qualifiers/writer conn) :entid ds/entid :now now})))
+
+(deftest partial-relationship-walks-over-qualified-rows-are-total-and-terminate
+  (let [conn (schema/create-conn)
+        now (atom 1000)
+        client (api/make-client conn {:clock #(deref now)
+                                      :caveat-evaluator (fixtures/portable-evaluator (atom 0))})]
+    (partial-scan/check! {:client client :writer #(qualifiers/writer conn) :now now})))
 
 (deftest qualified-object-deletion-is-atomic-and-bounded
   (let [conn (schema/create-conn)

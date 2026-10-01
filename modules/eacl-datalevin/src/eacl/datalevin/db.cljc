@@ -153,9 +153,52 @@
                 scan)
                include-qualifier?)))))))
 
+(defn- adjacent-value
+  "The nearest five-component AVE value strictly beyond `value` in
+  `direction`, with no datom between them: qualifier eids are positive and
+  the plain qualifier slot (nil) precedes them, and endpoint eids are
+  integers. Nil when no such value can exist."
+  [value direction maximum-eid]
+  (let [endpoint (nth value 3)
+        qualifier (nth value 4)
+        prefix (subvec value 0 3)]
+    (case direction
+      :asc (if (nil? qualifier)
+             (conj prefix endpoint 0)
+             (conj prefix endpoint (inc qualifier)))
+      :desc (cond
+              (some? qualifier) (conj prefix endpoint (dec qualifier))
+              (pos? endpoint) (conj prefix (dec endpoint) maximum-eid)
+              :else nil))))
+
+(defn- resumed-ave-datoms
+  "AVE datoms from one row onward, in index order.
+
+  Datalevin applies an entity seek component to every datom it returns
+  (ascending `e >= entity`, descending `e <= entity`), not only to the first
+  value. It therefore positions only inside the boundary row's own value
+  group; the rest of the scan continues from the adjacent value with no
+  entity component."
+  [db attr value entity direction limit maximum-eid]
+  (let [seek (if (= :desc direction) ds/rseek-datoms ds/seek-datoms)
+        group (into []
+                    (take-while #(and (= attr (:a %)) (= value (:v %))))
+                    (seek db :ave attr value entity limit))
+        remaining (- limit (count group))
+        next-value (adjacent-value value direction maximum-eid)]
+    (if (and (pos? remaining) next-value)
+      (into group (seek db :ave attr next-value nil remaining))
+      group)))
+
 (defn avet-endpoint-prefix
   "Endpoint datoms across entities for an exact three-component value prefix,
-  using a complete five-component AVET seek bound."
+  using a complete five-component AVET seek bound.
+
+  A resumed scan names the boundary row by `cursor-eid`, `cursor-qualifier`,
+  and `cursor-entity` (its owner). The scan then starts exactly at that row in
+  either direction (see `endpoint-pair/resume-bound` and
+  `resumed-ave-datoms`), so the native limit needs only one extra row for the
+  boundary that portable cursor logic drops."
   ([db attr prefix]
    (avet-endpoint-prefix db attr prefix nil :asc
                          maximum-unpaged-scan-results))
@@ -167,19 +210,27 @@
   ([db attr prefix cursor-eid cursor-entity direction native-limit]
    (avet-endpoint-prefix db attr prefix cursor-eid cursor-entity direction native-limit false))
   ([db attr prefix cursor-eid cursor-entity direction native-limit include-qualifier?]
+   (avet-endpoint-prefix db attr prefix cursor-eid nil cursor-entity direction native-limit include-qualifier?))
+  ([db attr prefix cursor-eid cursor-qualifier cursor-entity direction native-limit include-qualifier?]
    (if-not (and (endpoint-pair/valid-prefix? prefix)
                 (#{:asc :desc} direction)
                 (or (nil? cursor-entity) (nat-int? cursor-entity))
+                (or (nil? cursor-qualifier) (nat-int? cursor-qualifier))
                 (pos-int? native-limit))
      []
      (let [tail  (or cursor-eid
                      (if (= :desc direction) max-eid min-eid))
-           bound (endpoint-pair/seek-bound prefix tail direction max-eid)
-           scan  (if (= :desc direction)
-                   (ds/rseek-datoms
-                    db :ave attr bound cursor-entity (inc native-limit))
-                   (ds/seek-datoms
-                    db :ave attr bound cursor-entity (inc native-limit)))]
+           resume? (and (some? cursor-eid) (some? cursor-entity))
+           scan  (if resume?
+                   (resumed-ave-datoms
+                    db attr
+                    (endpoint-pair/resume-bound
+                     prefix cursor-eid cursor-qualifier direction max-eid)
+                    cursor-entity direction (inc native-limit) max-eid)
+                   (let [bound (endpoint-pair/seek-bound prefix tail direction max-eid)]
+                     (if (= :desc direction)
+                       (ds/rseek-datoms db :ave attr bound nil (inc native-limit))
+                       (ds/seek-datoms db :ave attr bound nil (inc native-limit)))))]
        (into [] (take native-limit)
              (endpoint-pair/checked-datoms
               (take-while

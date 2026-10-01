@@ -91,21 +91,37 @@
 
 (defn avet-endpoint-prefix
   "Endpoint datoms across entities for an exact three-component value prefix,
-  using a complete five-component AVET seek bound."
+  using a complete five-component AVET seek bound.
+
+  `resume` is nil or `{:qualifier-eid q :owner-eid o}`, the remaining
+  physical coordinates of the row at `cursor-eid`. With it the inclusive seek
+  starts exactly at that row in either direction (see
+  `endpoint-pair/resume-bound`); portable cursor logic still decides whether
+  to drop the boundary row."
   ([db attr prefix]
    (avet-endpoint-prefix db attr prefix nil :asc))
   ([db attr prefix cursor-eid direction]
    (avet-endpoint-prefix db attr prefix cursor-eid direction false))
   ([db attr prefix cursor-eid direction include-qualifier?]
+   (avet-endpoint-prefix db attr prefix cursor-eid direction include-qualifier? nil))
+  ([db attr prefix cursor-eid direction include-qualifier? resume]
    (if-not (and (endpoint-pair/valid-prefix? prefix)
                 (#{:asc :desc} direction))
      []
      (let [tail  (or cursor-eid
                      (if (= :desc direction) max-eid min-eid))
-           bound (endpoint-pair/seek-bound prefix tail direction max-eid)
+           owner (when (and resume (some? cursor-eid)) (:owner-eid resume))
+           bound (if owner
+                   (endpoint-pair/resume-bound
+                    prefix cursor-eid (:qualifier-eid resume) direction max-eid)
+                   (endpoint-pair/seek-bound prefix tail direction max-eid))
            scan  (if (= :desc direction)
-                   (ds/rseek-datoms db :avet attr bound)
-                   (ds/seek-datoms db :avet attr bound))
+                   (if owner
+                     (ds/rseek-datoms db :avet attr bound owner)
+                     (ds/rseek-datoms db :avet attr bound))
+                   (if owner
+                     (ds/seek-datoms db :avet attr bound owner)
+                     (ds/seek-datoms db :avet attr bound)))
            first-datom (first scan)]
        (if (and first-datom
                 (matching-avet-prefix? attr prefix first-datom))

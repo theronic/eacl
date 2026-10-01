@@ -8,6 +8,7 @@
             [eacl.caveats.schema-allowance-contract :as allowance]
             [eacl.caveats.relation-removal-contract :as removal]
             [eacl.caveats.inspection-contract :as inspection]
+            [eacl.caveats.partial-scan-contract :as partial-scan]
             [eacl.caveats.deletion-contract :as deletion]
             [eacl.caveats.cache-trace-contract :as cache-trace]
             [eacl.authorization.qualification-test :as fixtures]
@@ -123,6 +124,21 @@
                               result))]
               (outer))))})
       (is (= before (d/active-read-snapshot-info)))
+      (finally (d/close conn) (util/delete-files dir)))))
+
+(deftest partial-relationship-walks-over-qualified-rows-are-total-and-terminate
+  (let [dir (util/tmp-dir (str "partial-scan-" (random-uuid)))
+        conn (schema/create-conn dir {})
+        now (atom 1000)
+        watermark (atom 0)]
+    (try
+      (partial-scan/check! {:client (api/make-client conn {:clock #(deref now)
+                                                           :caveat-evaluator (fixtures/portable-evaluator (atom 0))
+                                                           :source-lifecycle #uuid "7d0f3c1e-5b8a-4f62-9e31-2c4a8b6d0e17"
+                                                           :security-key "01234567890123456789012345678901"
+                                                           :revision-watermark watermark
+                                                           :advance-revision-watermark! (fn [revision] (swap! watermark max revision))})
+                            :writer #(qualifiers/writer conn) :now now})
       (finally (d/close conn) (util/delete-files dir)))))
 
 (deftest stored-and-active-inspection-preserve-aligned-native-qualifiers

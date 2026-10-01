@@ -455,6 +455,7 @@
                  {:spec-idx    (:idx spec)
                   :subject-id  subject-id
                   :resource-id resource-id
+                  :qualifier-id qualifier-id
                   :relationship
                   (inspection/row
                    (eacl/->Relationship
@@ -468,7 +469,8 @@
                     {:subject-id (or (:subject-id cursor)
                                      (:subject cursor))
                      :resource-id (or (:resource-id cursor)
-                                      (:resource cursor))}
+                                      (:resource cursor))
+                     :qualifier-id (:qualifier-id cursor)}
                      (:resume-inclusive? cursor)
                      (assoc :resume-inclusive? true))))
                (drop-until-beyond-cursor [spec cursor direction rows]
@@ -551,21 +553,22 @@
                           (drop-until-beyond-cursor
                            spec cursor direction)))))
                (scan-forward-partial [spec cursor direction]
-                 (let [args
-                       [db
+                 (let [rows
+                       (ddb/avet-endpoint-prefix
+                        db
                         relationship-storage/forward-attribute
                         [(:subject-type spec)
                          (:relation-id spec)
                          (:resource-type spec)]
                         (or (:resource-id cursor)
                             (:resource cursor))
+                        (:qualifier-id cursor)
                         (or (:subject-id cursor)
                             (:subject cursor))
-                        direction]
-                       rows
-                       (apply ddb/avet-endpoint-prefix
-                              (cond-> (conj args (or (native-page-limit spec cursor)
-                                                     ddb/maximum-unpaged-scan-results)) include-qualifier? (conj true)))]
+                        direction
+                        (or (native-page-limit spec cursor)
+                            ddb/maximum-unpaged-scan-results)
+                        include-qualifier?)]
                    (->> rows
                         (map
                          (fn [{:keys [e v]}]
@@ -573,21 +576,22 @@
                         (drop-until-beyond-cursor
                          spec cursor direction))))
                (scan-reverse-partial [spec cursor direction]
-                 (let [args
-                       [db
+                 (let [rows
+                       (ddb/avet-endpoint-prefix
+                        db
                         relationship-storage/reverse-attribute
                         [(:resource-type spec)
                          (:relation-id spec)
                          (:subject-type spec)]
                         (or (:subject-id cursor)
                             (:subject cursor))
+                        (:qualifier-id cursor)
                         (or (:resource-id cursor)
                             (:resource cursor))
-                        direction]
-                       rows
-                       (apply ddb/avet-endpoint-prefix
-                              (cond-> (conj args (or (native-page-limit spec cursor)
-                                                     ddb/maximum-unpaged-scan-results)) include-qualifier? (conj true)))]
+                        direction
+                        (or (native-page-limit spec cursor)
+                            ddb/maximum-unpaged-scan-results)
+                        include-qualifier?)]
                    (->> rows
                         (map
                          (fn [{:keys [e v]}]

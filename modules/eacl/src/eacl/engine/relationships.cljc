@@ -57,69 +57,145 @@
   [limit]
   (if (nil? limit) default-limit limit))
 
+(defn- compare-eids
+  [a b]
+  (cond (< a b) -1 (> a b) 1 :else 0))
+
+(defn- compare-qualifiers
+  "Index order of the optional fifth tuple component: a plain row (nil)
+  precedes every qualified row, and qualified rows follow qualifier eid order."
+  [a b]
+  (cond
+    (nil? a) (if (nil? b) 0 -1)
+    (nil? b) 1
+    :else (compare-eids a b)))
+
+(defn physical-compare
+  "Compares two rows (or a row and an edge) of one scan spec in the ascending
+  physical order of that spec's index.
+
+  Anchored scans read one endpoint's EAVT values and are ordered by the
+  opposite endpoint, which is unique per anchor. Partial scans read AVET
+  values `[p0 p1 p2 primary qualifier]` across owners, so they are ordered by
+  the primary endpoint, then the qualifier (nil first), then the owner: the
+  resource, qualifier, subject for `:forward-partial` and the subject,
+  qualifier, resource for `:reverse-partial`. A continuation must compare in
+  this order; comparing only primary and owner skips or repeats rows whenever
+  qualifier order disagrees with owner order (EACL-FORMAL-076)."
+  [scan-kind a b]
+  (case scan-kind
+    :forward-anchored
+    (compare-eids (:resource-id a) (:resource-id b))
+
+    :reverse-anchored
+    (compare-eids (:subject-id a) (:subject-id b))
+
+    :forward-partial
+    (let [primary (compare-eids (:resource-id a) (:resource-id b))]
+      (if-not (zero? primary)
+        primary
+        (let [qualifier (compare-qualifiers (:qualifier-id a) (:qualifier-id b))]
+          (if-not (zero? qualifier)
+            qualifier
+            (compare-eids (:subject-id a) (:subject-id b))))))
+
+    :reverse-partial
+    (let [primary (compare-eids (:subject-id a) (:subject-id b))]
+      (if-not (zero? primary)
+        primary
+        (let [qualifier (compare-qualifiers (:qualifier-id a) (:qualifier-id b))]
+          (if-not (zero? qualifier)
+            qualifier
+            (compare-eids (:resource-id a) (:resource-id b))))))))
+
 (defn beyond-cursor?
-  "Whether `row` is strictly beyond `cursor` in the requested index direction."
-  [scan-kind direction cursor {:keys [subject-id resource-id]}]
+  "Whether `row` is strictly beyond `cursor` in the requested index direction.
+
+  A `:resume-inclusive?` cursor also admits its own row, identified by its
+  subject and resource within the scan spec."
+  [scan-kind direction cursor {:keys [subject-id resource-id] :as row}]
   (or
    (nil? cursor)
    (and (:resume-inclusive? cursor)
         (= subject-id (:subject-id cursor))
         (= resource-id (:resource-id cursor)))
-   (let [ordered-after?
-         (fn [a b]
-           (case direction
-             :asc (> a b)
-             :desc (< a b)))]
-     (case scan-kind
-       :forward-anchored
-       (ordered-after? resource-id (:resource-id cursor))
-
-       :reverse-anchored
-       (ordered-after? subject-id (:subject-id cursor))
-
-       :forward-partial
-       (or (ordered-after? resource-id (:resource-id cursor))
-           (and (= resource-id (:resource-id cursor))
-                (ordered-after? subject-id (:subject-id cursor))))
-
-       :reverse-partial
-       (or (ordered-after? subject-id (:subject-id cursor))
-           (and (= subject-id (:subject-id cursor))
-                (ordered-after? resource-id (:resource-id cursor))))
-
-       false))))
+   (let [order (physical-compare scan-kind row cursor)]
+     (case direction
+       :asc (pos? order)
+       :desc (neg? order)))))
 
 (defn progress-edge
   "Builds the exclusive relationship-keyset anchor for one examined row.
 
   The row need not be emitted. Authorized window routes use this to advance
   past rejected candidates while ordinary pages use the selected boundary;
-  both are the same stable physical stream position."
-  [{:keys [spec-idx subject-id resource-id]}]
-  {:kind :relationship-index
-   :v relationship-cursor-version
-   :anchor :progress
-   :scan-index spec-idx
-   :subject-id subject-id
-   :resource-id resource-id})
+  both are the same stable physical stream position. A qualified row also
+  records its qualifier eid, the component that orders rows of one primary
+  endpoint in a partial scan; a plain row keeps the original edge shape, so
+  an edge without `:qualifier-id` names a plain row's position."
+  [{:keys [spec-idx subject-id resource-id qualifier-id]}]
+  (cond-> {:kind :relationship-index
+           :v relationship-cursor-version
+           :anchor :progress
+           :scan-index spec-idx
+           :subject-id subject-id
+           :resource-id resource-id}
+    (some? qualifier-id) (assoc :qualifier-id qualifier-id)))
+
+(def ^:private edge-base-keys
+  #{:kind :v :anchor :scan-index :subject-id :resource-id})
+
+(def ^:private edge-optional-keys
+  #{:resume-inclusive? :qualifier-id})
 
 (defn- valid-edge?
   [scan-specs edge]
-  (let [base-keys
-        #{:kind :v :anchor :scan-index :subject-id :resource-id}
-        edge-keys (when (map? edge) (set (keys edge)))]
-    (and (map? edge)
-       (or (= base-keys edge-keys)
-           (= (conj base-keys :resume-inclusive?) edge-keys))
+  (and (map? edge)
+       (every? #(contains? edge %) edge-base-keys)
+       (every? #(or (contains? edge-base-keys %)
+                    (contains? edge-optional-keys %))
+               (keys edge))
        (= :relationship-index (:kind edge))
        (= relationship-cursor-version (:v edge))
        (= :progress (:anchor edge))
        (or (not (contains? edge :resume-inclusive?))
            (true? (:resume-inclusive? edge)))
+       (or (not (contains? edge :qualifier-id))
+           (nat-int? (:qualifier-id edge)))
        (nat-int? (:scan-index edge))
        (< (:scan-index edge) (count scan-specs))
        (nat-int? (:subject-id edge))
-       (nat-int? (:resource-id edge)))))
+       (nat-int? (:resource-id edge))))
+
+(defn- scan-order-violation!
+  [scan-kind direction previous row]
+  (throw
+   (ex-info
+    "A relationship scan returned rows outside its physical index order."
+    {:type :eacl/backend-contract-violation
+     :eacl/error :eacl/backend-contract-violation
+     :operation :read-relationships
+     :obligation :strict-order
+     :scan-kind scan-kind
+     :direction direction
+     :previous (select-keys previous [:subject-id :resource-id :qualifier-id])
+     :row (select-keys row [:subject-id :resource-id :qualifier-id])})))
+
+(defn- check-scan-order!
+  "Fails closed unless one spec's scanned rows advance strictly from `cursor`.
+
+  Continuation resumes strictly beyond the last examined row, so a scan whose
+  rows disagree with `beyond-cursor?` would make pages skip or repeat rows,
+  or make a filtered window re-examine the same rows forever."
+  [scan-kind direction cursor rows]
+  (reduce
+   (fn [previous row]
+     (if (beyond-cursor? scan-kind direction previous row)
+       row
+       (scan-order-violation! scan-kind direction previous row)))
+   cursor
+   rows)
+  rows)
 
 (defn- invalid-edge!
   [edge]
@@ -155,8 +231,10 @@
         (let [remaining (- target (count rows))
               spec (assoc (first pending) :physical-limit remaining)
               resume-edge (when (= (:idx spec) start-index) edge)
-              scanned (take remaining
-                            (scan-fn spec resume-edge direction))]
+              scanned (check-scan-order!
+                       (:scan-kind spec) direction resume-edge
+                       (into [] (take remaining)
+                             (scan-fn spec resume-edge direction)))]
           (recur (rest pending) (into rows scanned)))))))
 
 (defn- page-presence
@@ -262,8 +340,9 @@
 
 (defn- scan-window-chunk
   [scan-fn spec cursor direction limit]
-  (vec
-   (take limit
+  (check-scan-order!
+   (:scan-kind spec) direction cursor
+   (into [] (take limit)
          (scan-fn (assoc spec :physical-limit limit)
                   cursor direction))))
 

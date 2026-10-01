@@ -435,9 +435,14 @@
     (update edge :cover-edge #(transform-edge-ids coordinate-f coordinate-f %))
 
     :relationship-index
-    (-> edge
-        (update :subject-id f)
-        (update :resource-id f))
+    ;; A qualifier is not an object and has no external identity. Its native
+    ;; eid orders one endpoint's rows in a partial scan. Replacing it is a
+    ;; write to the relation, which changes the cursor's dependency proof, so
+    ;; the eid is stable on every basis that accepts the cursor.
+    (cond-> (-> edge
+                (update :subject-id f)
+                (update :resource-id f))
+      (contains? edge :qualifier-id) (update :qualifier-id coordinate-f))
 
     edge))
 

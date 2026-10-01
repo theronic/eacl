@@ -346,8 +346,11 @@ size, and decoded cache-entry decisions are routed through that boundary. The
 indexed relationship engine retains only an authenticated
 physical edge and consumes at most one page plus lookahead; executable
 forward/backward walk tests establish stable, complete, duplicate-free
-composition over certified adapter scans. This is deliberately not a theorem
-of a global or cross-backend result order.
+composition over certified adapter scans. For owner-unanchored scans the edge
+includes the boundary row's qualifier eid, because the value index orders one
+endpoint's rows by qualifier before owner, and the engine rejects adapter rows
+that do not advance strictly in that order (EACL-FORMAL-080). This is
+deliberately not a theorem of a global or cross-backend result order.
 
 The pre-cutover shadow campaign and its minimized counterexamples remain
 evidence, not executable production behavior. Test-only injection seams run

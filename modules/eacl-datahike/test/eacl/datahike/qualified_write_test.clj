@@ -7,6 +7,7 @@
             [eacl.caveats.schema-allowance-contract :as allowance]
             [eacl.caveats.relation-removal-contract :as removal]
             [eacl.caveats.inspection-contract :as inspection]
+            [eacl.caveats.partial-scan-contract :as partial-scan]
             [eacl.caveats.deletion-contract :as deletion]
             [eacl.caveats.cache-trace-contract :as cache-trace]
             [eacl.authorization.qualification-test :as fixtures]
@@ -88,6 +89,17 @@
                                                            :caveat-evaluator (fixtures/portable-evaluator (atom 0))})
                             :writer #(qualifiers/writer conn) :entid db/entid :now now
                             :cas-attribute (when (:attribute-refs? options) db/entid)})
+        (finally (d/release conn) (d/delete-database config))))))
+
+(deftest partial-relationship-walks-over-qualified-rows-are-total-and-terminate
+  (doseq [options [{} {:attribute-refs? true}]]
+    (let [conn (schema/create-conn [] options)
+          config (:config (d/db conn))
+          now (atom 1000)]
+      (try
+        (partial-scan/check! {:client (api/make-client conn {:clock #(deref now)
+                                                             :caveat-evaluator (fixtures/portable-evaluator (atom 0))})
+                              :writer #(qualifiers/writer conn) :now now})
         (finally (d/release conn) (d/delete-database config))))))
 
 (deftest qualified-cache-traces-match-uncached-authorization

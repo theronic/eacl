@@ -475,6 +475,34 @@ no verified-release claim existed.
   distinction already reject records.
 - **Migration:** none for portable values.
 
+### EACL-FORMAL-080 — partial relationship scans ignored the qualifier component
+
+- **Affected:** `read-relationships` without `:subject/id` and `:resource/id`
+  over a Relation holding a caveated or expiring row, on every backend:
+  ordinary pages and the `:expiry-active` and `:authorization` windows.
+  Anchored reads and permission evaluation were unaffected.
+- **Impact:** omission, duplication, and availability. A continued page could
+  drop a row it had not returned or repeat one it had. A filtered window could
+  re-examine the same rows until its candidate window was exhausted and then
+  resume from the same position on every later page, so a walk never ended.
+- **Root cause:** partial scans read AVET values
+  `[p0 p1 p2 primary qualifier]`, which order one primary endpoint's rows by
+  qualifier (plain rows first) before owner. The cursor edge and its comparator
+  used only the primary and owner eids, and the seek positioned only by
+  primary.
+- **Correction:** `physical-compare` follows the index order (primary,
+  qualifier, owner); a qualified row's cursor edge records its qualifier eid;
+  each backend resumes at the boundary row's exact position
+  (`endpoint-pair/resume-bound`); and a scan whose rows do not advance strictly
+  in that order fails closed with `:eacl/backend-contract-violation`
+  `:strict-order`. Datalevin applies an AVE seek's entity component to every
+  datom it returns, not only to the first value, so its resumed partial scans
+  also dropped plain rows of later primary groups; it now positions inside the
+  boundary row's value group and continues from the adjacent value. Found by
+  the eacl-rust port (EACL-RS-004). A shared contract replays the minimized
+  walks, a plain cross-group walk, and a seeded sweep on every backend, and two
+  qualified production mutation controls cover the cursor and the comparator.
+
 The authoritative minimized fixtures and closing evidence are under
 `formal/counterexamples/`. Run them with
 `EACL_NREPL_PORT=<dev-port> bin/formal counterexample-replay`.

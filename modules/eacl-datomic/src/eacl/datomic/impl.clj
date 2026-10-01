@@ -395,12 +395,20 @@
        datoms) include-qualifier?))))
 
 (defn- global-endpoint-datoms
-  ([db attr prefix cursor-eid cursor-endpoint direction] (global-endpoint-datoms db attr prefix cursor-eid cursor-endpoint direction false))
-  ([db attr prefix cursor-eid cursor-endpoint direction include-qualifier?]
+  "Owner-unanchored AVET endpoint datoms. A resumed scan (`cursor-endpoint`
+  is the boundary row's owner) seeks to that row's full physical position,
+  qualifier included, so the inclusive seek starts at the boundary row in
+  either direction (see `endpoint-pair/resume-bound`)."
+  ([db attr prefix cursor-eid cursor-qualifier cursor-endpoint direction]
+   (global-endpoint-datoms db attr prefix cursor-eid cursor-qualifier cursor-endpoint direction false))
+  ([db attr prefix cursor-eid cursor-qualifier cursor-endpoint direction include-qualifier?]
    (let [attr-eid (d/entid db attr)
-         bound (endpoint-pair/seek-bound prefix cursor-eid direction Long/MAX_VALUE)
+         resume? (and (some? cursor-eid) (some? cursor-endpoint))
+         bound (if resume?
+                 (endpoint-pair/resume-bound prefix cursor-eid cursor-qualifier direction Long/MAX_VALUE)
+                 (endpoint-pair/seek-bound prefix cursor-eid direction Long/MAX_VALUE))
          components (cond-> [attr-eid bound]
-                      cursor-endpoint (conj cursor-endpoint))
+                      resume? (conj cursor-endpoint))
          datoms (apply (case direction
                          :asc d/seek-datoms
                          :desc d/rseek-datoms)
@@ -450,6 +458,7 @@
                  {:spec-idx (:idx spec)
                   :subject-id subject-id
                   :resource-id resource-id
+                  :qualifier-id qualifier-id
                   :relationship
                   (inspection/row
                    (eacl/->Relationship
@@ -522,6 +531,7 @@
                         (:relation-id spec)
                         (:resource-type spec)]
                        (:resource-id cursor)
+                       (:qualifier-id cursor)
                        (:subject-id cursor)
                        direction include-qualifier?)
                       (map
@@ -537,6 +547,7 @@
                         (:relation-id spec)
                         (:subject-type spec)]
                        (:subject-id cursor)
+                       (:qualifier-id cursor)
                        (:resource-id cursor)
                        direction include-qualifier?)
                       (map

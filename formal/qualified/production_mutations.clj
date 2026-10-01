@@ -23,6 +23,7 @@
             [eacl.authorization.qualifier-cache-test :as qualifier-cache-test]
             [eacl.datascript.qualifier-cache-test :as public-qualifier-cache-test]
             [eacl.authorization.qualification-test :as qualification-test]
+            [eacl.engine.relationships :as relationship-engine]
             [eacl.engine.scan-cache :as scan-cache]
             [eacl.engine.scan-cache-test :as scan-test]
             [eacl.engine.stable-reducer :as reducer]
@@ -84,6 +85,8 @@
         certificate qualification/certificate
         retain-certificate @#'range-reuse/retain-certificate
         externalize-relationships relay/externalize-relationship-page
+        progress-edge relationship-engine/progress-edge
+        physical-compare relationship-engine/physical-compare
         inspection-window inspection/window-options
         plan-schema datascript-schema/plan-schema-replacement
         qualify qualification/qualify identity qualification/exact-reuse-identity
@@ -516,6 +519,14 @@
       :redefs {#'relay/externalize-relationship-page
                (fn [& args] (update (apply externalize-relationships args) :data
                                     #(mapv (fn [r] (apply dissoc r mutations/qualifier-keys)) %)))}}
+     :partial-scan-cursor-drops-qualifier
+     {:gate #'public-write-test/partial-relationship-walks-over-qualified-rows-are-total-and-terminate
+      :redefs {#'relationship-engine/progress-edge (fn [row] (dissoc (progress-edge row) :qualifier-id))}}
+     :partial-scan-orders-by-owner-unguarded
+     {:gate #'public-write-test/partial-relationship-walks-over-qualified-rows-are-total-and-terminate
+      :redefs {#'relationship-engine/physical-compare
+               (fn [scan-kind a b] (physical-compare scan-kind (dissoc a :qualifier-id) (dissoc b :qualifier-id)))
+               #'relationship-engine/check-scan-order! (fn [_ _ _ rows] rows)}}
      :inspection-fills-past-candidate-window
      {:gate #'inspection-test/expiry-filter-keeps-the-existing-candidate-work-bound
       :redefs {#'inspection/window-options
@@ -553,7 +564,7 @@
 
 (deftest production-mutations-are-killed-by-conformance-gates
   (let [cases (mutation-cases)]
-    (is (= 108 (count cases)))
+    (is (= 110 (count cases)))
     (doseq [[id {:keys [gate redefs]}] (sort-by key cases)]
       (is (zero? (failures gate)) (str id " unmodified gate must pass"))
       (is (pos? (with-redefs-fn redefs #(failures gate))) (str id " must be detected")))))
