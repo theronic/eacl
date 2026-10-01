@@ -20,9 +20,9 @@ targets within budget on a fresh JVM.
 
 - [ ] 2.1 Derive the evaluation order per `:any-true`/`:all-true` node at sealing, outside the fingerprint. Verify plan tests: relation leaves first, recursive operands last, ties canonical, fingerprints unchanged.
 - [ ] 2.2 Iterate children in that order in `vector-evaluator/check-many-normalized` and `evaluator/check-eids`. Add `:operand-order` to `compiler-plan-compatibility`.
-- [ ] 2.3 Prove `OperandOrder.dfy` (permutation invariance of Kleene permissionship; certificate soundness) and list it in the `:delegated-operator-recursion` contract with a theorem policy.
+- [ ] 2.3 Prove `OperandOrder.dfy` (permutation invariance of Kleene permissionship; certificate soundness) and the later-deadline composition lemma in `QualifiedTemporal.dfy` (both decisive: later; one: its own; none: earlier); list them in the contract with theorem policies.
 - [ ] 2.4 Extend `eacl.operator.delegation-refinement-test` with random child permutations; extend the qualified differential to require sound certificates at sampled times and lookup items equal to checks.
-- [ ] 2.5 Register mutation controls (child dropped from the order; fault taken as decisive); verify both runtimes.
+- [ ] 2.5 Register mutation controls (child dropped from the order; fault taken as decisive; the earlier deadline kept when both operands are decisive); verify both runtimes.
 - [ ] 2.6 Gate: check cases within budget, direct grant at most 4 adapter commands.
 
 ## 3. Set-at-a-time arrows (PR 3, design D3)

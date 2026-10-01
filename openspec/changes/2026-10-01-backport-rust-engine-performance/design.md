@@ -97,18 +97,26 @@ operator evaluators iterate children in that order.
 
 - Under Kleene semantics a union's and an intersection's permissionship do
   not depend on child order.
-- **Certificate rule (owner decision).** A decision's deadline is that of its
-  first decisive witness in this static cost order: a deterministic function
-  of the compiled plan, the snapshot and the evaluation time. It is sound
-  (`QualifiedTemporal.dfy`, `WitnessCertificateIsSound`), it matches the
-  Rust port's D04, and `main` is already first-witness (left-biased). It must
-  not depend on cache state or request history: a decision whose
-  certificate becomes public (a conditional result's residual) is re-decided
-  from point operands with no request-scoped memo, as #200 already does
-  (the Rust port's CF-03). The release notes say: "a decision's deadline is
-  a sound, implementation-defined bound". Campaigns compare deadlines with a
-  widest-witness reference as a band: never later than the reference,
-  never earlier than the evaluation time.
+- **Certificate rule (owner decision).** Evaluation short-circuits at the
+  first decisive operand in this static cost order and skips the rest. When
+  both operands of a binary composition are already evaluated and decisive
+  (both came from the table or a memo), the composition keeps the later of
+  their deadlines, which costs nothing and removes order dependence wherever
+  no extra work is involved: both decisive, the later deadline; one
+  decisive, its deadline; neither, the earlier one (the Rust port's
+  `qual/arena.rs` `certificate`). The deadline is a deterministic function of
+  the compiled plan, the snapshot, the evaluation time and the operands the
+  static order evaluates; it is sound (`QualifiedTemporal.dfy`,
+  `WitnessCertificateIsSound`). It must not depend on cache state or
+  request history: a decision whose certificate becomes public (a
+  conditional result's residual) is re-decided from point operands with no
+  request-scoped memo, as #200 already does (the Rust port's CF-03). #219
+  keeps "left wins when both are decisive"; step 2 owns the change, its
+  lemma in `QualifiedTemporal.dfy` and its mutation control. The release
+  notes say: "a decision's deadline is a sound, implementation-defined
+  bound". Campaigns compare deadlines with a widest-witness reference as a
+  band: never later than the reference, never earlier than the evaluation
+  time.
 - `check-permission` and lookups use the same order, so detailed items still
   equal checks. `compiler-plan-compatibility` gains `:operand-order`, so a
   completed answer computed under the old order is not reused as if computed
@@ -277,8 +285,9 @@ typed stale-cursor error, never a wrong page; clients restart the walk.
 The owner answered the design's open questions on 2026-10-01:
 
 1. Operator lookup order stays the cover's deterministic order (D9).
-2. Certificates are the first decisive witness in the static cost order
-   (D2), never dependent on cache state or request history.
+2. Certificates follow the first decisive operand in the static cost order,
+   and the later deadline when both operands are already decisive (D2);
+   never dependent on cache state or request history.
 3. One evaluator: tabled exact decisions plus structural certainty; the
    specialized searches retire behind the gates (D8).
 4. The checkpoint and cursor versions may change with D8; old cursors get
