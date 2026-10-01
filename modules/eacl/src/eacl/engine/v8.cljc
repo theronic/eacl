@@ -1,5 +1,6 @@
 (ns eacl.engine.v8
-  (:require [eacl.authorization.evidence :as evidence]
+  (:require [eacl.authorization.context :as caveat-context]
+            [eacl.authorization.evidence :as evidence]
             [eacl.authorization.qualification :as qualification]
             [eacl.authorization.result :as authorization-result]
             [eacl.backend.entity-id :as entity-id]
@@ -817,6 +818,52 @@
             (get-in plan [:relation-closures root :all])
             (throw error)))
         (throw error)))))
+
+(defn- filter-relation-eids
+  "The relation-definition eid of a relationship filter clause."
+  [db {:keys [resource-type relation subject-type]}]
+  (into []
+        (keep (fn [{:keys [e v]}] (when (= subject-type (nth v 2)) e)))
+        (relation-datoms db resource-type relation)))
+
+(defn caveat-parameter-index
+  "The parameters that the Caveats a request can reach declare,
+  `{parameter {type #{caveat-name}}}`: every Caveat that a Relation of the
+  permission's closure admits, plus those of an optional relationship
+  filter clause `{:resource-type :relation :subject-type}`, whose edges are
+  qualified too. A stamped client retains it with the schema generation.
+  Empty without a qualified request."
+  ([db resource-type permission-name]
+   (caveat-parameter-index db resource-type permission-name nil))
+  ([db resource-type permission-name filter-relation]
+   (if-let [request *qualification*]
+     (let [build #(caveat-context/declared-parameter-index
+                   (qualification/caveat-declarations
+                    request
+                    (cond-> (vec (permission-relationship-eids db resource-type permission-name))
+                      filter-relation (into (filter-relation-eids db filter-relation)))))]
+       (if (derived-cache-active?)
+         (memoized-map-derived!
+          (:sealed-plans *schema-cache*)
+          [::caveat-parameters resource-type permission-name filter-relation]
+          build)
+         (build)))
+     {})))
+
+(defn validate-caveat-context!
+  "Fail-fast admission of the qualified request's Caveat context against the
+  Caveats the request can reach (`caveat-parameter-index`,
+  `caveat-context/reject-ill-typed!`): a supplied field that a reachable
+  Caveat declares, but whose value fits none of its declared types, rejects
+  the request before evaluation. Free when the request supplies no context."
+  ([db resource-type permission-name]
+   (validate-caveat-context! db resource-type permission-name nil))
+  ([db resource-type permission-name filter-relation]
+   (when-let [request *qualification*]
+     (let [prepared (:prepared-context request)]
+       (when (seq (caveat-context/value prepared))
+         (caveat-context/reject-ill-typed!
+          prepared (caveat-parameter-index db resource-type permission-name filter-relation)))))))
 
 (defn- permission-query-dependencies
   [db [resource-type permission-name]]

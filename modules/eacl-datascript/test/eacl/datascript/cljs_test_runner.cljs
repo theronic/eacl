@@ -124,6 +124,7 @@
             [eacl.datascript.snapshot-lifecycle-test]
             [eacl.datascript.set-algebra-reuse-test]
             [eacl.datascript.kleene-fault-test]
+            [eacl.datascript.caveat-context-admission-test]
             [eacl.engine.wildcard-membership-test]
             [eacl.engine.kleene-membership-test]
             [eacl.datascript.set-algebra-reuse-differential-test]
@@ -266,6 +267,7 @@
                'eacl.datascript.snapshot-lifecycle-test
                'eacl.datascript.set-algebra-reuse-test
                'eacl.datascript.kleene-fault-test
+               'eacl.datascript.caveat-context-admission-test
                'eacl.engine.wildcard-membership-test
                'eacl.engine.kleene-membership-test
                'eacl.datascript.set-algebra-reuse-differential-test

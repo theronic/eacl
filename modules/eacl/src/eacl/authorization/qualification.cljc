@@ -130,6 +130,31 @@
               (qualifier/error! :missing-relation))
             (qualifier/relation-allowance relation))))
 
+(defn- metadata-error? [error]
+  (contains? #{:eacl.qualifier/invalid :eacl.caveat/invalid} (:type (ex-data error))))
+
+(defn caveat-declarations
+  "The Caveats that `relation-ids` admit, read through this request's
+   memoized entity data: `{:name n :parameters [[parameter type] ...]}` in
+   name order. A Relation or Caveat whose metadata does not decode declares
+   nothing here; evaluation reports it as a fault if an edge demands it."
+  [request relation-ids]
+  (let [caveat-ids (into (sorted-set)
+                         (mapcat (fn [relation-id]
+                                   (try
+                                     (remove nil? (relation-allowance request relation-id))
+                                     (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+                                       (if (metadata-error? error) [] (throw error))))))
+                         relation-ids)]
+    (->> caveat-ids
+         (keep (fn [caveat-id]
+                 (try
+                   (select-keys (:header (named-definition request caveat-id)) [:name :parameters])
+                   (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+                     (if (metadata-error? error) nil (throw error))))))
+         (sort-by :name)
+         vec)))
+
 (defn- allowed! [request relation-id caveat-id]
   (let [allowed (relation-allowance request relation-id)]
     (when-not (contains? allowed caveat-id) (qualifier/error! :caveat-not-allowed))))

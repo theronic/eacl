@@ -208,9 +208,17 @@ definition area {
 
 (deftest evaluation-faults-deny-and-are-reported
   (let [{:keys [client]} (building {:caveat-evaluator (portable/evaluator)})]
-    (is (= {:type :eacl.authorization/evaluation-failure :faults [[:eacl.caveat/evaluation :context-type]]}
-           (failure #(eacl/check-permission client (request "cleaner" {"weekday" "wednesday"})))))
-    (is (false? (eacl/can? client (request "cleaner" {"weekday" "wednesday"}))))
+    ;; A context value of the wrong type for every reachable declaration
+    ;; would fault on every evaluation, so the request is rejected before
+    ;; evaluation. `can?` converts only evaluation failures, so it rejects
+    ;; the request too.
+    (doseq [run [#(eacl/check-permission client (request "cleaner" {"weekday" "wednesday"}))
+                 #(eacl/can? client (request "cleaner" {"weekday" "wednesday"}))]]
+      (is (= {:type :eacl.caveat/invalid :reason :context-type :parameter "weekday"
+              :expected [:int] :caveats ["on_days"]}
+             (try (run) nil
+                  (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) e
+                    (select-keys (ex-data e) [:type :reason :parameter :expected :caveats]))))))
     ;; Profile 1 preflights work before evaluating. An absent list<string> is
     ;; charged at its declared maximum size, and two membership tests against
     ;; it exceed the limit, so the result is a fault rather than conditional.

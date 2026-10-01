@@ -1670,7 +1670,10 @@
                                               (fn []
                                                 (schema-errors/validate-authorized-relationship-read!
                                                  (request-schema api page-db (some? authorization))
-                                                 filters))
+                                                 filters)
+                                                (when authorization
+                                                  (engine/validate-caveat-context!
+                                                   adapter authorization-resource-type authorization-permission)))
                                               subject-id (:subject/id filters)
                                               resource-id (:resource/id filters)
                                               subject-eid
@@ -1857,8 +1860,9 @@
         adapter (:adapter context-state)
         selected-db (:db (backend/state adapter))
         validate!
-        #(validate-permission-root!
-          api request-context selected-db opts subject permission resource)
+        #(do (validate-permission-root!
+              api request-context selected-db opts subject permission resource)
+             (engine/validate-caveat-context! adapter (:type resource) permission))
         public-subject (canonical-public-object-identity subject)
         public-resource (canonical-public-object-identity resource)
         public-key?
@@ -2220,7 +2224,13 @@
                           :subject-type (:type subject)
                           :permission (:permission query)})
                         (schema-errors/validate-lookup-relationship!
-                         schema :lookup-resources query)))
+                         schema :lookup-resources query)
+                        (engine/validate-caveat-context!
+                         adapter (:resource/type query) (:permission query)
+                         (when-let [{:keys [relation subject]} (:resource/relationship query)]
+                           {:resource-type (:resource/type query)
+                            :relation relation
+                            :subject-type (:type subject)}))))
                     rendered-cache
                     (rendered-page-cache-context
                      adapter cursor-opts :lookup-resources query)
@@ -2312,7 +2322,9 @@
                  :count-resources
                  {:resource-type (:resource/type query)
                   :subject-type (:type subject)
-                  :permission (:permission query)}))
+                  :permission (:permission query)})
+                (engine/validate-caveat-context!
+                 adapter (:resource/type query) (:permission query)))
               public-subject (canonical-public-object-identity subject)
               public-key?
               (and public-subject (public-answer-key-eligible? adapter))
@@ -2410,7 +2422,13 @@
                           :subject-type (:subject/type query)
                           :permission (:permission query)})
                         (schema-errors/validate-lookup-relationship!
-                         schema :lookup-subjects query)))
+                         schema :lookup-subjects query)
+                        (engine/validate-caveat-context!
+                         adapter (:type (:resource query)) (:permission query)
+                         (when-let [{:keys [relation resource]} (:subject/relationship query)]
+                           {:resource-type (:type resource)
+                            :relation relation
+                            :subject-type (:subject/type query)}))))
                     rendered-cache
                     (rendered-page-cache-context
                      adapter cursor-opts :lookup-subjects query)
@@ -2502,7 +2520,9 @@
                  :count-subjects
                  {:resource-type (:type (:resource query))
                   :subject-type (:subject/type query)
-                  :permission (:permission query)}))
+                  :permission (:permission query)})
+                (engine/validate-caveat-context!
+                 adapter (:type (:resource query)) (:permission query)))
               resource (:resource query)
               public-resource (canonical-public-object-identity resource)
               public-key?
