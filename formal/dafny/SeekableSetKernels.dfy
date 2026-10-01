@@ -1136,6 +1136,7 @@ module SeekableSetKernels {
       GallopPreservesStrictOrder(driver, target);
       if |jumped| == 0 {
         if value in driver && InEveryOperand(operands, value) {
+          StrictHeadIsAtMostMember(driver, value);
           assert head <= value;
           PositionOperandsRetainAtOrAbove(operands, head, value);
           EveryMemberBoundsMaximumHead(positioned, value);
@@ -1149,6 +1150,7 @@ module SeekableSetKernels {
       } else {
         KWayLeapfrogMembership(jumped, positioned, value);
         if value in driver && InEveryOperand(operands, value) {
+          StrictHeadIsAtMostMember(driver, value);
           assert head <= value;
           PositionOperandsRetainAtOrAbove(operands, head, value);
           EveryMemberBoundsMaximumHead(positioned, value);
@@ -1159,6 +1161,7 @@ module SeekableSetKernels {
           );
         }
         if value in jumped && InEveryOperand(positioned, value) {
+          StrictHeadIsAtMostMember(jumped, value);
           assert target <= value;
           GallopRetainsExactlyValuesAtOrAboveTarget(
             driver,

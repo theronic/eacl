@@ -53,6 +53,15 @@ negative controls. It does not run release manifests, generated-byte checks,
 or exhaustive global exploration. The larger bounded temporal campaign is
 available as `bin/formal apalache-scheduled`.
 
+Every command that runs the Dafny verifier (`bin/formal verify`, `fast`,
+`compile-java` and `compile-js`, and `formal/stable-discovery/verify-fast.sh`)
+passes `--manual-lemma-induction`, and no model may carry an induction
+attribute other than `{:induction false}`. Dafny 4.11 verified a false lemma by
+induction on a sequence parameter, whether automatic induction chose that
+induction or an attribute requested it, so a proof by induction calls its lemma
+recursively instead. `bin/formal` refuses a model that requests induction, and
+`eacl.formal.dafny-cleanup-gate-test` checks both rules in the test battery.
+
 `dafny/NativeGenerationCoherence.dfy` supersedes mutation-graph ancestry as
 the managed-cache coherence argument. It proves the forward-history frame from
 physical schema/relation generations, including empty dependency closures,

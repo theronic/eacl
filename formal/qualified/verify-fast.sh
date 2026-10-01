@@ -13,7 +13,8 @@ mkdir -p "$output"
 node formal/qualified/check-boundary.mjs
 time_limit=$(json_value formal/qualified/gate.json verificationTimeLimitSeconds)
 resource_limit=$(json_value formal/qualified/gate.json proofResourceLimit)
-"$dafny" verify --verification-time-limit "$time_limit" --resource-limit "$resource_limit" \
+"$dafny" verify --manual-lemma-induction \
+  --verification-time-limit "$time_limit" --resource-limit "$resource_limit" \
   formal/dafny/QualifiedEvidence.dfy formal/dafny/QualifiedTemporal.dfy formal/dafny/QualifiedReuse.dfy \
   > "$output/proofs.log" 2>&1 || { cat "$output/proofs.log"; exit 1; }
 cat "$output/proofs.log"
