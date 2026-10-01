@@ -1020,6 +1020,12 @@
     ;; expression has no operator, including one its semantic DAG folded
     ;; away (`viewer & viewer`): EACL-FORMAL-098.
     :delegation-classification :stored-operators-v1
+    ;; Unions and intersections decide their operands in the sealed static
+    ;; cost order (`operator-plan/operand-order`), and a composition whose
+    ;; operands are both decisive keeps the later deadline: certificates of
+    ;; completed answers differ from those of the canonical order.
+    :operand-order :static-cost-v1
+    :certificate-rule :later-when-both-decide-v1
     ;; Strong-Kleene faults: operand decisions, including reordered batched
     ;; membership, are independent of evaluation order.
     :qualified-membership :kleene-fault-operands-v3
@@ -2243,6 +2249,40 @@
             :bounded? (boolean (:bounded? run))}}
           ordered)))))
 
+(defn- union-point-evidence
+  "The point check's evidence of one union-only candidate: exactly
+  `check-evidence-eids` on a union plan."
+  [db plan traversal subject-type anchor-eid eid]
+  (let [{:keys [fetch-fn attempts]} (stable-fetch-fn db)
+        value (stable-route/check-eids
+               (merge (stable-limits)
+                      {:adapter db :fetch-fn fetch-fn :plan plan
+                       :qualification *qualification*
+                       :subject-type subject-type
+                       :subject-eid (if (= :forward traversal) anchor-eid eid)
+                       :resource-eid (if (= :forward traversal) eid anchor-eid)
+                       :cut-point! (stable-cut-point)}))]
+    (report-adapter-attempts! attempts)
+    value))
+
+(defn- conditional-evidence? [value]
+  (and (some? value) (not (boolean? (evidence/value value))) (not (evidence/fault? value))))
+
+(defn- point-certified-evidence
+  "A union-only lookup unions evidence at each node, its point check unions
+  whole paths at the root. Both certificates are sound, but a conditional
+  residual is public, so each conditional result of a detailed page carries
+  the point check's evidence, as delegated operator results already do."
+  [db plan traversal subject-type anchor-eid result-evidence]
+  (if (and *qualification* (= :detailed *lookup-result-policy*) (seq result-evidence))
+    (into {}
+          (map (fn [[eid value]]
+                 [eid (if (conditional-evidence? value)
+                        (union-point-evidence db plan traversal subject-type anchor-eid eid)
+                        value)]))
+          result-evidence)
+    result-evidence))
+
 (defn- least-path-lookup-page
   "Keyset pagination for an acyclic plan: ascending pages resume strictly
   past the boundary coordinates; :before/:last run descending and return
@@ -2275,17 +2315,21 @@
                         ordered)]
         (report-least-path-run! run)
         (report-adapter-attempts! attempts)
-        (with-emission-evidence
-          (page-response
-           {:items items
-            :range-reusable? true
-            :has-next? (if descending?
-                         (boolean bound)
-                         (boolean (:has-more? run)))
-            :has-previous? (if descending?
-                             (boolean (:has-more? run))
-                             (boolean bound))})
-          ordered)))))
+        (let [page (with-emission-evidence
+                     (page-response
+                      {:items items
+                       :range-reusable? true
+                       :has-next? (if descending?
+                                    (boolean bound)
+                                    (boolean (:has-more? run)))
+                       :has-previous? (if descending?
+                                        (boolean (:has-more? run))
+                                        (boolean bound))})
+                     ordered)]
+          (cond-> page
+            (contains? page :result-evidence)
+            (update :result-evidence
+                    #(point-certified-evidence db plan traversal subject-type anchor-eid %))))))))
 
 (defn- structural-cover-fetch
   "Enumerates the positive structural cover from the same compact scan/cache.
@@ -2341,6 +2385,20 @@
               [local-checkpoints
                [::request-local (:fingerprint plan) traversal subject-type
                 anchor-eid series]])
+            point-evidence
+            #(union-point-evidence db plan traversal subject-type anchor-eid %)
+            point-certified
+            ;; See `point-certified-evidence`: a conditional item of a
+            ;; detailed page carries the point check's evidence.
+            (fn [items]
+              (if (and *qualification*
+                       (= :detailed (or (:result-policy candidate-filter) *lookup-result-policy*)))
+                (mapv (fn [{:keys [evidence] :as item}]
+                        (if (conditional-evidence? evidence)
+                          (assoc item :evidence (point-evidence (get-in item [:node :id])))
+                          item))
+                      items)
+                items))
             fetch-exclusive
             (fn [candidate-bound limit]
               (binding [*qualification* (when-not (:structural-cover? candidate-filter) *qualification*)]
@@ -2362,7 +2420,7 @@
                     (report-least-path-run! run)
                   ;; Raw descending least-path emissions are already in
                   ;; examination order.
-                    items)
+                    (point-certified items))
                   (let [result
                         (run-routed
                          candidate-bound
@@ -2381,9 +2439,10 @@
                                     (cond-> item (not (true? value)) (assoc :evidence value))))))]
                   ;; Stable-page returns canonical order for both directions;
                   ;; filtering examines backward windows in reverse order.
-                    (if (= :desc direction)
-                      (vec (reverse items))
-                      items)))))
+                    (let [items (point-certified items)]
+                      (if (= :desc direction)
+                        (vec (reverse items))
+                        items))))))
             page
             (execute-filtered-lookup-window
              result-type page-req
@@ -2392,16 +2451,7 @@
                ;; A filtered cursor carries a structural inclusive sentinel.
                ;; If its evidence was not retained, recover the complete root
                ;; decision at this same selected basis before exposing it.
-               (assoc :inclusive-evidence-fn
-                      (fn [eid]
-                        (stable-route/check-eids
-                         (merge (stable-limits)
-                                {:adapter db :fetch-fn fetch-fn :plan plan
-                                 :qualification *qualification*
-                                 :subject-type subject-type
-                                 :subject-eid (if (= :forward traversal) anchor-eid eid)
-                                 :resource-eid (if (= :forward traversal) eid anchor-eid)
-                                 :cut-point! (stable-cut-point)})))))
+               (assoc :inclusive-evidence-fn point-evidence))
              fetch-exclusive)]
         (report-adapter-attempts! attempts)
         page))))
@@ -2691,7 +2741,9 @@
               :has-next? (:has-next? result)
               :has-previous? (:has-previous? result)})
       (and *qualification* (= :detailed *lookup-result-policy*))
-      (assoc :result-evidence (:result-evidence result)))))
+      (assoc :result-evidence
+             (point-certified-evidence db plan traversal subject-type anchor-eid
+                                       (:result-evidence result))))))
 
 (defn ^:no-doc check-evidence-eids
   "Checks a permission using object maps whose IDs are already resolved

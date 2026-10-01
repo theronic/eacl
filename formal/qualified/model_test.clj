@@ -96,6 +96,16 @@
     (is (m/publishable? union 1000)))
   (is (not (m/publishable? (assoc (m/evidence (m/value universe) nil) :complete? false) 0))))
 
+(deftest both-decisive-witnesses-keep-the-later-deadline
+  (let [grant (fn [end] (m/evidence (m/value universe) end))
+        denial (fn [end] (m/evidence (m/value #{}) end))]
+    (is (= 3 (:end (m/combine universe :union (grant 1) (grant 3)))
+           (:end (m/combine universe :union (grant 3) (grant 1)))))
+    (is (nil? (:end (m/combine universe :union (grant 1) (grant nil)))))
+    (is (= 3 (:end (m/combine universe :intersection (denial 3) (denial 1)))))
+    (is (= 3 (:end (m/combine universe :exclusion (denial 1) (grant 3)))))
+    (is (= 1 (:end (m/combine universe :union (grant 1) (denial 3)))))))
+
 (deftest publication-and-one-captured-time
   (let [identity [1 2 3 4 5]
         prepared (:state (m/stored-transition lifecycle/empty-state
@@ -240,7 +250,10 @@
         result (m/fixed-point universe base rules 16)]
     ;; Both nodes have grounded grants, but recomputation alone swaps their
     ;; chosen deadlines on every iteration after membership has stabilized.
+    ;; Accumulation converges instead: a union of two decisive witnesses keeps
+    ;; the later deadline, so node 0, which also holds through node 1 and 3,
+    ;; is certified until 102 like node 1.
     (is (:complete? result))
     (is (= [(m/value universe) (m/value universe)]
            (mapv #(get-in result [:values % :value]) [0 1])))
-    (is (= [101 102] (mapv #(get-in result [:values % :end]) [0 1])))))
+    (is (= [102 102] (mapv #(get-in result [:values % :end]) [0 1])))))

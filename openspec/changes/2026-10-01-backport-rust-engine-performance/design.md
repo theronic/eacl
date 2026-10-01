@@ -110,7 +110,11 @@ operator evaluators iterate children in that order.
   `WitnessCertificateIsSound`). It must not depend on cache state or
   request history: a decision whose certificate becomes public (a
   conditional result's residual) is re-decided from point operands with no
-  request-scoped memo, as #200 already does (the Rust port's CF-03). #219
+  request-scoped memo, as #200 already does for delegated operator results
+  (the Rust port's CF-03). A union-only permission's lookup unions evidence
+  at each node while its point check unions whole paths at the root, so a
+  conditional lookup item of a union-only permission is re-decided by the
+  point check too (step 2; on #219 the two disagreed). #219
   keeps "left wins when both are decisive"; step 2 owns the change, its
   lemma in `QualifiedTemporal.dfy` and its mutation control. The release
   notes say: "a decision's deadline is a sound, implementation-defined
@@ -238,7 +242,7 @@ each decision, following the stack's practice (#199–#204):
 
 | Decision | Dafny | Executable refinement | Mutation controls | Contract |
 |---|---|---|---|---|
-| D2 | `OperandOrder.dfy`: Kleene ∪/∩ permissionship invariant under child permutation; the first decisive witness's certificate is sound | `delegation-refinement-test` with random child permutations against the stratified fixed point and the tabled route; qualified differential: lookup items equal checks, certificates hold at sampled times | evaluation order drops a child; a fault taken as decisive | `:delegated-operator-recursion` gains the order theorems |
+| D2 | `QualifiedTemporal.dfy`: `OrderedShortCircuitIsSound` (in any operand order, the composition is that of every operand and the first decisive operand's certificate is sound), `BothDecisiveTakeTheLaterDeadline`, `CertificateFollowsTheOrder` (the value ignores the order, the certificate does not); `QualifiedEvidence.FoldsIgnoreOrder` (Kleene ∪/∩ ignore operand order) | `eacl.engine.operand-order-refinement-test`: a strong-Kleene transcription over completions of the residual atoms, with widest-witness deadlines and exact stability horizons, against every check, certificate band, detailed lookup and count in both directions, collection certificate, cached client over time and the tabled route, in the sealed order and in random permutations of it | evaluation order drops a child; a fault taken as decisive (the earlier-deadline mutant is equivalent until the tabled evaluator of D8 reads both operands from its table, where its control lands) | `:qualified-evaluation-model-gate` gains the order theorems |
 | D4 | lemma in `CandidateCover.dfy`: a plain cover witness proves the generator node | campaign: every plain-flagged candidate's generator node is plainly true by exact evaluation | plainness ignores the qualifier slot; plainness kept across a qualified edge | same entry |
 | D5 | `StructuralBounds.dfy`: S ⊆ Has(t, ctx) ⊆ non-F(t, ctx) ⊆ M for every time and context; semi-naive per component equals the least fixed point; the count decomposition | transcription of the semi-naive evaluator beside production, per node and round; independent check that every exact decision lies between S and M | qualified edge counted sure; `Sa − Sb` for exclusion; delta not propagated through an arrow | new `:structural-operator-bounds` operation and theorem policy |
 | D6 | none new (`MemoizedMembership.dfy` covers retained answers across searches) | batch against sequential `check-permission` per demand: decisions, residuals, failing index | memo shared across contexts; error attributed to the wrong index | `:check-permissions` entry points |

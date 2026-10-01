@@ -20,12 +20,13 @@ targets within budget on a fresh JVM.
 
 ## 2. Cost-ordered operand evaluation (PR 2, design D2)
 
-- [ ] 2.1 Derive the evaluation order per `:any-true`/`:all-true` node at sealing, outside the fingerprint. Verify plan tests: relation leaves first, recursive operands last, ties canonical, fingerprints unchanged.
-- [ ] 2.2 Iterate children in that order in `vector-evaluator/check-many-normalized` and `evaluator/check-eids`. Add `:operand-order` to `compiler-plan-compatibility`.
-- [ ] 2.3 Prove `OperandOrder.dfy` (permutation invariance of Kleene permissionship; certificate soundness) and the later-deadline composition lemma in `QualifiedTemporal.dfy` (both decisive: later; one: its own; none: earlier); list them in the contract with theorem policies.
-- [ ] 2.4 Extend `eacl.operator.delegation-refinement-test` with random child permutations; extend the qualified differential to require sound certificates at sampled times and lookup items equal to checks.
-- [ ] 2.5 Register mutation controls (child dropped from the order; fault taken as decisive; the earlier deadline kept when both operands are decisive); verify both runtimes.
-- [ ] 2.6 Gate: check cases within budget, direct grant at most 4 adapter commands.
+- [x] 2.1 Derive the evaluation order per `:any-true`/`:all-true` node at sealing, outside the fingerprint (`operator-plan/operand-order`, `:operand-orders`): relation leaves, arrows to relations, references to union-only permissions on no cycle, recursive ones, then operator permissions and nested operator nodes; ties canonical. `plan-test/unions-decide-their-operands-in-static-cost-order-test`.
+- [x] 2.2 Iterate children in that order in `vector-evaluator/check-many-normalized` and `evaluator/check-eids`; `evidence/combine` keeps the later deadline when both operands decide. `compiler-plan-compatibility` gains `:operand-order` and `:certificate-rule`.
+- [x] 2.3 Prove the order and certificate lemmas in `QualifiedTemporal.dfy` (`OrderedShortCircuitIsSound`, `BothDecisiveTakeTheLaterDeadline`, `CertificateFollowsTheOrder`; with `QualifiedEvidence.FoldsIgnoreOrder`, no separate `OperandOrder.dfy`) and list the theorems in the contract.
+- [x] 2.4 `eacl.engine.operand-order-refinement-test`: a strong-Kleene transcription with widest-witness deadlines against every route, in the sealed order and in random permutations of it; lookup items equal checks exactly, residuals included.
+- [x] 2.5 Register mutation controls `:operand-order-drops-a-child` and `:operand-order-takes-a-fault-as-decisive`; both runtimes. The earlier-deadline mutant is equivalent on today's evaluators (each stops at the first decisive operand, a wildcard probe is demanded only when the subject's own probe does not grant, and the reducer keeps a candidate's first emitted certificate), so the later-deadline rule is pinned by `evidence-test/both-decisive-operands-keep-the-later-deadline` and `QualifiedTemporal.BothDecisiveTakeTheLaterDeadline`; its executed control lands with the tabled evaluator (section 8), where table and memo values are both decisive.
+- [x] 2.6 Gate: check cases within budget, direct grant at most 4 adapter commands. The gate claims `check, direct grant`, its work bound `:direct-grant-commands` and `count, narrow subject, limit 1`.
+- [x] 2.7 A conditional lookup item of a union-only permission is re-decided by the point check, so its residual equals the check's (on #219 the union search and the point search composed different, both sound, certificates).
 
 ## 3. Set-at-a-time arrows (dropped, design D3)
 

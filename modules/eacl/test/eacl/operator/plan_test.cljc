@@ -354,6 +354,57 @@
                     (:expressions (plan/seal-plan (adapter delegation-schema :delegation)
                                                   [:folder :removable])))))))
 
+(def ^:private operand-order-schema
+  "definition user {}
+   definition team {
+     relation member: user
+     permission members = member
+   }
+   definition folder {
+     relation parent: folder
+     relation team: team
+     relation viewer: user
+     relation owner: user
+     relation banned: user
+     relation eligible: user
+     permission tree = viewer + parent->tree
+     permission gated = viewer & eligible
+     permission view = (parent->tree + team->members + team->member + tree + owner + gated + viewer) - banned
+   }")
+
+(deftest unions-decide-their-operands-in-static-cost-order-test
+  (let [sealed (plan/seal-plan (adapter operand-order-schema :operand-order) [:folder :view])
+        program (get-in sealed [:predicate-programs [:folder :view]])
+        union-id (some (fn [[id predicate]]
+                         (when (and (= :any-true (:instruction predicate)) (< 2 (count (:children predicate))))
+                           id))
+                       program)
+        describe (fn [id]
+                   (let [{:keys [instruction descriptor target-node]} (get program id)]
+                     (case instruction
+                       :direct-membership [:relation (:relation descriptor)]
+                       :arrow-membership [:arrow (:relation descriptor)
+                                          (mapv #(or (:target-node %) (:target-kind %)) (:partitions descriptor))]
+                       :permission-membership [:permission target-node]
+                       [instruction])))
+        order (plan/operand-order sealed [:folder :view] union-id (get program union-id))]
+    (testing "relation leaves, arrows to relations, plain references, recursive ones, operators"
+      (is (= [[:relation :owner] [:relation :viewer]
+              [:arrow :team [:relation]]
+              [:arrow :team [[:team :members]]]
+              [:arrow :parent [[:folder :tree]]] [:permission [:folder :tree]]
+              [:permission [:folder :gated]]]
+             (mapv describe order))))
+    (testing "canonical order breaks ties, and the order is a permutation of the children"
+      (is (= (sort (:children (get program union-id))) (sort order)))
+      (is (every? (fn [[a b]] (or (not= (take 1 (describe a)) (take 1 (describe b))) (< a b)))
+                  (partition 2 1 (take 2 order)))))
+    (testing "the order is derived outside the fingerprint, and a plan without it keeps the canonical order"
+      (is (= sealed (plan/validate-plan (adapter operand-order-schema :operand-order) sealed)))
+      (is (= (:children (get program union-id))
+             (plan/operand-order (dissoc sealed :operand-orders) [:folder :view] union-id
+                                 (get program union-id)))))))
+
 (deftest delegated-generator-follows-the-anchor-and-left-chain-test
   (let [adapter (adapter delegation-schema :delegation-generator)
         generator (fn [permission]

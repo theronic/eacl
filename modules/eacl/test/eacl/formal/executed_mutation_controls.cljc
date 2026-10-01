@@ -32,6 +32,7 @@
             [eacl.operator.lookup :as operator-lookup]
             [eacl.operator.plan :as operator-plan]
             [eacl.operator.recursive :as operator-recursive]
+            [eacl.operator.vector-evaluator :as vector-evaluator]
             [eacl.proof-frame :as proof-frame]
             [eacl.relay :as relay]
             [eacl.relationships.mutations :as relationship-mutations]
@@ -2574,6 +2575,77 @@ definition project {
                              (fn [expression] (original (dissoc expression :folded-operator?)))]
                  (folded-control-run))))))
 
+;;; Static operand order (design D2). Evaluators decide a union's operands in
+;;; the sealed cost order, `operator-plan/operand-order`, and stop at the first
+;;; decisive one. Every operand must still be reachable: in `open = (viewer +
+;;; parent->viewer) - banned` the arrow comes last, and user 9's only grant on
+;;; folder 2 is its parent's viewer. A fault must not stop the walk: in `open =
+;;; (reader + writer) - banned` the reader grant faults and comes first, and
+;;; the plain writer grant must absorb it.
+
+(def ^:private operand-order-control-schema
+  "definition user {}
+definition folder {
+  relation parent: folder
+  relation viewer: user
+  relation banned: user
+  permission open = (viewer + parent->viewer) - banned
+}")
+
+(defn- operand-order-control-run []
+  (let [adapter (operator-probe-adapter operand-order-control-schema
+                                        #{[:folder 1 :parent :folder 2] [:user 9 :viewer :folder 1]})]
+    (operator-typed-or #(engine/can? adapter {:type :user :id 9} :open {:type :folder :id 2}))))
+
+(defn operand-order-drops-a-child-killed?
+  []
+  (let [original operator-plan/operand-order]
+    (and (true? (operand-order-control-run))
+         (not (true? (with-redefs [operator-plan/operand-order
+                                   (fn [plan permission node-id predicate]
+                                     (vec (butlast (original plan permission node-id predicate))))]
+                       (operand-order-control-run)))))))
+
+(def ^:private operand-fault-control-schema
+  "definition user {}
+definition doc {
+  relation reader: user
+  relation writer: user
+  relation banned: user
+  permission open = (reader + writer) - banned
+}")
+
+(defn- operand-fault-control-run []
+  ;; The probe adapter has no qualified direct-edge read; the stored compact
+  ;; edges below stand in for it: the reader grant carries qualifier 7.
+  (let [adapter (operator-probe-adapter operand-fault-control-schema
+                                        #{[:user 1 :reader :doc 20 7] [:user 1 :writer :doc 20]})
+        relation-id (fn [relation] (:relation-id (first (backend/invoke adapter :relation-defs :doc relation))))
+        stored {[:user 1 (relation-id :reader) :doc 20] [20 7]
+                [:user 1 (relation-id :writer) :doc 20] 20}
+        fault (evidence/fault :eacl.caveat/evaluation :missing-map-key)]
+    (with-redefs [backend/direct-edge-invoker (fn [_] (fn [& point] (get stored (vec point))))
+                  qualification/qualify
+                  (fn [_ _ compact-edge]
+                    (if (vector? compact-edge) fault (some? compact-edge)))]
+      (operator-typed-or
+       #(evidence/value
+         (first (vector-evaluator/check-many-eids
+                 {:adapter adapter
+                  :plan (operator-plan/seal-plan adapter [:doc :open])
+                  :qualification {:time 0}
+                  :candidates [{:direction :forward :subject-type :user :subject-eid 1
+                                :resource-type :doc :resource-eid 20}]})))))))
+
+(defn operand-order-takes-a-fault-as-decisive-killed?
+  []
+  (let [original vector-evaluator/decisive?]
+    (and (true? (operand-fault-control-run))
+         (not (true? (with-redefs [vector-evaluator/decisive?
+                                   (fn [op result]
+                                     (or (evidence/fault? result) (original op result)))]
+                       (operand-fault-control-run)))))))
+
 (defn operator-delegated-generator-wrong-operand-killed?
   []
   (let [original operator-plan/delegated-generator
@@ -3112,7 +3184,9 @@ definition folder {
    :reused-certificate-unobserved reused-certificate-unobserved-killed?
    :kleene-fault-dominates-absorber kleene-fault-dominates-absorber-killed?
    :operator-delegation-takes-folded-operator-for-union-only
-   operator-delegation-takes-folded-operator-for-union-only-killed?})
+   operator-delegation-takes-folded-operator-for-union-only-killed?
+   :operand-order-drops-a-child operand-order-drops-a-child-killed?
+   :operand-order-takes-a-fault-as-decisive operand-order-takes-a-fault-as-decisive-killed?})
 
 (deftest every-portable-production-mutant-is-killed-test
   (doseq [[id detector] controls]

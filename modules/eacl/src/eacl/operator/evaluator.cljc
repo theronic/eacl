@@ -443,7 +443,7 @@
                            memo active no-value)
 
                           (:any-true :all-true)
-                          (let [children (:children predicate)
+                          (let [children (operator-plan/operand-order plan permission node-id predicate)
                                 op (if (= :any-true instruction)
                                      :union :intersection)
                                 first-child (first children)]

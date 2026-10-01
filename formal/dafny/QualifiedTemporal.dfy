@@ -18,6 +18,12 @@ module QualifiedTemporal {
     else Until(if a.at <= b.at then a.at else b.at)
   }
 
+  // The later of two deadlines: the end of the time either still holds.
+  function Later(a: Deadline, b: Deadline): Deadline {
+    if a.Forever? || b.Forever? then Forever
+    else Until(if a.at <= b.at then b.at else a.at)
+  }
+
   function Qualify(universe: set<nat>, qid: nat, qs: map<nat, Qualifier>, t: int): Evidence {
     if qid == 0 then Evidence(Value(universe), Forever, true)
     else if qid !in qs || !qs[qid].valid then Evidence(Fault(universe, {0}), Forever, true)
@@ -43,17 +49,33 @@ module QualifiedTemporal {
   }
 
   // A complete decisive operand decides whatever the other operand is, a
-  // faulting one included; the left operand wins when both decide.
+  // faulting one included.
   function Need(universe: set<nat>, op: Operator, a: Evidence, b: Evidence): nat {
     if LeftDecides(universe, op, a.value) && a.complete then 1
     else if RightDecides(universe, op, b.value) && b.complete then 2
     else 3
   }
 
+  // Both operands are complete and decisive.
+  predicate BothDecide(universe: set<nat>, op: Operator, a: Evidence, b: Evidence) {
+    LeftDecides(universe, op, a.value) && a.complete && RightDecides(universe, op, b.value) && b.complete
+  }
+
+  // The certificate: the later deadline when both operands decide (either
+  // witness keeps the composition decided), the deciding operand's own when
+  // one decides, and the earlier deadline when neither does.
+  function Certificate(universe: set<nat>, op: Operator, a: Evidence, b: Evidence): Deadline {
+    var needed := Need(universe, op, a, b);
+    if BothDecide(universe, op, a, b) then Later(a.end, b.end)
+    else if needed == 1 then a.end
+    else if needed == 2 then b.end
+    else Meet(a.end, b.end)
+  }
+
   function Combine(universe: set<nat>, op: Operator, a: Evidence, b: Evidence): Evidence {
     var needed := Need(universe, op, a, b);
     Evidence(Compose(op, a.value, b.value),
-             if needed == 1 then a.end else if needed == 2 then b.end else Meet(a.end, b.end),
+             Certificate(universe, op, a, b),
              if needed == 1 then a.complete else if needed == 2 then b.complete else a.complete && b.complete)
   }
 
@@ -68,7 +90,31 @@ module QualifiedTemporal {
   lemma DecisionIgnoresTheOtherOperand(universe: set<nat>, op: Operator, a: Evidence, b: Evidence, b2: Evidence)
     requires a.complete && LeftDecides(universe, op, a.value)
     ensures Need(universe, op, a, b) == 1 && Need(universe, op, a, b2) == 1
-    ensures Combine(universe, op, a, b).end == a.end && Combine(universe, op, a, b).complete
+    ensures Combine(universe, op, a, b).complete
+    ensures !(b.complete && RightDecides(universe, op, b.value)) ==> Combine(universe, op, a, b).end == a.end
+  {}
+
+  // When both operands are already decisive, the certificate is the later
+  // deadline, so it does not depend on which operand an evaluator read
+  // first.
+  lemma BothDecisiveTakeTheLaterDeadline(universe: set<nat>, op: Operator, a: Evidence, b: Evidence)
+    requires BothDecide(universe, op, a, b)
+    ensures Combine(universe, op, a, b).end == Later(a.end, b.end)
+    ensures Combine(universe, op, a, b).complete
+  {}
+
+  lemma LaterIsEither(t: int, a: Deadline, b: Deadline)
+    ensures Before(t, Later(a, b)) <==> Before(t, a) || Before(t, b)
+  {}
+
+  // For a union and an intersection the operands' roles are symmetric, so
+  // when both decide the composition's certificate is the same either way
+  // round.
+  lemma SymmetricCertificateWhenBothDecide(universe: set<nat>, op: Operator, a: Evidence, b: Evidence)
+    requires op.Union? || op.Intersection?
+    requires BothDecide(universe, op, a, b)
+    ensures BothDecide(universe, op, b, a)
+    ensures Combine(universe, op, a, b).end == Combine(universe, op, b, a).end
   {}
 
   // A positive worklist accumulates derivations. Replacing an established
@@ -77,7 +123,12 @@ module QualifiedTemporal {
   lemma AccumulationRetainsGroundedGrant(universe: set<nat>, prior: Evidence, derived: Evidence)
     requires prior.value == Value(universe) && prior.complete
     requires Within(universe, derived.value)
-    ensures Combine(universe, Union, prior, derived) == prior
+    ensures Combine(universe, Union, prior, derived).value == prior.value
+    ensures Combine(universe, Union, prior, derived).complete
+    ensures !(derived.complete && RightDecides(universe, Union, derived.value)) ==>
+              Combine(universe, Union, prior, derived) == prior
+    ensures derived.complete && RightDecides(universe, Union, derived.value) ==>
+              Combine(universe, Union, prior, derived).end == Later(prior.end, derived.end)
   {
     assert LeftDecides(universe, Union, prior.value);
     TotalGrantAbsorbs(universe, derived.value);
@@ -203,7 +254,12 @@ module QualifiedTemporal {
     ensures Compose(op, laterA, laterB) == Combine(universe, op, a, b).value
   {
     var needed := Need(universe, op, a, b);
-    if needed == 1 {
+    // When both decide, at least one witness is still valid at `later`.
+    var aHolds := needed == 1 && (!BothDecide(universe, op, a, b) || Before(later, a.end));
+    if BothDecide(universe, op, a, b) {
+      LaterIsEither(later, a.end, b.end);
+    }
+    if aHolds {
       forall w | w in universe
         ensures Connect(op, At(laterA, w), At(laterB, w)) == Connect(op, At(a.value, w), At(b.value, w))
       {
@@ -211,7 +267,7 @@ module QualifiedTemporal {
         DefiniteAbsorbers(At(b.value, w));
       }
       ComposeAgreesOnTheUniverse(universe, op, laterA, laterB, a.value, b.value);
-    } else if needed == 2 {
+    } else if needed == 1 || needed == 2 {
       forall w | w in universe
         ensures Connect(op, At(laterA, w), At(laterB, w)) == Connect(op, At(a.value, w), At(b.value, w))
       {
@@ -323,6 +379,147 @@ module QualifiedTemporal {
       if Combine(universe, op, left, right).complete && Before(later, Combine(universe, op, left, right).end) {
         WitnessCertificateIsSound(universe, op, left, right, laterLeft, laterRight, later);
       }
+  }
+
+  // N-ary unions and intersections in any evaluation order. An evaluator
+  // combines the operands left to right from the operator's identity and
+  // stops once the accumulator is a complete total absorber; the operands it
+  // skips are never read. These proofs recurse explicitly: automatic lemma
+  // induction is off, so no step rests on an induction hypothesis the solver
+  // chose.
+  function Identity(universe: set<nat>, op: Operator): Evidence {
+    if op.Union? then Evidence(Value({}), Forever, true) else Evidence(Value(universe), Forever, true)
+  }
+
+  function Fold(universe: set<nat>, op: Operator, s: seq<Outcome>): Outcome {
+    if op.Union? then FoldUnion(s) else FoldIntersection(universe, s)
+  }
+
+  function Values(s: seq<Evidence>): seq<Outcome> {
+    seq(|s|, i requires 0 <= i < |s| => s[i].value)
+  }
+
+  function Accumulate(universe: set<nat>, op: Operator, acc: Evidence, s: seq<Evidence>): Evidence
+    decreases |s|
+  {
+    if |s| == 0 || (acc.complete && LeftDecides(universe, op, acc.value)) then acc
+    else Accumulate(universe, op, Combine(universe, op, acc, s[0]), s[1..])
+  }
+
+  lemma {:induction false} FoldIsWithin(universe: set<nat>, op: Operator, s: seq<Outcome>)
+    requires op.Union? || op.Intersection?
+    requires forall x | x in s :: Within(universe, x)
+    ensures Within(universe, Fold(universe, op, s))
+    decreases |s|
+  {
+    if |s| > 0 {
+      var p := s[..|s| - 1];
+      assert forall x | x in p :: x in s;
+      FoldIsWithin(universe, op, p);
+      ComposeIsWithin(universe, op, Fold(universe, op, p), s[|s| - 1]);
+    } else if op.Intersection? {
+      assert Within(universe, Value(universe));
+    }
+  }
+
+  lemma {:induction false} FoldMayStop(universe: set<nat>, op: Operator, s: seq<Outcome>, k: nat)
+    requires op.Union? || op.Intersection?
+    requires k <= |s|
+    requires forall x | x in s :: Within(universe, x)
+    requires LeftDecides(universe, op, Fold(universe, op, s[..k]))
+    ensures Fold(universe, op, s) == Fold(universe, op, s[..k])
+  {
+    if op.Union? {
+      UnionMayStopAtATotalGrant(universe, s, k);
+    } else {
+      IntersectionMayStopAtATotalDenial(universe, s, k);
+    }
+  }
+
+  // The invariant of one evaluation: after `k` operands the accumulator is
+  // their composition, and its certificate, when complete, fixes the
+  // composition of their later values.
+  lemma {:induction false} AccumulationFromPrefix(universe: set<nat>, op: Operator, s: seq<Evidence>, later: seq<Outcome>, t: int, k: nat, acc: Evidence)
+    requires op.Union? || op.Intersection?
+    requires k <= |s| && |later| == |s|
+    requires forall i | 0 <= i < |s| :: Within(universe, s[i].value) && Within(universe, later[i])
+    requires forall i | 0 <= i < |s| :: s[i].complete && Before(t, s[i].end) ==> later[i] == s[i].value
+    requires acc.value == Fold(universe, op, Values(s)[..k])
+    requires acc.complete && Before(t, acc.end) ==> Fold(universe, op, later[..k]) == acc.value
+    ensures Accumulate(universe, op, acc, s[k..]).value == Fold(universe, op, Values(s))
+    ensures var r := Accumulate(universe, op, acc, s[k..]);
+            r.complete && Before(t, r.end) ==> Fold(universe, op, later) == r.value
+    decreases |s| - k
+  {
+    var values := Values(s);
+    assert forall x | x in values :: Within(universe, x);
+    assert forall x | x in later :: Within(universe, x);
+    if k == |s| {
+      assert s[k..] == [];
+      assert values[..k] == values && later[..k] == later;
+    } else if acc.complete && LeftDecides(universe, op, acc.value) {
+      FoldMayStop(universe, op, values, k);
+      if Before(t, acc.end) {
+        FoldMayStop(universe, op, later, k);
+      }
+    } else {
+      var next := Combine(universe, op, acc, s[k]);
+      assert s[k..][0] == s[k] && s[k..][1..] == s[k + 1..];
+      assert values[..k + 1][..k] == values[..k] && values[..k + 1][k] == s[k].value;
+      assert later[..k + 1][..k] == later[..k];
+      assert forall x | x in values[..k] :: x in values;
+      assert forall x | x in later[..k] :: x in later;
+      FoldIsWithin(universe, op, values[..k]);
+      FoldIsWithin(universe, op, later[..k]);
+      if next.complete && Before(t, next.end) {
+        WitnessCertificateIsSound(universe, op, acc, s[k], Fold(universe, op, later[..k]), later[k], t);
+      }
+      AccumulationFromPrefix(universe, op, s, later, t, k + 1, next);
+    }
+  }
+
+  // Whatever the order, the evaluation yields the composition of every
+  // operand (QualifiedEvidence.FoldsIgnoreOrder: the composition itself
+  // ignores the order), and its certificate is sound: the first decisive
+  // operand's deadline when one decides, else the earliest deadline read.
+  lemma {:induction false} OrderedShortCircuitIsSound(universe: set<nat>, op: Operator, s: seq<Evidence>, later: seq<Outcome>, t: int)
+    requires op.Union? || op.Intersection?
+    requires |later| == |s|
+    requires forall i | 0 <= i < |s| :: Within(universe, s[i].value) && Within(universe, later[i])
+    requires forall i | 0 <= i < |s| :: s[i].complete && Before(t, s[i].end) ==> later[i] == s[i].value
+    ensures Accumulate(universe, op, Identity(universe, op), s).value == Fold(universe, op, Values(s))
+    ensures var r := Accumulate(universe, op, Identity(universe, op), s);
+            r.complete && Before(t, r.end) ==> Fold(universe, op, later) == r.value
+  {
+    assert Values(s)[..0] == [] && later[..0] == [] && s[0..] == s;
+    AccumulationFromPrefix(universe, op, s, later, t, 0, Identity(universe, op));
+  }
+
+  // The value ignores the order; the certificate does not. Two total grants
+  // with different deadlines certify a union until whichever an evaluator
+  // reads first: both deadlines are sound.
+  lemma {:induction false} CertificateFollowsTheOrder(universe: set<nat>, d: int, e: int)
+    requires universe != {} && d < e
+    ensures var a, b := Evidence(Value(universe), Until(d), true), Evidence(Value(universe), Until(e), true);
+            Accumulate(universe, Union, Identity(universe, Union), [a, b]).end == Until(d) &&
+            Accumulate(universe, Union, Identity(universe, Union), [b, a]).end == Until(e) &&
+            Accumulate(universe, Union, Identity(universe, Union), [a, b]).value ==
+            Accumulate(universe, Union, Identity(universe, Union), [b, a]).value
+  {
+    var a, b := Evidence(Value(universe), Until(d), true), Evidence(Value(universe), Until(e), true);
+    var w :| w in universe;
+    assert !AllTrue(universe, Value({})) by {
+      assert At(Value({}), w).F?;
+    }
+    TotalGrantAbsorbs(universe, Value({}));
+    var first := Combine(universe, Union, Identity(universe, Union), a);
+    assert first.value == Value(universe) && first.end == Until(d) && first.complete;
+    assert [a, b][1..] == [b];
+    assert Accumulate(universe, Union, first, [b]) == first;
+    var other := Combine(universe, Union, Identity(universe, Union), b);
+    assert other.value == Value(universe) && other.end == Until(e) && other.complete;
+    assert [b, a][1..] == [a];
+    assert Accumulate(universe, Union, other, [a]) == other;
   }
 
   // A complete T leaf valid until `d` masks a faulting operand of a union: the

@@ -8,4 +8,5 @@
   :context-omitted-from-cache :evaluator-omitted-from-cache
   :conditional-cache-alias :qid-only-decode-cache
   :raw-clock-regresses :live-cursor-pins-old-time
-  :recursion-stops-before-certificate-fixpoint]}
+  :recursion-stops-before-certificate-fixpoint
+  :earlier-deadline-when-both-decide]}

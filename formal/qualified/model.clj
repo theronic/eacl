@@ -100,6 +100,7 @@
 
 (defn before? [time end] (or (nil? end) (< time end)))
 (defn meet [a b] (cond (nil? a) b (nil? b) a :else (min a b)))
+(defn later [a b] (when (and (some? a) (some? b)) (max a b)))
 (defn evidence [v end] {:value v :end end :complete? true})
 (defn no-new-faults?
   "In every world, a fault after is a fault before with at least its reasons."
@@ -130,16 +131,22 @@
 
 (defn needed
   "Which certificate a composition keeps. A decisive complete witness decides
-   whatever the other operand is, a fault included (strong Kleene)."
+   whatever the other operand is, a fault included (strong Kleene); when both
+   operands decide, either witness does, so the later deadline holds
+   (QualifiedTemporal.Certificate)."
   [universe op a b]
-  (let [ak (kind universe (:value a)) bk (kind universe (:value b))]
+  (let [ak (kind universe (:value a)) bk (kind universe (:value b))
+        left? (and (:complete? a) (= ak (if (= :union op) :has :no)))
+        right? (and (:complete? b) (= bk (if (#{:union :exclusion} op) :has :no)))]
     (cond
-      (and (:complete? a) (= ak (if (= :union op) :has :no))) :left
-      (and (:complete? b) (= bk (if (#{:union :exclusion} op) :has :no))) :right
+      (and left? right?) :later
+      left? :left
+      right? :right
       :else :both)))
 
 (defn combine [universe op a b]
   (assoc (case (needed universe op a b)
+           :later {:end (later (:end a) (:end b)) :complete? true}
            :left (select-keys a [:end :complete?])
            :right (select-keys b [:end :complete?])
            :both {:end (meet (:end a) (:end b))

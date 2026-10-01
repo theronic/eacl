@@ -207,9 +207,11 @@
 
 (declare check-many-normalized)
 
-(defn- decisive?
+(defn ^:no-doc decisive?
   "A definite absorber: `true` for a union, `false` for an intersection or
-  an exclusion's left operand. A fault is never decisive."
+  an exclusion's left operand. A fault is never decisive: an evaluator that
+  stops at the first decisive operand of its static order must read past a
+  faulting one."
   [op result]
   (if (= :union op) (evidence/has? result) (evidence/no? result)))
 
@@ -460,7 +462,8 @@
                                                                     result remaining)
                                                      remaining (filterv #(not (decisive? op (nth result %))) remaining)]
                                                  (children! (subvec children 1) remaining result)))))))]
-                                (children! (:children predicate) pending
+                                (children! (operator-plan/operand-order plan permission node-id predicate)
+                                           pending
                                            (reduce #(assoc %1 %2 (not= op :union)) witnessed pending))))
 
                             :left-and-not-right

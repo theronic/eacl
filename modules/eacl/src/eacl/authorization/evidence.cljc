@@ -92,6 +92,10 @@
 (defn reusable? [e start time]
   (and (complete? e) (not (fault? e)) (<= start time) (before? time (valid-until e))))
 (defn meet [a b] (cond (nil? a) b (nil? b) a :else (min a b)))
+(defn later
+  "The later of two deadlines; nil (forever) is the latest."
+  [a b]
+  (when (and (some? a) (some? b)) (max a b)))
 
 (defn- missing-vector [missing]
   (when-not (and (coll? missing) (seq missing)
@@ -244,9 +248,12 @@
    with strong-Kleene connectives. A decisive complete witness (`true` in a
    union or a subtracted operand, `false` in an intersection or an arrow's
    via/target) decides the result whatever the other operand is, including
-   a fault, and keeps its own deadline. Otherwise the result needs both
-   child certificates. When composition erases a fault, the request's
-   `:masked-faults` meter records it."
+   a fault, and keeps its own deadline. When both operands are already
+   decisive, either witness keeps the result decided, so it keeps the later
+   deadline: the certificate does not depend on which operand an evaluator
+   read first. Otherwise the result needs both child certificates. When
+   composition erases a fault, the request's `:masked-faults` meter records
+   it."
   [op a b]
   (when-not (contains? #{:union :intersection :exclusion :arrow} op) (error! :operator))
   (if (and (boolean? a) (boolean? b))
@@ -254,7 +261,8 @@
     (let [v (combine-value op a b)
           left? (decisive-left? op a)
           right? (decisive-right? op b)
-          end (cond left? (valid-until a) right? (valid-until b)
+          end (cond (and left? right?) (later (valid-until a) (valid-until b))
+                    left? (valid-until a) right? (valid-until b)
                     :else (meet (valid-until a) (valid-until b)))
           complete (cond left? true right? true :else (and (complete? a) (complete? b)))]
       (when (and (or (fault? a) (fault? b)) (not (faulted-value? v)))

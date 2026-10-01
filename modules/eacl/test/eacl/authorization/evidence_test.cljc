@@ -265,3 +265,23 @@
       (is (= payload (e/encode (e/decode payload))))
       (doseq [edited (edits payload)]
         (is (= (outcome #(e/decode edited)) (generic edited)) edited)))))
+
+(deftest both-decisive-operands-keep-the-later-deadline
+  ;; Either witness keeps the composition decided, so the certificate is the
+  ;; later deadline and does not depend on which operand was read first.
+  (let [granted (fn [end] (e/with-certificate true end true))
+        denied (fn [end] (e/with-certificate false end true))
+        end #(e/valid-until (e/combine %1 %2 %3))]
+    (is (= 9 (end :union (granted 5) (granted 9)) (end :union (granted 9) (granted 5))))
+    (is (nil? (end :union (granted 5) true)) "forever is the latest deadline")
+    (is (= 9 (end :intersection (denied 5) (denied 9)) (end :intersection (denied 9) (denied 5))))
+    (is (= 9 (end :arrow (denied 9) (denied 5))))
+    (is (= 9 (end :exclusion (denied 5) (granted 9)) (end :exclusion (denied 9) (granted 5))))
+    ;; One decisive operand keeps its own deadline; neither, the earlier.
+    (is (= 5 (end :union (granted 5) (denied 9))))
+    (is (= 9 (end :union (denied 5) (granted 9))))
+    (is (= 5 (end :intersection (granted 5) (granted 9))))
+    (is (= 5 (end :union (denied 5) (denied 9))))
+    ;; A conditional or a fault is never decisive.
+    (is (= 5 (end :union (e/with-certificate x 5 true) (e/with-certificate y 9 true))))
+    (is (= 9 (end :union (e/fault :eacl.caveat/evaluation :bad) (granted 9))))))

@@ -188,6 +188,8 @@
                :inert-preparation-and-atomic-temporal-publication
                :exclusive-expiry-and-non-monotonic-permission
                :decisive-witness-stability-intervals
+               :any-operand-order-short-circuit-certificate
+               :later-deadline-when-both-operands-decide
                :context-evaluator-proof-and-result-kind-scoped-cache
                :pinned-and-live-continuation-validity]
     :dafny ["formal/dafny/QualifiedEvidence.dfy"

@@ -40,7 +40,7 @@
     :witness-programs :predicate-programs :specializations
     :capability-identity :compatibility-formats :versions :order-contract
     :fingerprint :expression-roots :certificate-acyclic?
-    :delegated-permissions :guarded-delegation})
+    :delegated-permissions :guarded-delegation :operand-orders})
 
 (defn- compile-error! [reason message data]
   (throw
@@ -351,6 +351,63 @@
                   target
                   (recur target (get roots target) seen))))
             nil))))))
+
+(defn- cyclic-permissions
+  "Permissions on a dependency cycle: members of a strongly connected
+  component of two or more permissions, or of a self-loop."
+  [{:keys [components edges]}]
+  (into (into #{} (comp (filter #(< 1 (count %))) cat) components)
+        (keep (fn [{:keys [from to]}] (when (= from to) from)))
+        edges))
+
+(defn- operand-rank
+  "The static cost class of one operand of a union or intersection node:
+  relation leaves, then arrows to relations, then references to union-only
+  permissions that lie on no cycle, then recursive ones, then operator
+  permissions and nested operator nodes."
+  [plan cyclic operators permission node-id]
+  (let [predicate (get-in plan [:predicate-programs permission node-id])
+        class-of (fn [targets]
+                   (cond (some operators targets) 4
+                         (some cyclic targets) 3
+                         :else 2))]
+    (case (:instruction predicate)
+      :direct-membership 0
+      :arrow-membership
+      (let [partitions (get-in predicate [:descriptor :partitions])]
+        (if (every? #(= :relation (:target-kind %)) partitions)
+          1
+          (class-of (keep :target-node partitions))))
+      :permission-membership (class-of [(:target-node predicate)])
+      4)))
+
+(defn- operand-orders
+  "Per union and intersection node, its children in static cost order:
+  `operand-rank`, then canonical node id. A pure function of sealed fields;
+  plan identity and node ids are unchanged."
+  [plan]
+  (let [cyclic (cyclic-permissions (:dependency-certificate plan))
+        operators (into #{}
+                        (keep (fn [{:keys [permission] :as expression}]
+                                (when (operator-permission? expression) permission)))
+                        (:expressions plan))]
+    (into (sorted-map)
+          (for [[permission program] (:predicate-programs plan)]
+            [permission
+             (into (sorted-map)
+                   (for [[node-id predicate] program
+                         :when (contains? #{:any-true :all-true} (:instruction predicate))]
+                     [node-id
+                      (vec (sort-by (fn [child]
+                                      [(operand-rank plan cyclic operators permission child) child])
+                                    (:children predicate)))]))]))))
+
+(defn ^:no-doc operand-order
+  "The order in which the evaluators decide the children of a union or
+  intersection node: the sealed static cost order, or the canonical order of
+  a plan without one."
+  [plan permission node-id predicate]
+  (or (get-in plan [:operand-orders permission node-id]) (:children predicate)))
 
 (defn ^:no-doc delegated-view
   "An evaluation view of `plan` in which the root predicate of every
@@ -838,7 +895,7 @@
   ;; These projections are recomputed from authenticated fields; fresh-compile
   ;; validation also checks them. The complete remaining plan is authenticated.
   (dissoc plan :fingerprint :expression-roots :certificate-acyclic?
-          :delegated-permissions :guarded-delegation))
+          :delegated-permissions :guarded-delegation :operand-orders))
 
 (defn- compile-operator-plan [adapter root collected]
   (when-not (expression-closure-has-operator? collected)
@@ -948,7 +1005,8 @@
            :expression-roots (expression-roots plan)
            :certificate-acyclic? (certificate-acyclic? plan)
            :delegated-permissions (delegated-permissions plan)
-           :guarded-delegation (guarded-delegation plan))))
+           :guarded-delegation (guarded-delegation plan)
+           :operand-orders (operand-orders plan))))
 
 (defn seal-plan
   "Returns the existing union-only sealed plan unchanged, or compiles an

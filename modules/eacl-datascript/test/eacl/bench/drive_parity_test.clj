@@ -45,12 +45,14 @@
   is claimed by the pull request that meets its budget, or here when the
   budget already held when the gate was added; later pull requests add the
   cases they meet, and none may drop one."
-  {:cases #{"check, through a group"
+  {:cases #{"check, direct grant"
+            "check, through a group"
             "check, 64-deep folder chain"
             "check, denied, 64-deep folder chain"
             "check, denied, typical document"
-            "check, denied through the group tree"}
-   :work #{}})
+            "check, denied through the group tree"
+            "count, narrow subject, limit 1"}
+   :work #{:direct-grant-commands}})
 
 (def expected-answers
   "Answers on each scale, as the eacl-rust report records them for both

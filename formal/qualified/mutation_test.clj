@@ -105,11 +105,14 @@
            first-step (m/recursive-step u base rules initial)
            full (m/fixed-point u base rules 10)]
        (and (= (update-vals first-step :value) (update-vals initial :value))
-            (not= (get-in first-step [0 :end]) (get-in full [:values 0 :end]))))}))
+            (not= (get-in first-step [0 :end]) (get-in full [:values 0 :end]))))
+     :earlier-deadline-when-both-decide
+     (with-redefs [m/later m/meet]
+       (not= 3 (:end (m/combine u :union (m/evidence (m/value u) 1) (m/evidence (m/value u) 3)))))}))
 
 (deftest all-registered-controls-are-executed-and-killed
   (let [registered (:controls (edn/read-string (slurp "formal/qualified/mutations.edn")))
         results (run-controls)]
-    (is (= 18 (count registered)))
+    (is (= 19 (count registered)))
     (is (= (set registered) (set (keys results))))
     (doseq [[id killed?] results] (is (true? killed?) (name id)))))
