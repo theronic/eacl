@@ -2441,24 +2441,28 @@
                   (when (= subject-type (rule-subject-type rule))
                     (:wildcard-eid rule)))
                 (:rules cover-plan))]
-      (when wildcard-eid
+      (when-let [resource-eid (when wildcard-eid (object-eid db (:id anchor)))]
         (let [{:keys [fetch-fn attempts]} (stable-fetch-fn db)
               reachable?
               (binding [*qualification* nil]
                 (run-routed
                  (fn []
-                   (stable-route/check-eids
+                   ;; A routing probe over the structural cover, not an
+                   ;; authorization answer: the uncached search keeps its
+                   ;; qualifier-blind value out of the client's decision
+                   ;; store, where `check-eids` would publish it.
+                   (stable-route/derives-from-node?
                     (merge (stable-limits)
                            {:adapter db
                             :fetch-fn (structural-cover-fetch fetch-fn)
                             :plan cover-plan
                             :subject-type subject-type
                             :subject-eid wildcard-eid
-                            :resource-eid (object-eid db (:id anchor))
+                            :resource-eid resource-eid
                             :wildcards? false
                             :cut-point! (stable-cut-point)})))))]
           (report-adapter-attempts! attempts)
-          reachable?)))))
+          (boolean reachable?))))))
 
 (defn- wildcard-excluded?
   "A subject's permission is the union of its own entry and, unless the

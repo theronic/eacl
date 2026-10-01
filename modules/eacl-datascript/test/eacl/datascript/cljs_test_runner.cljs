@@ -127,7 +127,8 @@
             [eacl.datascript.set-algebra-reuse-differential-test]
             [eacl.datascript.storage-test]
             [eacl.datascript.wildcard-test]
-            [eacl.datascript.wildcard-differential-test]))
+            [eacl.datascript.wildcard-differential-test]
+            [eacl.datascript.wildcard-operator-routes-test]))
 
 (nodejs/enable-util-print!)
 
@@ -266,6 +267,7 @@
                'eacl.datascript.set-algebra-reuse-differential-test
                'eacl.datascript.storage-test
                'eacl.datascript.wildcard-test
-               'eacl.datascript.wildcard-differential-test))
+               'eacl.datascript.wildcard-differential-test
+               'eacl.datascript.wildcard-operator-routes-test))
 
 (set! *main-cli-fn* -main)
