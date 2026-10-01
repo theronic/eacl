@@ -1189,6 +1189,7 @@ EACL parses a documented subset of the SpiceDB schema DSL to define your authori
 - **Orphan protection**: relations with existing relationships cannot be deleted.
 - **Empty-schema guard**: the public `eacl/write-schema!` rejects replacing a non-empty schema with zero definitions. The backend schema namespaces expose a lower-level `{:allow-empty-schema? true}` option for an intentional wipe; direct use must also follow the cache-recovery rules because it bypasses the EACL client.
 - **Unsupported feature detection**: rejects SpiceDB features unsupported by EACL (see [Limitations](#limitations-deficiencies--gotchas))
+- **Declaration errors**: definitions and Caveats are read in source order, and the first invalid or duplicate declaration determines the error.
 
 ### Schema Updates
 

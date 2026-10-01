@@ -40,6 +40,17 @@ Schema extraction SHALL throw a typed error when the same definition name appear
 - **WHEN** a definition contains `relation owner: user | group` once
 - **THEN** the schema is accepted and expands to two Relation entities
 
+### Requirement: Declaration errors follow source order
+Schema extraction SHALL read top-level definitions and Caveats once, in source order, building each declaration and checking it against the earlier ones before reading the next. The first failing declaration SHALL determine the error, whatever its kind and however many declarations precede it. Within one declaration, its own errors SHALL precede its duplicate-name check.
+
+#### Scenario: Duplicate before an invalid declaration
+- **WHEN** a schema declares `caveat c`, then `caveat c` again, then a `caveat d` whose expression does not parse
+- **THEN** validation throws `:eacl.schema/duplicate-caveat` naming `c`, however many definitions precede the three Caveats
+
+#### Scenario: Invalid declaration before a duplicate
+- **WHEN** a Caveat whose expression does not parse precedes two `definition doc` blocks
+- **THEN** validation throws `:eacl.caveat/invalid` for that Caveat rather than `:eacl.schema/duplicate-definition`
+
 ### Requirement: Full-schema retraction requires explicit opt-in
 `write-schema!` SHALL throw `ex-info` with `:type :eacl.schema/empty-schema-guard` when the new schema contains zero definitions while the stored schema is non-empty, unless called with `{:allow-empty-schema? true}`.
 

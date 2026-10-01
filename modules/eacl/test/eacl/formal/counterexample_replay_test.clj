@@ -158,7 +158,9 @@
     :EACL-FORMAL-090
     eacl.caveats.plan-test/member-literals-are-admitted-like-string-literals
     :EACL-FORMAL-091
-    eacl.schema.expression-limits-test/encoded-byte-limit-precedes-codec-ceilings-test})
+    eacl.schema.expression-limits-test/encoded-byte-limit-precedes-codec-ceilings-test
+    :EACL-FORMAL-092
+    eacl.schema.expression-resolver-test/declaration-errors-follow-source-order-test})
 
 (defn- read-edn
   [path]

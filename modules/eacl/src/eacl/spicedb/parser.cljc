@@ -225,79 +225,104 @@
       first)
     []))
 
+(defn- node-of? [tag node]
+  (and (vector? node) (= tag (first node))))
+
+(defn- definition-entry
+  "Builds one definition's [type-path spec], raising its own declaration
+   errors: a duplicate relation or permission, or a name collision."
+  [[_ type-path-node definition-body]]
+  (let [type-path   (extract-type-path type-path-node)
+        relations   (extract-relations definition-body)
+        permissions (extract-permissions definition-body)
+        collisions  (filter (set (keys relations)) (map :name permissions))]
+    (when (seq collisions)
+      (throw (ex-info (str "Permission and relation share a name on definition '" type-path
+                           "': " (pr-str (vec collisions)))
+               {:type :eacl.schema/name-collision
+                :eacl/error :eacl.schema/name-collision
+                :definition type-path
+                :names (vec collisions)})))
+    [type-path
+     {:relations   relations
+      :permissions permissions}]))
+
+(defn- add-definition [definitions node]
+  (let [[type-path spec] (definition-entry node)]
+    (when (contains? definitions type-path)
+      (throw (ex-info (str "Duplicate definition: '" type-path "'."
+                           " Each type may be defined once; merge the blocks.")
+               {:type :eacl.schema/duplicate-definition
+                :eacl/error :eacl.schema/duplicate-definition
+                :definition type-path})))
+    (assoc definitions type-path spec)))
+
 (defn extract-definitions
   "Extract definitions from parse tree.
    Returns map of {type-path {:relations {...}, :permissions [...]}}.
    Throws on duplicate definition blocks and on a permission sharing a name
    with a relation on the same definition (SpiceDB rejects both; silently
-   letting the last one win produces destructive write-schema! deltas)."
+   letting the last one win produces destructive write-schema! deltas).
+   Definitions are checked in source order, so the first failing one
+   determines the error."
   [parse-tree]
-  (->> parse-tree
-    (filter #(and (vector? %) (= :definition (first %))))
-    (map (fn [[_ type-path-node definition-body]]
-           (let [type-path   (extract-type-path type-path-node)
-                 relations   (extract-relations definition-body)
-                 permissions (extract-permissions definition-body)
-                 collisions  (filter (set (keys relations)) (map :name permissions))]
-             (when (seq collisions)
-               (throw (ex-info (str "Permission and relation share a name on definition '" type-path
-                                    "': " (pr-str (vec collisions)))
-                        {:type :eacl.schema/name-collision
-                         :eacl/error :eacl.schema/name-collision
-                         :definition type-path
-                         :names (vec collisions)})))
-             [type-path
-              {:relations   relations
-               :permissions permissions}])))
-    (reduce (fn [acc [type-path spec]]
-              (if (contains? acc type-path)
-                (throw (ex-info (str "Duplicate definition: '" type-path "'."
-                                     " Each type may be defined once; merge the blocks.")
-                         {:type :eacl.schema/duplicate-definition
-                          :eacl/error :eacl.schema/duplicate-definition
-                          :definition type-path}))
-                (assoc acc type-path spec)))
-            {})))
+  (reduce add-definition {} (filter #(node-of? :definition %) parse-tree)))
+
+(defn- caveat-entity
+  "Builds one named Caveat from its declaration node."
+  [[_ name-node & children]]
+  (let [name (extract-identifier name-node)
+        parameter-node (some #(when (= :caveat-parameters (first %)) %) children)
+        source-node (some #(when (= :caveat-source (first %)) %) children)
+        source (second source-node)
+        parameters
+        (mapv (fn [[_ parameter-name [_ type-node item-node]]]
+                (let [type (keyword (extract-identifier type-node))
+                      item (some-> item-node extract-identifier keyword)]
+                  [(extract-identifier parameter-name)
+                   (if item (case type :list [:list item] :map [:map :string item]
+                                       [:unsupported type item]) type)]))
+              (rest parameter-node))]
+    (try (caveat-definition/entity name parameters source)
+         (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+           (throw (ex-info "Invalid Caveat declaration."
+                           (assoc (ex-data error) :caveat name
+                                  :source-span (insta/span source-node)) error))))))
+
+(defn- add-caveat [caveats node]
+  (let [entity (caveat-entity node)
+        name (:eacl.caveat/name entity)]
+    (when (contains? caveats name)
+      (throw (ex-info "Duplicate Caveat declaration."
+                      {:type :eacl.schema/duplicate-caveat
+                       :eacl/error :eacl.schema/duplicate-caveat :caveat name})))
+    (assoc caveats name entity)))
 
 (defn extract-caveats [parse-tree]
   (->> (rest parse-tree)
-       (filter #(and (vector? %) (= :caveat-definition (first %))))
-       (map (fn [[_ name-node & children]]
-              (let [name (extract-identifier name-node)
-                    parameter-node (some #(when (= :caveat-parameters (first %)) %) children)
-                    source-node (some #(when (= :caveat-source (first %)) %) children)
-                    source (second source-node)
-                    parameters
-                    (mapv (fn [[_ parameter-name [_ type-node item-node]]]
-                            (let [type (keyword (extract-identifier type-node))
-                                  item (some-> item-node extract-identifier keyword)]
-                              [(extract-identifier parameter-name)
-                               (if item (case type :list [:list item] :map [:map :string item]
-                                                   [:unsupported type item]) type)]))
-                          (rest parameter-node))]
-                (try (caveat-definition/entity name parameters source)
-                     (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
-                       (throw (ex-info "Invalid Caveat declaration."
-                                       (assoc (ex-data error) :caveat name
-                                              :source-span (insta/span source-node)) error)))))))
-       (reduce (fn [by-name entity]
-                 (let [name (:eacl.caveat/name entity)]
-                   (when (contains? by-name name)
-                     (throw (ex-info "Duplicate Caveat declaration."
-                                     {:type :eacl.schema/duplicate-caveat
-                                      :eacl/error :eacl.schema/duplicate-caveat :caveat name})))
-                   (assoc by-name name entity)))
-               (sorted-map))
+       (filter #(node-of? :caveat-definition %))
+       (reduce add-caveat (sorted-map))
        vals vec))
 
 (defn transform-schema
   "Transform parse tree to intermediate representation.
-  Throws on unexpected input; a failed parse must never coerce to an empty schema."
+  Throws on unexpected input; a failed parse must never coerce to an empty schema.
+
+  Declarations are read once, in source order: each one is built and checked
+  against the earlier ones before the next is read, so the first failing
+  declaration determines the error, whatever its kind or position."
   [parse-tree]
-  (if (and (vector? parse-tree) (= :schema (first parse-tree)))
-    (let [caveats (extract-caveats parse-tree)]
-      (cond-> {:definitions (extract-definitions (rest parse-tree))}
-        (seq caveats) (assoc :caveats caveats)))
+  (if (node-of? :schema parse-tree)
+    (let [{:keys [definitions caveats]}
+          (reduce (fn [schema node]
+                    (cond
+                      (node-of? :definition node) (update schema :definitions add-definition node)
+                      (node-of? :caveat-definition node) (update schema :caveats add-caveat node)
+                      :else schema))
+                  {:definitions {} :caveats (sorted-map)}
+                  (rest parse-tree))]
+      (cond-> {:definitions definitions}
+        (seq caveats) (assoc :caveats (vec (vals caveats)))))
     (throw (ex-info "Unexpected schema parse tree; refusing to interpret as an empty schema."
              {:type :eacl.schema/parse-error
               :eacl/error :eacl.schema/parse-error

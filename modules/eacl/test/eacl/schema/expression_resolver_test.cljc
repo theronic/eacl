@@ -169,3 +169,29 @@
                nil
                (catch #?(:clj Exception :cljs :default) error
                  (ex-data error))))))))
+
+(deftest declaration-errors-follow-source-order-test
+  ;; The first failing top-level declaration in source order determines the
+  ;; error. Declarations used to be built a 32-item chunk at a time before
+  ;; that chunk's duplicate checks ran, and every Caveat before any
+  ;; definition, so moving the same declarations changed the error.
+  (let [padding (fn [n] (apply str (map #(str "definition pad" % " {}\n") (range n))))
+        valid "caveat c(x int) { x == 1 }\n"
+        invalid "caveat d(x int) { x == }\n"
+        duplicate-type "definition doc {}\ndefinition doc {}\n"
+        inner-duplicate "definition other {\n relation x: pad\n relation x: pad\n}\n"
+        error-type
+        (fn [schema]
+          (try (resolver/validate-schema schema nil {:allow-caveats? true}) :accepted
+               (catch #?(:clj Exception :cljs :default) error
+                 (:type (ex-data error)))))]
+    (doseq [n [1 2 28 29 30 31 32 33 60 61 62 63]
+            [declarations expected]
+            [[[valid valid invalid] :eacl.schema/duplicate-caveat]
+             [[invalid valid valid] :eacl.caveat/invalid]
+             [[duplicate-type inner-duplicate] :eacl.schema/duplicate-definition]
+             [[inner-duplicate duplicate-type] :eacl.schema/duplicate-relation]
+             [[duplicate-type invalid] :eacl.schema/duplicate-definition]
+             [[invalid duplicate-type] :eacl.caveat/invalid]]]
+      (testing (str n " preceding definitions")
+        (is (= expected (error-type (apply str (padding n) declarations))))))))

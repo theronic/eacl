@@ -1,0 +1,17 @@
+{:id :EACL-FORMAL-092
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace "eacl-rust/EACL-RS-108/declaration-position-modulo-32"
+ :minimized-fixture "fixture.edn"
+ :impact :other
+ :affected-versions
+ ["v8.0.0 commit a698b3bdf15e61be9bfd1324d7d7c67dc82176be"]
+ :affected-backends [:shared]
+ :root-cause
+ "transform-schema extracted every Caveat and then every definition through lazy chunked map pipelines: up to 32 declarations of a chunk were built, raising their own errors, before that chunk's duplicate-name checks ran, and all Caveats were built before any definition. Which error a schema reported therefore depended on where its declarations fell relative to 32-item chunk boundaries and on their kind, not on their order."
+ :fix
+ "Read declarations once in source order: each is built and checked against the earlier ones before the next is read, so the first failing declaration determines the error. extract-definitions and extract-caveats use the same step functions."
+ :closing-evidence
+ ["eacl.schema.expression-resolver-test/declaration-errors-follow-source-order-test"]
+ :notes
+ "Found by the eacl-rust port (BUGS.md EACL-RS-108), verified against main a698b3bd."}
