@@ -1055,8 +1055,7 @@
   that Relationship's closed canonical qualifier keys; any other element
   carries none."
   [value]
-  (relationship-mutations/canonical-qualifier-metadata?
-   (select-keys value relationship-mutations/qualifier-keys)))
+  (relationship-mutations/canonical-qualifier-keys? value))
 
 (defn- annotated-spice-object-shape?
   [value]

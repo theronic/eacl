@@ -16,11 +16,31 @@
                   {:type :eacl/invalid-relationship-qualifier
                    :eacl/error :eacl/invalid-relationship-qualifier :reason reason})))
 
+(defn normalize-qualifiers
+  "Validates the qualifier keys of `value`, a Relationship or a map of
+   qualifier keys alone, and returns `value` with them canonical. Empty
+   optional data canonicalizes to the ordinary shape."
+  [{:keys [caveat caveat-context valid-until-ms] :as value}]
+  (when (and (some? caveat) (not (values/parameter-name? caveat)))
+    (invalid-qualifier! :caveat-name))
+  (when (and (contains? value :caveat-context) (nil? caveat))
+    (invalid-qualifier! :context-without-caveat))
+  (when (and (some? valid-until-ms) (not (values/valid-time? valid-until-ms)))
+    (invalid-qualifier! :expiry))
+  (if-not (some #(contains? value %) qualifier-keys)
+    value
+    (let [bound (when (some? caveat-context)
+                  (context/value (context/prepare caveat-context)))]
+      (cond-> (apply dissoc value qualifier-keys)
+        caveat (assoc :caveat caveat)
+        (seq bound) (assoc :caveat-context bound)
+        (some? valid-until-ms) (assoc :valid-until-ms valid-until-ms)))))
+
 (defn normalize-relationship
   "Admits portable public qualifier input before basis selection. Caveat names
    resolve at the selected writer basis; declared parameter validation remains
    at that boundary. Empty optional data canonicalizes to the ordinary shape."
-  [{:keys [caveat caveat-context valid-until-ms] :as relationship}]
+  [relationship]
   (when-not (and (map? relationship)
                  (every? relationship-keys (keys relationship))
                  (every? #(contains? relationship %)
@@ -41,20 +61,7 @@
       (invalid-qualifier! :unsupported-subject-relation)))
   (when-not (keyword? (:relation relationship))
     (invalid-qualifier! :relation-shape))
-  (when (and (some? caveat) (not (values/parameter-name? caveat)))
-    (invalid-qualifier! :caveat-name))
-  (when (and (contains? relationship :caveat-context) (nil? caveat))
-    (invalid-qualifier! :context-without-caveat))
-  (when (and (some? valid-until-ms) (not (values/valid-time? valid-until-ms)))
-    (invalid-qualifier! :expiry))
-  (if-not (some #(contains? relationship %) qualifier-keys)
-    relationship
-    (let [bound (when (some? caveat-context)
-                  (context/value (context/prepare caveat-context)))]
-      (cond-> (apply dissoc relationship qualifier-keys)
-        caveat (assoc :caveat caveat)
-        (seq bound) (assoc :caveat-context bound)
-        (some? valid-until-ms) (assoc :valid-until-ms valid-until-ms)))))
+  (normalize-qualifiers relationship))
 
 (defn- relationship-key
   [{:keys [subject relation resource]}]
@@ -205,4 +212,13 @@
   (try
     (= (select-keys relationship qualifier-keys)
        (select-keys (normalize-relationship relationship) qualifier-keys))
+    (catch #?(:clj Exception :cljs :default) _ false)))
+
+(defn canonical-qualifier-keys?
+  "Validates closed canonical qualifier keys on a value that carries them
+  without being a Relationship, such as a permission-tree element."
+  [value]
+  (try
+    (let [present (select-keys value qualifier-keys)]
+      (= present (normalize-qualifiers present)))
     (catch #?(:clj Exception :cljs :default) _ false)))
