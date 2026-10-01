@@ -805,6 +805,23 @@ V8 enables Caveats and expiring Relationships across the shared authorization
 engine. See the [Caveat guide](caveats.md) for context, conditional results,
 expiry, and coordinated serving upgrades.
 
+A Caveat or qualifier fault is a strong-Kleene *unknown*
+([Faults](caveats.md#faults)). A definite grant beside a faulting union branch
+is a grant, and a definite denial beside a faulting intersection, arrow or
+subtracted operand is a denial; a fault never stops evaluation. Answers no
+longer depend on evaluation order, entity ids, route, cache state or page size.
+Lookups and counts fail only when a consumed candidate's decision faults, so a
+faulting edge that reaches no resource never fails a walk, and a
+relationship-filtered lookup fails on the same candidates under both result
+policies. Requests whose context value no reachable Caveat's declared type
+admits are rejected before evaluation with `:eacl.caveat/invalid`
+`:reason :context-type` and `:parameter`, `:expected` and `:caveats`. Request
+meters gain `:qualifier-faults` and `:masked-faults`. Earlier candidates
+answered some of these requests with an evaluation failure that depended on
+internal order. The operator membership compatibility identity changes, so
+restored cache snapshots from earlier candidates are refused and their
+decisions recomputed.
+
 Live `SecurityKeyring` controllers let running clients share externally supplied
 primary or dedicated Zed-token key updates. Full replacements use generation
 compare-and-set; add, activate, and retire operations preserve atomic state.

@@ -1869,6 +1869,11 @@ but it is not a byte-for-byte or operational clone:
   SpiceDB returns it as a conditional exclusion. Default (definite) lookups
   omit a subject that only its own conditional relationship and a conditional
   wildcard together grant, as they omit any conditional result.
+- A Caveat or qualifier that faults at evaluation is an *unknown*, composed with
+  strong-Kleene logic: a definite grant or denial beside a faulting branch
+  decides, and answers do not depend on evaluation order. A request context
+  value that no reachable Caveat's declared type admits is rejected before
+  evaluation. See [Faults](docs/caveats.md#faults).
 - EACL evaluates relationship cycles as a fixed point and has no separate
   dispatch-depth limit for checks, lookups, and counts. These operations remain
   subject to configured traversal work limits. SpiceDB uses a configurable

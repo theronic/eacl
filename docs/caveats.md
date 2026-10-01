@@ -242,12 +242,12 @@ lookahead. A conditional interior edge may still compose into a definite result.
 | --- | --- |
 | `:has-permission` / `:no-permission` | Completed decision at the captured basis and time |
 | `:conditional-permission` | Supply missing context in a new request; do not treat as a grant |
-| `:eacl.caveat/invalid` | Invalid context, definition, profile, or resource bound; inspect the typed reason |
+| `:eacl.caveat/invalid` | Invalid context, definition, profile, or resource bound; inspect the typed reason. `:reason :context-type` with `:parameter` rejects a context value that no reachable Caveat admits ([fail-fast admission](#fail-fast-context-admission)) |
 | `:eacl/invalid-relationship-qualifier` | Invalid public Caveat/context/expiry input |
 | `:eacl/relationship-conflict` | Identity already exists for create, or is absent for replace |
 | `:eacl.caveat/evaluator-unavailable` | Install/supply a matching evaluator before serving the schema |
 | `:eacl/unsupported-capability` | The backend/writer lacks the required certified operation |
-| `:eacl.authorization/evaluation-failure` | Encountered authoritative qualifier/Caveat fault; detailed reads fail |
+| `:eacl.authorization/evaluation-failure` | The decision faults in some completion (see [Faults](#faults)); a lookup or count fails only on a consumed faulting candidate |
 | `:eacl.schema/relationship-qualifier-in-use` | A schema change would invalidate retained Relationships, including expired ones |
 | `:eacl.pagination/restart-required` | Live temporal certificate ended; begin a new lookup without the cursor |
 | `:eacl.pagination/invalid-cursor` | Authentication, scope, or envelope mismatch; do not silently reuse its boundary |
@@ -256,6 +256,92 @@ lookahead. A conditional interior edge may still compose into a definite result.
 compatibility. Invalid requests, cancellation, execution limits and backend
 errors still propagate. Detailed checks and collections expose faults; they
 never erase a malformed subtracting edge into an absent ban.
+
+## Faults
+
+A fault is an edge whose qualification EACL cannot complete: a Caveat that
+fails at runtime (for example a missing map key or a work limit), a malformed
+or missing stored qualifier, or a Caveat that the Relation no longer admits.
+EACL treats a fault as *unknown* and composes permissions with strong-Kleene
+logic, separately in each completion of the remaining Caveat atoms:
+
+| Operator | Decides alone | Otherwise faults when | Otherwise |
+| --- | --- | --- | --- |
+| union `a + b` | either side is true | either side faults | false |
+| intersection `a & b`, arrow `a->b` | either side is false | either side faults | true |
+| exclusion `a - b` | `a` is false or `b` is true | either side faults | true |
+
+A definite grant beside a faulting branch is therefore a grant, and a definite
+denial beside one is a denial. A faulting subtracted operand is never erased
+into an absent ban: `viewer - banned` with a granted viewer and a faulting ban
+faults. A faulting arrow edge counts only if its target can hold. A recursive
+permission is the least fixed point in the order false < fault < true. A
+subject holds a relation that declares `user:*` through its own relationship
+or the wildcard's, so a definite grant through either one absorbs a fault
+through the other.
+
+The answer is a function of the schema, the relationships, the time and the
+request context. It does not depend on the order in which EACL evaluates
+operands, on schema text order, entity ids, the engine route, cache state or
+page size. Evaluation never stops at a fault; it keeps looking for a definite
+operand that absorbs it, which costs extra work only when a fault is present.
+
+A decision that faults in some completion is an evaluation failure:
+`check-permission` throws `:eacl.authorization/evaluation-failure` and `can?`
+returns false. Lookups and counts fail only when a candidate they consume
+faults. A page consumes candidates in order through its lookahead sentinel, an
+exact count consumes every candidate, and a bounded count stops at the
+lookahead result that proves truncation. A faulting edge that leads to no
+resource never fails a walk. A relationship-filtered lookup composes each
+candidate's decision with its filter edge before applying the result policy,
+so `:definite` and `:detailed` fail on the same candidates. A `*` entry
+excludes every subject with a relationship of its own whose decision is not a
+definite grant, faulting subjects included; a faulting subject's own candidate
+fails the walk only when a page consumes it. The `:faults` reasons are
+diagnostic: they name faulting edges that the decision depends on, but which
+ones a route reports is not part of the contract.
+
+A fault that a definite answer absorbs does not vanish silently. The request
+meters that a client's `:io-observer` receives include `:qualifier-faults`,
+the qualified edges whose qualification faulted, and `:masked-faults`, the
+compositions in which a definite operand absorbed a fault. A request that
+succeeds with either meter positive had a fault that did not affect its
+answer.
+
+### Fail-fast context admission
+
+Some faults are certain before evaluation. EACL first finds the Caveats a
+request can reach: those that the Relations in the requested permission's
+closure admit, on concrete and `T:*` wildcard branches alike, and, for a
+relationship-filtered lookup, those that the filter's Relation admits. A
+supplied context field that one of these Caveats declares is rejected when its
+value fits none of the declared types, because every evaluation of such a
+Caveat would fault on it:
+
+```clojure
+(eacl/check-permission acl
+  {:subject alice :resource report :permission :view
+   :caveat-context {"region" 5}})
+;; throws :eacl.caveat/invalid
+;; {:reason :context-type :parameter "region" :expected [:string]
+;;  :caveats ["in_region"]}
+```
+
+`:expected` lists the declared types and `:caveats` the declaring Caveats.
+When several fields are invalid, the first in parameter-name order is
+reported. A field that no reachable Caveat declares is ignored. A value that
+one reachable declaration admits is accepted even when another reachable
+Caveat declares a different type; an edge whose Caveat rejects it faults only
+if evaluation reaches it. In `check-permissions`, each check is admitted
+before it is evaluated, in input order, and the error carries its
+`:demand-index`.
+
+Schema-independent context admission (map shape, parameter names, scalar and
+container values, size bounds) still runs first and keeps its error shape.
+Saved contexts are validated against their Caveat's declared parameters when
+the relationship is written. Faults that only evaluation can detect, such as a
+missing map key, an evaluation work limit or a stored qualifier that no longer
+decodes, remain faults with the semantics above.
 
 ## Profile values and operations
 

@@ -66,20 +66,13 @@ witnesses expire is decided in a few passes, one per distinct expiry it
 meets, and the grant is certified until the last of those witnesses
 expires.
 
-An operand whose dependency closure declares Caveats uses ordered point
-checks. A Caveat can fault, and reordering witnesses must not turn a demanded
-fault into a grant through a later witness. This decision is retained with the
-schema generation. Other qualified operands use batching only after a
-request-local check certifies that their reachable relationship metadata is
-fault-free. Expiration qualifiers can be malformed too. This check includes
-guards and branches that the reordered search might skip, and reuses completed
-closures across the batch. Complete holding slices containing no qualifiers
-already certify their relation leaves and need no repeated validation.
-
-If this conservative check finds a fault or uncertain evidence, ordered
-evaluation decides whether it is actually demanded. Evidence that could let
-access appear later also requires exact evaluation. The extra verification
-uses the same bounded reads and graph-work limits as membership search.
+Qualified operands, Caveated ones included, use the same batched search.
+Faults compose with strong-Kleene logic (see
+[Faults](caveats.md#faults)): a definite witness absorbs a faulting branch
+and a fault never decides, so the answer does not depend on the order in
+which the search finds witnesses. A resource whose search meets a fault or a
+conditional residual without a definite witness, or evidence that could let
+access appear later, is decided by the exact point evaluator instead.
 
 The same holds when the operator sits under a union, or when a union is an
 intersection's anchor:
@@ -113,9 +106,10 @@ through an operator uses stratified recursive evaluation, which costs more
 per result. Examples are an intersection with two recursive operands, or an
 operand that is itself an intersection or exclusion.
 
-Guarded members whose closure declares Caveats use the tabled evaluator to
-preserve demanded faults. Wildcard variants retain their own subject holdings
-and guards, including wildcard bans on the right side of an exclusion.
+Guarded members whose closure declares Caveats are searched the same way; a
+resource that rests on a residual or a fault gets the tabled evaluator's exact
+value. Wildcard variants retain their own subject holdings and guards,
+including wildcard bans on the right side of an exclusion.
 
 EACL supports one-hop arrows. A target permission can contain another arrow,
 but a directly chained expression such as `a->b->c` is not supported.
