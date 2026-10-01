@@ -79,8 +79,8 @@
     (render-term expression)))
 
 (def ^:private team-permissions
-  {:t0 [:union [:relation :member] [:arrow :parent :t0]]
-   :t1 [:union [:relation :member]]})
+  {:tp0 [:union [:relation :member] [:arrow :parent :tp0]]
+   :tp1 [:union [:relation :member]]})
 
 (defn- render-schema [folder-permissions]
   (str "definition user {}\n\n"
@@ -102,18 +102,38 @@
                          (render-expression body) "\n")))
        "}\n"))
 
+(defn- break-alias-cycles
+  "SpiceDB rejects unions that alias each other in a cycle (`up0 = up1`,
+  `up1 = up0`). Adds a reader term to each union on such a cycle, which draws
+  nothing from the random state."
+  [permissions]
+  (let [target (fn [body]
+                 (when (and (= :union (first body)) (= 2 (count body))
+                            (= :self (first (second body))))
+                   (second (second body))))]
+    (reduce (fn [result permission]
+              (if (loop [t (target (get result permission)) seen #{}]
+                    (cond (nil? t) false
+                          (= permission t) true
+                          (contains? seen t) false
+                          :else (recur (target (get result t)) (conj seen t))))
+                (update result permission conj [:relation :reader])
+                result))
+            permissions
+            (keys permissions))))
+
 (defn- random-folder-permissions
-  "Union-only permissions u0.., operator permissions o0.. over them (each
-  operator may name only earlier operators), sometimes a union v0 that names
+  "Union-only permissions up0.., operator permissions op0.. over them (each
+  operator may name only earlier operators), sometimes a union vp0 that names
   an operator, and sometimes a last operator that recurses through its
   intersection operand or its exclusion's left operand."
   [state]
-  (let [unions (mapv #(keyword (str "u" %)) (range (+ 2 (next-int! state 2))))
-        operators (mapv #(keyword (str "o" %)) (range (inc (next-int! state 2))))
+  (let [unions (mapv #(keyword (str "up" %)) (range (+ 2 (next-int! state 2))))
+        operators (mapv #(keyword (str "op" %)) (range (inc (next-int! state 2))))
         leaves (vec (concat [[:relation :reader] [:relation :owner]
                              [:relation :eligible]
                              [:arrow-relation :team :member]
-                             [:arrow :team :t0] [:arrow :team :t1]]
+                             [:arrow :team :tp0] [:arrow :team :tp1]]
                             (for [u unions] [:arrow :parent u])
                             (for [u unions] [:self u])))
         union-body (fn [own]
@@ -163,9 +183,10 @@
                                  (map-indexed (fn [index o] [o (operator-body index)])
                                               operators)))
         permissions (cond-> permissions recursive? with-recursion)]
-    (cond-> permissions
-      (chance? state 25)
-      (assoc :v0 [:union (pick state leaves) [:self (pick state operators)]]))))
+    (break-alias-cycles
+     (cond-> permissions
+       (chance? state 25)
+       (assoc :vp0 [:union (pick state leaves) [:self (pick state operators)]])))))
 
 (def ^:private users [300 301 302])
 
@@ -596,7 +617,7 @@
                 counters
                 (concat roots
                         ;; A union naming an operator is an operator plan too.
-                        (when (contains? folder-permissions :v0) [[:folder :v0]])))))))
+                        (when (contains? folder-permissions :vp0) [[:folder :vp0]])))))))
 
 (defn run-campaign
   "Runs cases seeded `first-seed`..; stops at the first divergence, returned

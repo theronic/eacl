@@ -1,0 +1,8 @@
+{:results
+ {"eacl-rs/003-glued-relation" :eacl.schema/parse-error
+  "eacl-rs/003-glued-permission" :eacl.schema/parse-error
+  "eacl-rs/003-glued-definition" :eacl.schema/parse-error
+  "eacl-rs/003-glued-caveat" :eacl.schema/parse-error
+  "eacl-rs/003-glued-with" :eacl.schema/parse-error
+  "eacl-rs/003-glued-nil" :eacl.schema/expression-resolution-failed}
+ :agrees-with :spicedb-v1.56.0}

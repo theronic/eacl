@@ -52,8 +52,8 @@
   "definition user {}
    definition document {
      relation reader: user
-     permission a = reader - b
-     permission b = a
+     permission aaa = reader - bbb
+     permission bbb = aaa
    }")
 
 (defn- exception-data [thunk]
@@ -106,7 +106,8 @@
           data (exception-data
                 #(schema/write-schema! conn invalid-negative-cycle-schema))
           after-failure (ds/db conn)]
-      (is (= :eacl.schema/unstratified-exclusion (:type data)))
+      (is (= :eacl.schema/unsupported-feature (:type data)))
+      (is (= [:unstratified-exclusion] (mapv :type (:issues data))))
       (is (= stable-generation
              (schema/current-schema-generation after-failure)))
       (is (= stable-schema (schema/read-schema after-failure))))

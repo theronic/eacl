@@ -238,6 +238,14 @@
                        {:node node
                         :message "Parser produced an unknown permission-expression node."}))))
 
+(defn- eacl-limitation?
+  "Resolution issues of schemas SpiceDB accepts: an arrow target that some
+   subject type of the source relation lacks, or a target that is a relation
+   on some subject types and a permission on others."
+  [{:keys [type subject-type subject-types path]}]
+  (or (and (= :missing-reference type) (some? subject-type) (some #{:partition} path))
+      (and (= :ambiguous-reference type) (some? subject-types))))
+
 (defn resolve-definitions-with-metadata
   "Resolves and bounds every permission from parser/transform-schema
    definitions. Source-tree limits are checked before recursive resolved-node
@@ -288,11 +296,21 @@
                     (sort-by issue-sort-key)
                     vec)]
     (when (seq errors)
-      (throw (ex-info "Permission-expression reference resolution failed."
-                      {:type :eacl.schema/expression-resolution-failed
-                       :eacl/error :eacl.schema/expression-resolution-failed
-                       :errors errors
-                       :error-count (count errors)})))
+      (if (every? eacl-limitation? errors)
+        ;; SpiceDB accepts these arrows: a target that a subject type lacks
+        ;; contributes nothing there. EACL resolves every target partition.
+        (throw (ex-info (str "Unsupported feature: " (:message (first errors))
+                             " SpiceDB accepts this arrow; EACL requires its target on every"
+                             " subject type of the source relation, with one kind.")
+                        {:type :eacl.schema/unsupported-feature
+                         :eacl/error :eacl.schema/unsupported-feature
+                         :issues (mapv #(assoc % :type :arrow-target :reason (:type %)) errors)
+                         :issue-count (count errors)}))
+        (throw (ex-info "Permission-expression reference resolution failed."
+                        {:type :eacl.schema/expression-resolution-failed
+                         :eacl/error :eacl.schema/expression-resolution-failed
+                         :errors errors
+                         :error-count (count errors)}))))
     (let [metadata (mapv #(dissoc % :expression) resolved)]
       {:expressions (mapv :expression resolved)
        :metadata metadata
@@ -318,7 +336,23 @@
          {:keys [expressions metadata aggregate-metrics]}
          (resolve-definitions-with-metadata (:definitions transformed) limits)
          dependency-certificate
-         (expression-graph/build-certificate expressions)]
+         (try
+           (expression-graph/build-certificate expressions)
+           (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) e
+             (if (= :eacl.schema/unstratified-exclusion (:type (ex-data e)))
+               ;; SpiceDB accepts recursion through an exclusion; EACL evaluates
+               ;; exclusion only over a completed lower stratum.
+               (throw (ex-info (str "Unsupported feature: " (ex-message e)
+                                    " SpiceDB accepts this schema; EACL requires every"
+                                    " exclusion to subtract a permission that does not depend on it.")
+                               (assoc (ex-data e)
+                                      :type :eacl.schema/unsupported-feature
+                                      :eacl/error :eacl.schema/unsupported-feature
+                                      :issues [(assoc (select-keys (ex-data e) [:negative-edge :cycle])
+                                                      :type :unstratified-exclusion)]
+                                      :issue-count 1)
+                               e))
+               (throw e))))]
      (cond-> {:definitions (mapv (comp keyword key)
                                  (sort-by key (:definitions transformed)))
               :expressions expressions

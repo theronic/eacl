@@ -4,20 +4,21 @@
  :codec-ceilings {:maximum-size 1048576 :maximum-entries 262144}
  :cases
  [{:schema-shape
-   {:subject-types {:count 256 :name "t<i>" :relation "x: user"}
-    :relation "doc#r: t0 | … | t255"
-    :permission "p = r->x + … (128 arrows)"
-    :source-bytes 12258}
+   {:subject-types {:count 256 :name "t<iii>" :relation "xxx: user"}
+    :relation "doc#rrr: t000 | … | t255"
+    :permission "ppp = rrr->xxx + … (128 arrows)"
+    :source-bytes 13506}
    :before {:type :eacl.format/invalid :reason :too-large :maximum-size 1048576}}
   {:schema-shape
-   {:subject-types {:count 256 :name "t<i>" :relation "x: user"}
-    :relation "doc#r: t0 | … | t255"
-    :permission "p = (r->x + r->x) + … (128 groups)"
-    :source-bytes 13410}
+   {:subject-types {:count 256 :name "t<iii>" :relation "xxx: user"}
+    :relation "doc#rrr: t000 | … | t255"
+    :permission "ppp = (rrr->xxx + rrr->xxx) + … (128 groups)"
+    :source-bytes 15170}
    :before {:type :eacl.format/invalid :reason :too-many-entries :maximum-entries 262144}}
   {:schema-shape
    {:subject-types {:count 256 :name "t<i>x…(1400 × x)" :defined? false}
     :relation "doc#r: t0x… | … | t255x…"
     :permission "p = r + r + r"
     :source-bytes 360156}
-   :before {:type :eacl.format/invalid :reason :too-large :maximum-size 1048576}}]}
+   :before {:type :eacl.format/invalid :reason :too-large :maximum-size 1048576}}]
+ :note "The first two shapes were found with one-character names (`t<i>`, `x`, `r`, `p`); SpiceDB names have at least three characters, so the regression uses the names above."}

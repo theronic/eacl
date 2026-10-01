@@ -1,0 +1,6 @@
+{:results
+ {"eacl-rs/001-semicolons" :accept
+  "terminators/semicolons-one-line" :accept
+  "terminators/double-semicolon-inside" :accept
+  "terminators/top-double-semicolon" :eacl.schema/parse-error}
+ :agrees-with :spicedb-v1.56.0}

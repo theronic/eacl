@@ -1501,8 +1501,8 @@ definition doc {
         :anchor-states (get-in result [:counters :anchor-states])}))))
 
 (def ^:private operator-duplicate-schema
-  "One cyclic component {b, both} in which `adir` (the join anchor) and `b`
-  are both in the join's facts when it reserves, so `b`'s in-component
+  "One cyclic component {back, both} in which `adir` (the join anchor) and
+  `back` are both in the join's facts when it reserves, so `back`'s in-component
   delivery then re-admits an already-satisfied slot."
   "definition user {}
 definition doc {
@@ -1510,8 +1510,8 @@ definition doc {
   relation bdir: user
   relation cdir: user
   permission cperm = cdir
-  permission b = bdir + both
-  permission both = adir & b & cperm
+  permission back = bdir + both
+  permission both = adir & back & cperm
   permission member = both
 }")
 

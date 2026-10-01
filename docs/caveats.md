@@ -160,13 +160,21 @@ request's context.
 Names and parameter names use ASCII identifiers of up to 64 bytes. A Caveat
 can have at most 32 parameters. CEL keywords, type names, and the `__eacl_`
 prefix are reserved. Invalid definitions fail before replacing the schema.
+SpiceDB accepts some Caveats outside these limits; EACL rejects those with
+`:eacl.schema/unsupported-feature` (see
+[SpiceDB schema compatibility](spicedb-schema-compatibility.md)).
 
-A Caveat stores the exact text between its braces as its source, including
-whitespace and comments. The body ends at the first `}` outside a string
-literal, a `//` comment or a `/* */` comment. The profile accepts `//`
-comments but not block comments, so a body containing a block comment is
-rejected with `:eacl.caveat/invalid`, wherever it appears. A comment before the
-opening brace is ordinary schema whitespace.
+A Caveat's expression is the CEL text SpiceDB compiles, and EACL stores it as
+the Caveat's source: the body verbatim from its first token to its last. The
+body ends at the `}` that closes it; braces nest, and braces in strings and
+comments do not count. Whitespace and comments before the first token and
+after the last are not part of the expression, whatever they contain. A
+comment inside it is: CEL accepts `//` comments, and rejects `/* */`, so such
+a body is `:eacl.caveat/invalid`. A line ending after a name or number, `)`,
+`}` or `*` (not after a string literal) counts as a token here, as it ends a
+statement elsewhere in a schema, so `x == 1 /* note */⏎}` keeps the comment
+and is invalid, while `x == 1 /* note */ }` and `x == 1⏎/* note */⏎}` are
+valid.
 
 ## Write and check a qualified Relationship
 

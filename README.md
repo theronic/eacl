@@ -1161,7 +1161,7 @@ com.github.theronic/cljs-cache
 
 ## EACL Schema
 
-EACL parses a documented subset of the SpiceDB schema DSL to define your authorization model. Use `eacl/write-schema!` to parse, validate, and transact your schema:
+EACL reads the SpiceDB v1.56.0 schema language to define your authorization model ([SpiceDB schema compatibility](docs/spicedb-schema-compatibility.md)). Use `eacl/write-schema!` to parse, validate, and transact your schema:
 
 ```clojure
 (eacl/write-schema! acl
@@ -1184,11 +1184,11 @@ EACL parses a documented subset of the SpiceDB schema DSL to define your authori
 ### Schema Validation
 
 `write-schema!` validates your schema and provides informative error messages. An invalid schema throws and nothing is transacted:
-- **Parse validation**: unparseable schema strings and duplicate `definition`/relation declarations throw. `//` and `/* */` comments are supported.
-- **Reference validation**: all relations and permissions must reference valid definitions. Arrow targets must exist on **every** subject type of the source relation.
+- **SpiceDB validation**: a schema SpiceDB v1.56.0 rejects is rejected with a typed error: syntax (`:eacl.schema/parse-error` with `:line`/`:column`), names (`:eacl.schema/invalid-name`), duplicate declarations, references, wildcard rules, caveat definitions and permission alias cycles. `//` and `/* */` comments are supported.
+- **Reference validation**: all relations and permissions must reference valid definitions. EACL also requires an arrow's target on **every** subject type of the source relation; SpiceDB does not, so such a schema is `:eacl.schema/unsupported-feature`.
 - **Orphan protection**: relations with existing relationships cannot be deleted, whether those relationships are plain, expiring (expired ones included) or Caveated. The error is `:eacl.schema/relation-in-use` with the relation and the `:count` of retained relationships.
 - **Empty-schema guard**: the public `eacl/write-schema!` rejects replacing a non-empty schema with zero definitions. The backend schema namespaces expose a lower-level `{:allow-empty-schema? true}` option for an intentional wipe; direct use must also follow the cache-recovery rules because it bypasses the EACL client.
-- **Unsupported feature detection**: rejects SpiceDB features unsupported by EACL (see [Limitations](#limitations-deficiencies--gotchas))
+- **Unsupported feature detection**: a valid SpiceDB schema that uses a feature EACL does not support throws `:eacl.schema/unsupported-feature` naming it (see [Limitations](#limitations-deficiencies--gotchas) and [SpiceDB schema compatibility](docs/spicedb-schema-compatibility.md))
 - **Declaration errors**: definitions and Caveats are read in source order, and the first invalid or duplicate declaration determines the error.
 
 ### Schema Updates
@@ -1669,11 +1669,36 @@ adapter guides:
 
 ## Schema Syntax
 
-EACL parses a documented subset of the SpiceDB schema DSL. Use
-`eacl/write-schema!` to define your schema.
-EACL's parser requires each `relation` or `permission` declaration to end at a
-newline; put the next declaration and the definition's closing brace on a later
-line. Empty definitions may still use the compact `definition user {}` form.
+EACL reads the schema language of SpiceDB v1.56.0. Every schema SpiceDB
+accepts is accepted by EACL, or rejected with `:eacl.schema/unsupported-feature`
+naming a feature EACL cannot serve; every schema SpiceDB rejects is rejected.
+A corpus of 4,326 schemas with SpiceDB's verdicts checks this on every test
+run ([SpiceDB schema compatibility](docs/spicedb-schema-compatibility.md)).
+Use `eacl/write-schema!` to define your schema.
+
+- A statement ends at `;` or at a line end after a name, keyword, `)`, `}`
+  or `*`. After an operator such as `+`, `&`, `-`, `->` or `|` it continues on
+  the next line, so `permission view = viewer +⏎ editor` is one permission.
+  A line that starts with `+` is an error, and so is `definition doc⏎{`.
+- Names follow SpiceDB: definitions, relations and permissions have 3 to 64
+  characters (lowercase letters, digits and `_`), start with a letter and do
+  not end with `_`. A keyword glued to a name (`relationviewer`) is one name.
+- Partials (`use partial`), type annotations (`use typechecking`),
+  `with expiration` (`use expiration`), `rel.any(target)` and `user#...` are
+  supported.
+
+```zed
+use expiration
+
+definition user {}
+
+definition doc {
+  relation viewer: user | user with expiration
+  relation editor: user; relation owner: user
+  permission view = viewer + editor +
+    owner
+}
+```
 
 ```clojure
 (eacl/write-schema! acl
@@ -1818,11 +1843,16 @@ but it is not a byte-for-byte or operational clone:
   error for deep or cyclic data, so the two systems can differ on those graphs.
   Only `expand-permission-tree` refuses cycles (`:eacl.permission-tree/cycle-detected`)
   and depth beyond `:permission-tree-limits` (`:max-depth 50` by default).
-- Object identifiers are arbitrary non-empty strings and schema names follow
-  the parser's grammar rather than SpiceDB's exact identifier and name
-  grammars. A schema or dataset that must also load into SpiceDB should follow
-  SpiceDB's stricter identifier and schema-name rules rather than relying on
-  EACL's broader parser.
+- Schemas follow SpiceDB's language and name rules exactly
+  ([SpiceDB schema compatibility](docs/spicedb-schema-compatibility.md)). EACL
+  rejects a valid SpiceDB schema only with `:eacl.schema/unsupported-feature`:
+  wildcards, subject relations, `nil`, `self`, `.all()`, prefixed names like
+  `org/user`, arrows whose target is missing on some subject type, recursion
+  through an exclusion, and caveats outside EACL's CEL profile. `with
+  expiration` is accepted but not enforced, because EACL permits expiring
+  relationships on every relation. Object identifiers are arbitrary non-empty
+  strings; a dataset that must also load into SpiceDB should follow SpiceDB's
+  object-ID rules.
 - A relation name is accepted only in the `:permission` slot of
   `expand-permission-tree`; `can?`, `check-permission`, the lookups and the
   counts require a permission (SpiceDB accepts either).

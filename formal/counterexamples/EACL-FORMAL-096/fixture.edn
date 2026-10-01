@@ -1,0 +1,14 @@
+{:operation :validate-schema
+ :schema "definition user {}\ndefinition doc {\n relation viewer: user\n relation editor: user\n permission view = viewer +\n   editor\n}"
+ :before {:type :eacl.schema/parse-error :line 5 :column 28}
+ :spicedb-v1.56.0 :accept
+ :related
+ [{:corpus-id "terminators/pipe-end-of-line"
+   :schema "definition user {}\ndefinition group {\n relation member: user\n permission view = member\n}\ndefinition doc {\n relation viewer: user |\ngroup\n}"
+   :spicedb-v1.56.0 :accept}
+  {:corpus-id "terminators/plus-next-line"
+   :schema "definition user {}\ndefinition doc {\n relation viewer: user\n relation editor: user\n permission view = viewer\n+ editor\n}"
+   :spicedb-v1.56.0 :reject}
+  {:corpus-id "terminators/brace-next-line"
+   :schema "definition user\n{}"
+   :spicedb-v1.56.0 :reject}]}

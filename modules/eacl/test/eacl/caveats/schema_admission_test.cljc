@@ -21,14 +21,21 @@
       (is (= 1 (count (:expressions schema)))))))
 
 (deftest qualified-admission-retains-reference-and-branch-validation
+  ;; SpiceDB's own rules come first: `user` has no `member`, so that subject
+  ;; relation is invalid rather than unsupported.
   (doseq [[branches error] [["user with missing" :eacl.schema/invalid-caveat-reference]
                             ["user with enabled | user with enabled" :eacl.schema/duplicate-relation-branch]
                             ["user | user" :eacl.schema/duplicate-relation-branch]
                             ["user:* with missing" :eacl.schema/invalid-caveat-reference]
                             ["user:* | user:*" :eacl.schema/duplicate-relation-branch]
                             ["user:* with enabled | user:* with enabled" :eacl.schema/duplicate-relation-branch]
-                            ["user#member with enabled" :eacl.schema/unsupported-feature]]]
-    (is (= error (errors/error-type #(resolver/validate-schema (source branches) nil {:allow-caveats? true}))))))
+                            ["group#member with enabled" :eacl.schema/unsupported-feature]
+                            ["user#member with enabled" :eacl.schema/expression-resolution-failed]]]
+    (is (= error (errors/error-type
+                  #(resolver/validate-schema (str "definition group {\n relation member: user\n}\n"
+                                                  (source branches))
+                                             nil {:allow-caveats? true})))
+        branches)))
 
 (deftest ordinary-schema-shape-does-not-gain-qualifier-fields
   (is (= (select-keys (resolver/validate-schema (source "user")) [:relations :expressions])

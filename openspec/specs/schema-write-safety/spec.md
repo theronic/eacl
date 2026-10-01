@@ -4,7 +4,7 @@
 Defines how `write-schema!` admits and replaces a schema without side effects on failure: parse and declaration errors, reference validation, admission limits, and guards against destructive or orphaning changes.
 ## Requirements
 ### Requirement: Unparseable schema is rejected without side effects
-`write-schema!` SHALL throw an `ex-info` with `:type :eacl.schema/parse-error` (including the instaparse failure detail) when the schema string does not parse, and SHALL NOT transact any changes. `->eacl-schema` SHALL throw when handed an instaparse failure object and SHALL never coerce a failed parse into an empty schema.
+`write-schema!` SHALL throw an `ex-info` with `:type :eacl.schema/parse-error` (with `:reason`, `:line`, `:column`, `:expected` and `:found`) when the schema string does not parse, and SHALL NOT transact any changes. `->eacl-schema` SHALL throw when handed anything other than a parse tree and SHALL never coerce a failed parse into an empty schema.
 
 #### Scenario: Syntax error leaves existing schema untouched
 - **WHEN** a schema with relations and permissions is stored, and `write-schema!` is called with a schema string missing a closing brace
@@ -12,7 +12,30 @@ Defines how `write-schema!` admits and replaces a schema without side effects on
 
 #### Scenario: Parse failure reports position detail
 - **WHEN** `write-schema!` is called with `"definition user { relation owner user }"` (missing `:`)
-- **THEN** the thrown error's `ex-data` contains the instaparse failure (line/column/expected information)
+- **THEN** the thrown error's `ex-data` has `:reason :syntax`, the 1-based `:line` and `:column` of the offending token, and what was `:expected` and `:found`
+
+### Requirement: Schemas follow the SpiceDB v1.56.0 schema language
+Schema admission SHALL accept every schema SpiceDB v1.56.0's WriteSchema accepts, or reject it only with `:eacl.schema/unsupported-feature` naming the construct EACL cannot serve, and SHALL reject every schema SpiceDB rejects. SpiceDB's validation SHALL run before EACL's restrictions, so `:eacl.schema/unsupported-feature` names a feature of a valid SpiceDB schema; the one exception is a Caveat body whose CEL EACL can neither evaluate nor type-check. The compatibility corpus (`modules/eacl/test/eacl/spicedb/fixtures/spicedb-1.56-corpus.edn`) records SpiceDB's verdict for each of its schemas, and every entry SHALL hold on the JVM and in ClojureScript. Resource limits (`:expression-limits`, nesting depth) are outside this requirement.
+
+#### Scenario: SpiceDB statement terminators
+- **WHEN** a schema ends statements with `;`, or continues a permission expression on the next line after a binary operator
+- **THEN** the schema is accepted as SpiceDB accepts it
+
+#### Scenario: Glued keyword
+- **WHEN** a definition contains `relationviewer: user`
+- **THEN** schema admission throws `:eacl.schema/parse-error`, as SpiceDB rejects it
+
+#### Scenario: SpiceDB name rules
+- **WHEN** a relation is named `ab`, `Viewer` or `viewer_`
+- **THEN** schema admission throws `:eacl.schema/invalid-name` naming the relation
+
+#### Scenario: Valid SpiceDB feature EACL does not serve
+- **WHEN** a valid SpiceDB schema declares `relation viewer: user:*`
+- **THEN** schema admission throws `:eacl.schema/unsupported-feature`
+
+#### Scenario: Invalid SpiceDB schema with an unsupported feature
+- **WHEN** a schema declares `relation viewer: user:*` and references a relation that does not exist
+- **THEN** schema admission throws the reference error, not `:eacl.schema/unsupported-feature`
 
 ### Requirement: Schema comments are supported
 The parser SHALL accept `//` line comments and `/* */` block comments anywhere whitespace is legal, matching the SpiceDB DSL.
@@ -74,7 +97,7 @@ Schema extraction SHALL read top-level definitions and Caveats once, in source o
 - **THEN** the schema is accepted regardless of subject-type declaration order
 
 ### Requirement: Parenthesized union expressions are supported
-Permission expressions using parentheses around union operands (e.g. `permission manage = (owner + editor)`) SHALL be flattened to their union components. A parenthesized expression used as an arrow base or target SHALL be rejected with a typed validation error, not an assertion failure.
+Permission expressions using parentheses around union operands (e.g. `permission manage = (owner + editor)`) SHALL be flattened to their union components. A parenthesized expression used as an arrow base or target, which SpiceDB rejects, SHALL be rejected with a typed parse error, not an assertion failure.
 
 #### Scenario: Parenthesized union flattens
 - **WHEN** `write-schema!` is called with `permission manage = (owner + editor)` where both relations exist
@@ -82,7 +105,7 @@ Permission expressions using parentheses around union operands (e.g. `permission
 
 #### Scenario: Parenthesized arrow base is rejected clearly
 - **WHEN** a schema contains `permission p = (a + b)->c`
-- **THEN** a typed validation error explains parenthesized arrow bases are unsupported, and no `AssertionError` escapes
+- **THEN** `:eacl.schema/parse-error` names the `->` that cannot follow `)`, and no `AssertionError` escapes
 
 ### Requirement: Permission expression size is a typed admission limit
 Schema admission SHALL measure each permission's canonical expression payload exactly, without applying the canonical codec's own size and entry ceilings, and SHALL reject a payload larger than `:maximum-expression-bytes` with `:eacl.schema/expression-limit` carrying `:dimension :encoded-byte-size`, `:maximum`, and the exact `:actual` byte count.

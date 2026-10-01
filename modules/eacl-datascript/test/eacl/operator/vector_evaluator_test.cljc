@@ -35,11 +35,11 @@
 (def schema
   "definition user {}
    definition document {
-     relation a: user
-     relation b: user
-     relation c: user
+     relation aaa: user
+     relation bbb: user
+     relation ccc: user
      relation banned: user
-     permission view = ((a & b) + (a & c)) - banned
+     permission view = ((aaa & bbb) + (aaa & ccc)) - banned
    }")
 
 (defn- object [type id]
@@ -59,11 +59,11 @@
                   objects))
     (doseq [[index document] (map-indexed vector documents)
             relationship
-            (cond-> [(eacl/->Relationship (first users) :a document)]
+            (cond-> [(eacl/->Relationship (first users) :aaa document)]
               (even? index)
-              (conj (eacl/->Relationship (first users) :b document))
+              (conj (eacl/->Relationship (first users) :bbb document))
               (zero? (mod index 3))
-              (conj (eacl/->Relationship (first users) :c document))
+              (conj (eacl/->Relationship (first users) :ccc document))
               (zero? (mod index 5))
               (conj (eacl/->Relationship (first users) :banned document)))]
       (ds/transact!
@@ -94,10 +94,10 @@
         query {:subject user :resource/type :document :permission :allowed}
         schema (str "definition user {}\ndefinition document {\n"
                     "relation member: user\nrelation banned: user\n"
-                    "permission p0 = member\n"
+                    "permission perm0 = member\n"
                     (str/join "\n" (for [i (range 1 n)]
-                                      (str "permission p" i " = p" (dec i) " & member")))
-                    "\npermission allowed = p" (dec n) " - banned\n}")]
+                                      (str "permission perm" i " = perm" (dec i) " & member")))
+                    "\npermission allowed = perm" (dec n) " - banned\n}")]
     (eacl/write-schema! client schema)
     (ds/transact! conn (mapv #(hash-map :eacl/id (:id %)) (into [user absent] documents)))
     (eacl/create-relationships! client (mapv #(eacl/->Relationship user :member %) documents))
@@ -131,21 +131,21 @@
     :source
     "definition user {}
      definition document {
-       relation a: user
-       relation b: user
-       relation c: user
+       relation aaa: user
+       relation bbb: user
+       relation ccc: user
        relation banned: user
-       permission view = ((a + b) & c) - banned
+       permission view = ((aaa + bbb) & ccc) - banned
      }"}
    {:id :exclusion-under-intersection
     :source
     "definition user {}
      definition document {
-       relation a: user
-       relation b: user
-       relation c: user
+       relation aaa: user
+       relation bbb: user
+       relation ccc: user
        relation banned: user
-       permission view = (a - banned) & (b + c)
+       permission view = (aaa - banned) & (bbb + ccc)
      }"}])
 
 (defn- selected-relationship?
@@ -163,7 +163,7 @@
   (let [conn (datascript/create-conn)
         users (mapv #(object :user (str "u" %)) (range 2))
         documents (mapv #(object :document (str "d" %)) (range 8))
-        relations [:a :b :c :banned]
+        relations [:aaa :bbb :ccc :banned]
         relationships
         (vec
          (for [[relation-index relation] (map-indexed vector relations)
@@ -200,19 +200,19 @@
                      (eacl/->Relationship subject relation resource)))]
     (case schema-id
       :shared-left-union
-      (and (or (and (present? :a) (present? :b))
-               (and (present? :a) (present? :c)))
+      (and (or (and (present? :aaa) (present? :bbb))
+               (and (present? :aaa) (present? :ccc)))
            (not (present? :banned)))
 
       :union-under-intersection
-      (and (or (present? :a) (present? :b))
-           (present? :c)
+      (and (or (present? :aaa) (present? :bbb))
+           (present? :ccc)
            (not (present? :banned)))
 
       :exclusion-under-intersection
-      (and (present? :a)
+      (and (present? :aaa)
            (not (present? :banned))
-           (or (present? :b) (present? :c))))))
+           (or (present? :bbb) (present? :ccc))))))
 
 (deftest vector-equals-scalar-and-uses-aligned-masks-test
   (let [{:keys [adapter user documents eid]} (fixture)
@@ -490,10 +490,10 @@
                                       [:document name :user]]))
           caveat (ds/entid (ds/db conn) [:eacl.caveat/name "enabled"])
           writer (qualifiers/writer conn)]
-      (ds/transact! conn [{:db/id (relation :a) :eacl.relation/caveats [caveat]
+      (ds/transact! conn [{:db/id (relation :aaa) :eacl.relation/caveats [caveat]
                           :eacl.relation/allows-unqualified? true}])
       (doseq [[index document] (map-indexed vector documents)]
-        (staged/write! writer :replace [:user (eid user) (relation :a) :document (eid document)]
+        (staged/write! writer :replace [:user (eid user) (relation :aaa) :document (eid document)]
                        {:caveat caveat})
         (when (zero? (mod index 5))
           (staged/write! writer :replace [:user (eid user) (relation :banned) :document (eid document)]

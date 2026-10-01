@@ -103,6 +103,7 @@
             [eacl.datascript.fresh-client-decode-test]
             [eacl.schema.expression-policy-test]
             [eacl.spicedb.parser-portability-test]
+            [eacl.spicedb.compatibility-corpus-test]
             [eacl.subproblem-cache-test]
             [eacl.verified-kernel-test]
             [eacl.formal.cache-strategy-adversarial-test]
@@ -243,6 +244,7 @@
                'eacl.datascript.fresh-client-decode-test
                'eacl.schema.expression-policy-test
                'eacl.spicedb.parser-portability-test
+               'eacl.spicedb.compatibility-corpus-test
                'eacl.subproblem-cache-test
                'eacl.verified-kernel-test
                'eacl.formal.cache-strategy-adversarial-test

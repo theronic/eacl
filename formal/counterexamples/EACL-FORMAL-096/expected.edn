@@ -1,0 +1,6 @@
+{:results
+ {"eacl-rs/002-continuation" :accept
+  "terminators/pipe-end-of-line" :accept
+  "terminators/plus-next-line" :eacl.schema/parse-error
+  "terminators/brace-next-line" :eacl.schema/parse-error}
+ :agrees-with :spicedb-v1.56.0}

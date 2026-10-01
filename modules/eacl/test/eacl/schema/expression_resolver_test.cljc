@@ -76,32 +76,35 @@
          definition document {
            relation seed: user
            relation editor: user
-           permission a = seed + b
-           permission b = a & editor
+           permission aaa = seed + bbb
+           permission bbb = aaa & editor
          }"
         {:keys [expressions]}
         (resolver/resolve-parse-tree (parser/parse-schema schema))]
-    (is (= [:a :b] (mapv :permission-name expressions)))
+    (is (= [:aaa :bbb] (mapv :permission-name expressions)))
     (is (= :permission
            (get-in (second expressions) [:root :children 0 :op])))
-    (is (= :a
+    (is (= :aaa
            (get-in (second expressions) [:root :children 0 :name])))))
 
 (deftest deterministic-missing-and-type-invalid-errors-test
+  ;; Every reference SpiceDB rejects is reported together. SpiceDB does not
+  ;; check an arrow's target, so `parent->target` adds no issue of its own.
   (let [schema
         "definition user {}
          definition document {
            relation parent: missing_type
            permission base = missing
-           permission p = base->target + parent->target
+           permission perm = base->target + parent->target
          }"
         {:keys [type errors]} (error-data schema)]
     (is (= :eacl.schema/expression-resolution-failed type))
     (is (= [:type-invalid-reference
             :missing-reference
-            :type-invalid-reference
             :type-invalid-reference]
            (mapv :type errors)))
+    (is (= [[:relation :parent :subject-type :missing_type] [:root] [:root :child 0]]
+           (mapv :path errors)))
     (is (= errors (vec (sort-by (juxt (comp str :resource-type)
                                       (comp str :permission-name)
                                       (comp pr-str :path)
@@ -122,12 +125,31 @@
            relation parent: group | team
            permission view = parent->access
          }"
-        {:keys [errors]} (error-data schema)
-        ambiguous (some #(when (and (= :ambiguous-reference (:type %))
+        ;; SpiceDB accepts this arrow; EACL needs one target kind.
+        {:keys [type issues]} (error-data schema)
+        ambiguous (some #(when (and (= :ambiguous-reference (:reason %))
                                     (= :access (:name %))) %)
-                        errors)]
-    (is ambiguous)
+                        issues)]
+    (is (= :eacl.schema/unsupported-feature type))
+    (is (= :arrow-target (:type ambiguous)))
     (is (= [:permission :relation] (:kinds ambiguous)))))
+
+(deftest arrow-target-missing-on-a-subject-type-is-unsupported-test
+  ;; SpiceDB accepts an arrow whose target some subject type lacks (that type
+  ;; contributes nothing); EACL resolves a target on every subject type.
+  (let [{:keys [type issues]}
+        (error-data "definition user {}
+                     definition group {
+                       relation member: user
+                     }
+                     definition team {}
+                     definition document {
+                       relation parent: group | team
+                       permission view = parent->member
+                     }")]
+    (is (= :eacl.schema/unsupported-feature type))
+    (is (= [[:arrow-target :missing-reference :team]]
+           (mapv (juxt :type :reason :subject-type) issues)))))
 
 (deftest resolution-enforces-source-and-normalized-limits-test
   (let [parse-tree (parser/parse-schema resolved-schema)
@@ -179,7 +201,7 @@
         valid "caveat c(x int) { x == 1 }\n"
         invalid "caveat d(x int) { x == }\n"
         duplicate-type "definition doc {}\ndefinition doc {}\n"
-        inner-duplicate "definition other {\n relation x: pad\n relation x: pad\n}\n"
+        inner-duplicate "definition other {\n relation xyz: pad0\n relation xyz: pad0\n}\n"
         error-type
         (fn [schema]
           (try (resolver/validate-schema schema nil {:allow-caveats? true}) :accepted

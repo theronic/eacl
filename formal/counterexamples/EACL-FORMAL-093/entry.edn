@@ -10,9 +10,10 @@
  :root-cause
  "The grammar parsed a Caveat body as '{' caveat-source '}', and Instaparse inserts its comment-aware auto-whitespace before every terminal. A leading block comment was therefore part of the stored source when the body parsed that way, and was silently consumed as schema whitespace only when it contained '}', because the body expression then failed to reach the closing brace. Whether a Caveat was admitted, and the source and identity it stored, depended on what its comment said."
  :fix
- "Parse the body as one terminal from '{' through its closing '}', so no whitespace slot exists inside it and the stored source is always the text between the braces, verbatim. The body ends at the first '}' outside a string literal, a line comment or a block comment. Block comments stay outside the CEL profile and are rejected wherever they appear."
+ "Lex the body with the schema lexer, as SpiceDB v1.56.0 does, and store the CEL expression SpiceDB compiles: the text from the body's first token to its last, where a line end after the expression's last name, literal, ')', '}' or '*' is a token. Comments before the first token or after the last are outside the expression whatever they contain; inside it, CEL accepts '//' comments and rejects '/* */' with :eacl.caveat/invalid :syntax-error, as SpiceDB does."
  :closing-evidence
- ["eacl.caveats.definition-test/caveat-source-is-the-verbatim-body-text"
-  "eacl.caveats.definition-test/braces-in-caveat-literals-and-comments"]
+ ["eacl.caveats.definition-test/caveat-source-is-the-spicedb-cel-expression"
+  "eacl.caveats.definition-test/braces-in-caveat-literals-and-comments"
+  "eacl.spicedb.compatibility-corpus-test/spicedb-verdicts-test"]
  :notes
- "Found by the eacl-rust port (BUGS.md EACL-RS-109), verified against main a698b3bd."}
+ "Found by the eacl-rust port (BUGS.md EACL-RS-109), verified against main a698b3bd. The first fix stored the text between the braces verbatim and rejected every block comment; it was replaced by SpiceDB's rule after the SpiceDB v1.56.0 container accepted block comments outside the expression."}

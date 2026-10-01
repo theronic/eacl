@@ -1,0 +1,18 @@
+{:id :EACL-FORMAL-096
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace "eacl-rust/EACL-RS-002/expression-continuation-line"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions
+ ["v8.0.0 commit a698b3bdf15e61be9bfd1324d7d7c67dc82176be"]
+ :affected-backends [:shared]
+ :root-cause
+ "The Instaparse grammar ended every statement at a line break, so a permission expression or relation type list wrapped after a binary operator or '|' was a parse error, although SpiceDB v1.56.0 accepts it."
+ :fix
+ "Apply SpiceDB's synthetic-semicolon rule: a line end ends a statement only after a name, keyword, ')', '}' or '*'. After '+', '&', '-', '|', '->', ':' or '=' the statement continues on the next line, and a line that starts with an operator is still a parse error, as in SpiceDB."
+ :closing-evidence
+ ["eacl.spicedb.compatibility-corpus-test/continuation-lines-test"
+  "eacl.spicedb.compatibility-corpus-test/spicedb-verdicts-test"]
+ :notes
+ "Found by the eacl-rust port (BUGS.md EACL-RS-002), verified against main a698b3bd and SpiceDB v1.56.0."}

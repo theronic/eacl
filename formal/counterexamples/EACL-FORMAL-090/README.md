@@ -19,9 +19,12 @@ failed with `:eacl.authorization/evaluation-failure
 `m["aaaa…"]` was rejected at admission.
 
 An admitted schema must execute. The member name now goes through the same
-admission as a quoted literal, at the member's offset, so the schema write
-fails with `:eacl.caveat/invalid :reason :resource-limit`. A member at the
-bound compiles, passes `validate-plan`, and evaluates.
+admission as a quoted literal, at the member's offset, so compiling the plan
+fails with `:eacl.caveat/invalid :reason :resource-limit`. SpiceDB v1.56.0
+accepts the expression, so the schema write reports that limit as
+`:eacl.schema/unsupported-feature` with a `:caveat-profile` issue
+(`:profile-reason :resource-limit`, `:offset` into the stored expression). A
+member at the bound compiles, passes `validate-plan`, and evaluates.
 
 The finite Caveat oracle (`formal/caveats/model.clj`) already typed such a
 literal as invalid (`plan-type` requires `valid-text?`); the production parser

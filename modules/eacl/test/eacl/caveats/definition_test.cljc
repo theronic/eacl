@@ -72,44 +72,58 @@
 (deftest over-long-member-is-rejected-at-schema-admission
   ;; Admitting this Caveat left every check through `viewer` failing with
   ;; :eacl.authorization/evaluation-failure [:eacl.caveat/evaluation :resource-limit].
+  ;; SpiceDB accepts the expression, so EACL's profile limit makes it an
+  ;; unsupported feature rather than an invalid Caveat.
   (let [member (apply str (repeat 4097 "a"))
         schema (str "caveat longfield(m map<bool>) {\n m." member " == true\n}\n"
                     "definition user {}\ndefinition doc {\n relation viewer: user with longfield\n"
-                    " permission view = viewer\n}")]
-    (is (= {:type :eacl.caveat/invalid :reason :resource-limit :caveat "longfield" :offset 4}
-           (try (resolver/validate-schema schema nil {:allow-caveats? true}) nil
-                (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) e
-                  (select-keys (ex-data e) [:type :reason :caveat :offset])))))))
+                    " permission view = viewer\n}")
+        data (try (resolver/validate-schema schema nil {:allow-caveats? true}) nil
+                  (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) e
+                    (ex-data e)))]
+    (is (= :eacl.schema/unsupported-feature (:type data)))
+    (is (= [{:type :caveat-profile :caveat "longfield" :reason :profile
+             :profile-reason :resource-limit :offset 2}]
+           (mapv #(select-keys % [:type :caveat :reason :profile-reason :offset]) (:issues data))))))
 
-(defn- caveat-outcome [body]
-  (let [schema (str "caveat c(x int, s string) " body "\ndefinition user {}")]
+(defn- caveat-outcome [parameters body]
+  (let [schema (str "caveat c(" parameters ") " body "\ndefinition user {}")]
     (try {:source (:eacl.caveat/expression-source
                    (first (:caveats (resolver/validate-schema schema nil {:allow-caveats? true}))))}
          (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) e
-           (select-keys (ex-data e) [:type :reason :offset :source-span])))))
+           (select-keys (ex-data e) [:type :reason :source-span])))))
 
-(deftest caveat-source-is-the-verbatim-body-text
-  ;; Only the body text between the braces is stored, verbatim. A leading
-  ;; block comment used to be consumed as schema whitespace when, and only
-  ;; when, it contained `}`, so whether a Caveat was admitted and what source
-  ;; it stored depended on what its comment said.
+(deftest caveat-source-is-the-spicedb-cel-expression
+  ;; The stored source is the CEL text SpiceDB compiles: the body from its
+  ;; first token to its last. Comments and whitespace around it are not part
+  ;; of it, whatever they contain; a comment inside it is, and CEL accepts
+  ;; `//` there but not `/* */`. A leading block comment used to be consumed
+  ;; as schema whitespace only when it contained `}` (EACL-FORMAL-093).
   (doseq [[body source] [["{x == 1}" "x == 1"]
-                         ["{  // note }\n  x == 1 }" "  // note }\n  x == 1 "]
-                         ["{\n s == \"/* } */\" // } */\n}" "\n s == \"/* } */\" // } */\n"]]]
-    (is (= {:source source} (caveat-outcome body))))
-  (testing "block comments are outside the profile, whatever they contain"
-    (doseq [[body offset] [["{ /* } */ x == 1 }" 1]
-                           ["{ /* c */ x == 1 }" 1]
-                           ["{ /* a */ /* } */ x == 1 }" 1]
-                           ["{ x == 1 /* } */ }" 8]
-                           ["{ x == 1 /* c */ }" 8]]]
-      (is (= {:type :eacl.caveat/invalid :reason :unsupported-operation :offset offset
-              :source-span [27 (+ 27 (- (count body) 2))]}
-             (caveat-outcome body))
+                         ["{  // note }\n  x == 1 }" "x == 1"]
+                         ["{ /* } */ x == 1 }" "x == 1"]
+                         ["{ /* c */ x == 1 }" "x == 1"]
+                         ["{ /* a */ /* } */ x == 1 }" "x == 1"]
+                         ["{ x == 1 /* } */ }" "x == 1"]
+                         ["{ x == 1 /* c */ }" "x == 1"]
+                         ["{\n x == 1\n /* c */\n}" "x == 1\n"]
+                         ["{\n x == // inline }\n 1\n}" "x == // inline }\n 1\n"]]]
+    (is (= {:source source} (caveat-outcome "x int" body)) body))
+  (is (= {:source "s == \"/* } */\""}
+         (caveat-outcome "s string" "{\n s == \"/* } */\" // } */\n}")))
+  (testing "a block comment inside the expression is invalid CEL"
+    ;; A line ending after `1` ends the expression's last token, so the
+    ;; comment before it is inside the expression too.
+    (doseq [[body expression] [["{ x == /* c */ 1 }" "x == /* c */ 1"]
+                               ["{\n x == 1 /* c */\n}" "x == 1 /* c */\n"]]
+            :let [schema-start (+ (count "caveat c(x int) ") (.indexOf body expression))]]
+      (is (= {:type :eacl.caveat/invalid :reason :syntax-error
+              :source-span [schema-start (+ schema-start (count expression))]}
+             (caveat-outcome "x int" body))
           body)))
   (testing "a comment before the body is schema whitespace"
-    (is (= {:source " x == 1 "}
-           (caveat-outcome "/* } */ { x == 1 }"))))
-  (is (= {:type :eacl.caveat/invalid :reason :syntax-error :offset 8 :source-span [27 35]}
-         (caveat-outcome "{   x == }"))
-      "the source span covers exactly the text between the braces"))
+    (is (= {:source "x == 1"}
+           (caveat-outcome "x int" "/* } */ { x == 1 }"))))
+  (is (= {:type :eacl.caveat/invalid :reason :syntax-error :source-span [20 24]}
+         (caveat-outcome "x int" "{   x == }"))
+      "the source span covers the expression's tokens"))

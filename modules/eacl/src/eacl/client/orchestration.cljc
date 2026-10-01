@@ -132,8 +132,8 @@
   2)
 
 (defn- operator-expression-node?
-  "Recognizes an actual intersection/exclusion operation in an Instaparse
-  tree. The grammar emits one-child wrapper nodes with these tags for every
+  "Recognizes an actual intersection/exclusion operation in a schema parse
+  tree. The parser emits one-child wrapper nodes with these tags for every
   permission expression, so the tag alone is deliberately insufficient."
   [parse-tree]
   (loop [pending [parse-tree]]

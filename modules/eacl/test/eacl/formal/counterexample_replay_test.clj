@@ -162,9 +162,15 @@
     :EACL-FORMAL-092
     eacl.schema.expression-resolver-test/declaration-errors-follow-source-order-test
     :EACL-FORMAL-093
-    eacl.caveats.definition-test/caveat-source-is-the-verbatim-body-text
+    eacl.caveats.definition-test/caveat-source-is-the-spicedb-cel-expression
     :EACL-FORMAL-094
-    eacl.datascript.qualified-schema-test/removing-a-relation-with-qualified-relationships-reports-relation-in-use})
+    eacl.datascript.qualified-schema-test/removing-a-relation-with-qualified-relationships-reports-relation-in-use
+    :EACL-FORMAL-095
+    eacl.spicedb.compatibility-corpus-test/semicolon-terminators-test
+    :EACL-FORMAL-096
+    eacl.spicedb.compatibility-corpus-test/continuation-lines-test
+    :EACL-FORMAL-097
+    eacl.spicedb.compatibility-corpus-test/glued-keywords-test})
 
 (defn- read-edn
   [path]

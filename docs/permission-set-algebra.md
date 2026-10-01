@@ -44,9 +44,11 @@ means `(a - b) - c`. Use parentheses when the grouping might surprise a reader.
 Permissions can refer to other permissions recursively. A positive cycle
 alone grants nothing; there must be a relationship that provides a grant.
 
-A cycle cannot depend on its own exclusion result. EACL rejects such a schema
-with `:eacl.schema/unstratified-exclusion` and keeps the previous schema.
-For example, `permission view = reader - view` is invalid.
+A cycle cannot depend on its own exclusion result. SpiceDB accepts such a
+schema, so EACL rejects it as `:eacl.schema/unsupported-feature` with an
+`:unstratified-exclusion` issue naming the negative edge and the cycle, and
+keeps the previous schema. For example, EACL does not support
+`permission view = reader - view`.
 
 An intersection or exclusion whose operands recurse only through unions costs
 about what its operands cost:

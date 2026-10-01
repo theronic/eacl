@@ -7,10 +7,12 @@ rendered the payload with `expression/encode`, which applies the canonical
 codec's own ceilings first: 262,144 entries before rendering and 1 MiB after.
 A permission whose arrows or relations resolve over many subject types passes
 both of those only while it is under about 1 MiB, so with default limits a
-12 KB schema — 256 subject types and `permission p = r->x + …` with 128
-arrows — failed with `:eacl.format/invalid {:reason :too-large}`, and grouping
-the arrows in pairs failed with `:too-many-entries`. The eacl-rust port's
-360 KB `r + r + r` schema failed the same way. The expression comment that the
+13 KB schema — 256 subject types and `permission ppp = rrr->xxx + …` with
+128 arrows — failed with `:eacl.format/invalid {:reason :too-large}`, and
+grouping the arrows in pairs failed with `:too-many-entries`. The eacl-rust
+port's 360 KB `r + r + r` schema failed the same way; its 1,404-character type
+names are not valid SpiceDB names, so it is now rejected with
+`:eacl.schema/invalid-name` before any limit applies. The expression comment that the
 codec ceilings sit "deliberately above the calibrated admission policy" did
 not hold.
 

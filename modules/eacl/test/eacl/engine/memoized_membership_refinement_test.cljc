@@ -79,12 +79,34 @@
        (render-permissions folder)
        "}\n"))
 
+(defn- alias-target
+  "The permission a body names when it is exactly one self reference."
+  [terms]
+  (let [[[kind target] & more] terms]
+    (when (and (= :self kind) (empty? more)) target)))
+
+(defn ^:no-doc break-alias-cycles
+  "SpiceDB rejects permissions that alias each other in a cycle (`a = b`,
+  `b = a`). Gives each alias on such a cycle the fallback term as well, which
+  draws nothing from the random state."
+  [permissions fallback]
+  (reduce (fn [result permission]
+            (if (loop [target (alias-target (get result permission)) seen #{}]
+                  (cond (nil? target) false
+                        (= permission target) true
+                        (contains? seen target) false
+                        :else (recur (alias-target (get result target)) (conj seen target))))
+              (update result permission conj fallback)
+              result))
+          permissions
+          (keys permissions)))
+
 (defn ^:no-doc random-permissions
   "Union-only bodies over relations, a relation through an arrow, and
   permissions through self and arrow references, recursion included."
   [state]
-  (let [teams (mapv #(keyword (str "t" %)) (range (inc (next-int! state 2))))
-        folders (mapv #(keyword (str "p" %)) (range (+ 2 (next-int! state 2))))
+  (let [teams (mapv #(keyword (str "tp" %)) (range (inc (next-int! state 2))))
+        folders (mapv #(keyword (str "fp" %)) (range (+ 2 (next-int! state 2))))
         body (fn [own options fallback]
                (let [terms (->> (repeatedly (inc (next-int! state 4))
                                             #(pick state options))
@@ -100,11 +122,15 @@
                                     (for [t teams] [:arrow :team t])
                                     (for [p folders] [:arrow :parent p])
                                     (for [p folders] [:self p])))]
-    {:team (into (sorted-map)
-                 (for [t teams] [t (body t team-options [:relation :member])]))
-     :folder (into (sorted-map)
-                   (for [p folders]
-                     [p (body p folder-options [:relation :reader])]))}))
+    {:team (break-alias-cycles
+            (into (sorted-map)
+                  (for [t teams] [t (body t team-options [:relation :member])]))
+            [:relation :member])
+     :folder (break-alias-cycles
+              (into (sorted-map)
+                    (for [p folders]
+                      [p (body p folder-options [:relation :reader])]))
+              [:relation :reader])}))
 
 (def ^:private users [300 301])
 

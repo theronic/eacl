@@ -67,20 +67,21 @@
         "definition user {}
          definition folder {
            relation direct: user
-           permission p = direct - q
-           permission q = p
+           permission ppp = direct - qqq
+           permission qqq = ppp
          }"
         first-result (error-data #(resolve-schema schema))
         second-result (error-data #(resolve-schema schema))]
     (is (= first-result second-result))
-    (is (= :eacl.schema/unstratified-exclusion (:type first-result)))
-    (is (= [:folder :p]
+    (is (= :eacl.schema/unsupported-feature (:type first-result)))
+    (is (= [:unstratified-exclusion] (mapv :type (:issues first-result))))
+    (is (= [:folder :ppp]
            (get-in first-result [:negative-edge :from])))
-    (is (= [:folder :q]
+    (is (= [:folder :qqq]
            (get-in first-result [:negative-edge :to])))
     (is (= [:root :right]
            (get-in first-result [:negative-edge :path])))
-    (is (= [[:folder :p] [:folder :q] [:folder :p]]
+    (is (= [[:folder :ppp] [:folder :qqq] [:folder :ppp]]
            (:cycle first-result)))
     (is (= 2 (count (:cycle-edges first-result))))))
 
@@ -89,11 +90,12 @@
         "definition user {}
          definition folder {
            relation direct: user
-           permission p = direct - (direct - q)
-           permission q = p
+           permission ppp = direct - (direct - qqq)
+           permission qqq = ppp
          }"
         data (error-data #(resolve-schema schema))]
-    (is (= :eacl.schema/unstratified-exclusion (:type data)))
+    (is (= :eacl.schema/unsupported-feature (:type data)))
+    (is (= [:unstratified-exclusion] (mapv :type (:issues data))))
     (is (= :negative (get-in data [:negative-edge :sign])))
     (is (= [:root :right :right]
            (get-in data [:negative-edge :path])))))
@@ -104,11 +106,12 @@
          definition document {
            relation reader: user
            permission accepted = reader
-           permission p = reader - q
-           permission q = p
+           permission ppp = reader - qqq
+           permission qqq = ppp
          }"
         data (error-data #(resolve-schema schema))]
-    (is (= :eacl.schema/unstratified-exclusion (:type data)))
+    (is (= :eacl.schema/unsupported-feature (:type data)))
+    (is (= [:unstratified-exclusion] (mapv :type (:issues data))))
     (is (nil? (:expressions data))
         "validation never exposes the otherwise valid permission as a partial candidate")
     (is (nil? (:expression-metadata data)))

@@ -1,0 +1,14 @@
+{:operation :validate-schema
+ :schema "definition user {}\ndefinition doc { relation viewer: user; permission view = viewer; }"
+ :before {:type :eacl.schema/parse-error :line 2 :column 39}
+ :spicedb-v1.56.0 :accept
+ :related
+ [{:corpus-id "terminators/semicolons-one-line"
+   :schema "definition user {}; definition doc { relation viewer: user; permission view = viewer; }"
+   :spicedb-v1.56.0 :accept}
+  {:corpus-id "terminators/double-semicolon-inside"
+   :schema "definition user {}\ndefinition doc {\n relation viewer: user;;\n}"
+   :spicedb-v1.56.0 :accept}
+  {:corpus-id "terminators/top-double-semicolon"
+   :schema "definition user {};;definition doc {}"
+   :spicedb-v1.56.0 :reject}]}

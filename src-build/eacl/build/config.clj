@@ -21,8 +21,7 @@
     :required-entry "eacl/core.cljc"
     :dependencies
     {'org.clojure/clojure {:mvn/version "1.11.4"}
-     'com.github.ben-manes.caffeine/caffeine {:mvn/version "3.2.4"}
-     'instaparse/instaparse {:mvn/version "1.5.0"}}
+     'com.github.ben-manes.caffeine/caffeine {:mvn/version "3.2.4"}}
     :generated-runtime? true}
 
    :eacl-caveats-jvm

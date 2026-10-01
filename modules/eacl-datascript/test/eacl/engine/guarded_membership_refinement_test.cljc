@@ -53,10 +53,10 @@
 ;; ---------------------------------------------------------------------------
 
 (def ^:private witness-terms
-  ["reader" "owner" "team->member" "parent->readable" "readable" "team->t0"])
+  ["reader" "owner" "team->member" "parent->readable" "readable" "team->tp0"])
 
 (def ^:private positive-guards
-  ["eligible" "team->member" "readable" "parent->readable" "team->t0"])
+  ["eligible" "team->member" "readable" "parent->readable" "team->tp0"])
 
 (def ^:private negative-guards ["blocked" "team->member"])
 
@@ -73,14 +73,14 @@
     (str/join " + " (distinct [first-term second-term]))))
 
 (defn- random-program
-  "The folder permissions of one case: `g0`, recursing through a guard on
-  its parent's `g0`, or through a guard on `g1`, which recurses through a
-  guard on its parent's `g0`."
+  "The folder permissions of one case: `gp0`, recursing through a guard on
+  its parent's `gp0`, or through a guard on `gp1`, which recurses through a
+  guard on its parent's `gp0`."
   [state]
   (if (plain/chance? state 30)
-    {:g0 (str (witnesses state) " + " (guarded-term state "g1"))
-     :g1 (str (witnesses state) " + " (guarded-term state "parent->g0"))}
-    {:g0 (str (witnesses state) " + " (guarded-term state "parent->g0"))}))
+    {:gp0 (str (witnesses state) " + " (guarded-term state "gp1"))
+     :gp1 (str (witnesses state) " + " (guarded-term state "parent->gp0"))}
+    {:gp0 (str (witnesses state) " + " (guarded-term state "parent->gp0"))}))
 
 (defn- render-schema [program]
   (str "caveat enabled(flag bool) { flag }\n"
@@ -88,7 +88,7 @@
        "definition team {\n"
        "  relation member: user\n"
        "  relation parent: team\n"
-       "  permission t0 = member + parent->t0\n"
+       "  permission tp0 = member + parent->tp0\n"
        "}\n"
        "definition folder {\n"
        "  relation parent: folder\n"

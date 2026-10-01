@@ -67,15 +67,15 @@
   "definition user {}
 
    definition wide {
-     relation r0: user
-     relation r1: user
-     relation r2: user
-     relation r3: user
-     relation r4: user
-     relation r5: user
-     relation r6: user
-     relation r7: user
-     permission view = r0 + r1 + r2 + r3 + r4 + r5 + r6 + r7
+     relation r_0: user
+     relation r_1: user
+     relation r_2: user
+     relation r_3: user
+     relation r_4: user
+     relation r_5: user
+     relation r_6: user
+     relation r_7: user
+     permission view = r_0 + r_1 + r_2 + r_3 + r_4 + r_5 + r_6 + r_7
    }")
 
 (defn- obj [type id] (eacl/spice-object type id))
@@ -172,8 +172,8 @@
      :reverse-resources {:c-2 (folders 1)}}))
 
 (defn- broad-union-fixture
-  "Broad union: view = r0 + ... + r7 over twelve resources. early-user is
-  granted via r0 on three resources; late-user only via r7 on w-09 (the
+  "Broad union: view = r_0 + ... + r_7 over twelve resources. early-user is
+  granted via r_0 on three resources; late-user only via r_7 on w-09 (the
   late-productive principal); filler users keep interior relations non-empty."
   []
   (let [wides (mapv #(obj :wide (str "w-" (pad2 %))) (range 1 13))
@@ -183,12 +183,12 @@
     {:schema wide-schema
      :objects (into [early late] (concat wides fillers))
      :relationships
-     (into [(eacl/->Relationship early :r0 (wides 0))
-            (eacl/->Relationship early :r0 (wides 4))
-            (eacl/->Relationship early :r0 (wides 10))
-            (eacl/->Relationship late :r7 (wides 8))]
+     (into [(eacl/->Relationship early :r_0 (wides 0))
+            (eacl/->Relationship early :r_0 (wides 4))
+            (eacl/->Relationship early :r_0 (wides 10))
+            (eacl/->Relationship late :r_7 (wides 8))]
            (map-indexed (fn [i wide]
-                          (eacl/->Relationship (fillers i) :r3 wide))
+                          (eacl/->Relationship (fillers i) :r_3 wide))
                         wides))
      :resource-type :wide
      :permission :view
