@@ -9,6 +9,7 @@
             [eacl.caveats.relation-removal-contract :as removal]
             [eacl.caveats.inspection-contract :as inspection]
             [eacl.caveats.partial-scan-contract :as partial-scan]
+            [eacl.caveats.permission-tree-contract :as permission-tree]
             [eacl.caveats.deletion-contract :as deletion]
             [eacl.caveats.cache-trace-contract :as cache-trace]
             [eacl.authorization.qualification-test :as fixtures]
@@ -139,6 +140,21 @@
                                                            :revision-watermark watermark
                                                            :advance-revision-watermark! (fn [revision] (swap! watermark max revision))})
                             :writer #(qualifiers/writer conn) :now now})
+      (finally (d/close conn) (util/delete-files dir)))))
+
+(deftest permission-trees-list-qualified-relationships-without-evaluating-them
+  (let [dir (util/tmp-dir (str "permission-tree-" (random-uuid)))
+        conn (schema/create-conn dir {})
+        now (atom 1000)
+        watermark (atom 0)]
+    (try
+      (permission-tree/check! {:client (api/make-client conn {:clock #(deref now)
+                                                              :caveat-evaluator (fixtures/portable-evaluator (atom 0))
+                                                              :source-lifecycle #uuid "3b8e2f61-9c4d-4a07-b5e2-6f1d0c7a9e44"
+                                                              :security-key "01234567890123456789012345678901"
+                                                              :revision-watermark watermark
+                                                              :advance-revision-watermark! (fn [revision] (swap! watermark max revision))})
+                               :writer #(qualifiers/writer conn) :now now})
       (finally (d/close conn) (util/delete-files dir)))))
 
 (deftest stored-and-active-inspection-preserve-aligned-native-qualifiers

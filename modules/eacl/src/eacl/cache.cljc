@@ -1050,16 +1050,34 @@
           (or (not (contains? page-info :bounded?))
               (boolean? (:bounded? page-info)))))))
 
+(defn- qualifier-annotation-valid?
+  "A permission-tree element reached through a qualified Relationship carries
+  that Relationship's closed canonical qualifier keys; any other element
+  carries none."
+  [value]
+  (relationship-mutations/canonical-qualifier-metadata?
+   (select-keys value relationship-mutations/qualifier-keys)))
+
+(defn- annotated-spice-object-shape?
+  [value]
+  (and (map? value)
+       (rendered-spice-object-shape?
+        (apply dissoc value relationship-mutations/qualifier-keys))
+       (qualifier-annotation-valid? value)))
+
 (defn- permission-tree-answer?
   [value]
   (loop [pending [value]]
     (if-let [node (peek pending)]
       (let [remaining (pop pending)
-            fields (when (map? node) (set (keys node)))
+            fields (when (map? node)
+                     (set (remove relationship-mutations/qualifier-keys
+                                  (keys node))))
             base-valid?
             (and (map? node)
                  (rendered-spice-object-shape? (:expanded-object node))
-                 (unqualified-keyword? (:expanded-relation node)))]
+                 (unqualified-keyword? (:expanded-relation node))
+                 (qualifier-annotation-valid? node))]
         (cond
           (= #{:expanded-object :expanded-relation :leaf} fields)
           (let [leaf (:leaf node)]
@@ -1067,7 +1085,7 @@
                  (map? leaf)
                  (= #{:subjects} (set (keys leaf)))
                  (vector? (:subjects leaf))
-                 (every? rendered-spice-object-shape? (:subjects leaf))
+                 (every? annotated-spice-object-shape? (:subjects leaf))
                  (recur remaining)))
 
           (= #{:expanded-object :expanded-relation :intermediate} fields)

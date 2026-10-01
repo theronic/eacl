@@ -337,7 +337,10 @@ reconstruction.
 
 The tree is a shallow structural explanation, not a flattened authorization
 answer. It preserves union, intersection, directed exclusion, permission, and
-arrow boundaries, empty branches, and duplicate multiplicity. Child/subject
+arrow boundaries, empty branches, and duplicate multiplicity. Caveated and
+expiring Relationships are listed like plain ones; the leaf subject or arrow
+child node they reach carries their `:caveat`, `:caveat-context`, and
+`:valid-until-ms`, and nothing is evaluated. Child/subject
 order is deliberately unspecified except that exclusion retains left/right
 operand order.
 Use `can?` for membership decisions and compare normalized tree topology with

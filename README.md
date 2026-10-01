@@ -950,6 +950,23 @@ so leaves contain subjects found by direct relation scans rather than a
 flattened effective-membership set. To decide whether a subject has the
 permission, use `can?`; do not infer authorization by flattening a tree.
 
+Caveated and expiring Relationships appear in the tree like plain ones. The
+leaf subject, or arrow child node, that a qualified Relationship reaches
+carries its `:caveat`, `:caveat-context` (omitted when empty) and
+`:valid-until-ms`, exactly as `read-relationships` returns them:
+
+```clojure
+{:expanded-object   {:type :document :id "readme"}
+ :expanded-relation :viewer
+ :leaf {:subjects [{:type :user :id "alice" :valid-until-ms 1767225600000}
+                   {:type :user :id "bob" :caveat "on_days"
+                    :caveat-context {"days" ["tuesday"]}}]}}
+```
+
+Expansion never evaluates a Caveat or reads the clock, so an expired
+Relationship stays listed with its deadline and the tree is the same at any
+evaluation time.
+
 Child and subject vector order is non-semantic and may differ by backend.
 Empty branches and duplicate paths are preserved. Compare trees as annotated
 topology with child/subject multisets when order is irrelevant. The exact

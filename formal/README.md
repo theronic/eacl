@@ -82,7 +82,10 @@ type-preserving identity, sum-typed relation declarations, and emitted-child
 depth accounting. Run `bin/formal format` and `bin/formal verify`;
 the aggregate report is `target/formal/dafny-verification.json`.
 
-This model is not mechanically extracted into production. The corresponding
+This model is not mechanically extracted into production. Its relationships
+carry no qualifier: production lists every stored Relationship, caveated and
+expiring ones included, and adds their qualifier keys as display metadata
+that the model does not describe (EACL-FORMAL-081). The corresponding
 handwritten source is `modules/eacl/src/eacl/permission_tree.cljc`; bounded
 reference/property tests are in
 `modules/eacl/test/eacl/permission_tree_test.cljc` and

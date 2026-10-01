@@ -8,6 +8,7 @@
             [eacl.caveats.relation-removal-contract :as removal]
             [eacl.caveats.inspection-contract :as inspection]
             [eacl.caveats.partial-scan-contract :as partial-scan]
+            [eacl.caveats.permission-tree-contract :as permission-tree]
             [eacl.caveats.deletion-contract :as deletion]
             [eacl.caveats.cache-trace-contract :as cache-trace]
             [eacl.authorization.qualification-test :as fixtures]
@@ -100,6 +101,17 @@
         (partial-scan/check! {:client (api/make-client conn {:clock #(deref now)
                                                              :caveat-evaluator (fixtures/portable-evaluator (atom 0))})
                               :writer #(qualifiers/writer conn) :now now})
+        (finally (d/release conn) (d/delete-database config))))))
+
+(deftest permission-trees-list-qualified-relationships-without-evaluating-them
+  (doseq [options [{} {:attribute-refs? true}]]
+    (let [conn (schema/create-conn [] options)
+          config (:config (d/db conn))
+          now (atom 1000)]
+      (try
+        (permission-tree/check! {:client (api/make-client conn {:clock #(deref now)
+                                                                :caveat-evaluator (fixtures/portable-evaluator (atom 0))})
+                                 :writer #(qualifiers/writer conn) :now now})
         (finally (d/release conn) (d/delete-database config))))))
 
 (deftest qualified-cache-traces-match-uncached-authorization

@@ -7,6 +7,7 @@
             [eacl.caveats.schema-allowance-contract :as allowance]
             [eacl.caveats.inspection-contract :as inspection]
             [eacl.caveats.partial-scan-contract :as partial-scan]
+            [eacl.caveats.permission-tree-contract :as permission-tree]
             [eacl.caveats.deletion-contract :as deletion]
             [eacl.caveats.cache-trace-contract :as cache-trace]
             [eacl.core :as eacl]
@@ -59,6 +60,48 @@
         client (api/make-client conn {:clock #(deref now)
                                       :caveat-evaluator (fixtures/portable-evaluator (atom 0))})]
     (partial-scan/check! {:client client :writer #(qualifiers/writer conn) :now now})))
+
+(deftest permission-trees-list-qualified-relationships-without-evaluating-them
+  (let [conn (schema/create-conn)
+        now (atom 1000)
+        client (api/make-client conn {:clock #(deref now)
+                                      :caveat-evaluator (fixtures/portable-evaluator (atom 0))})]
+    (permission-tree/check! {:client client :writer #(qualifiers/writer conn) :now now})))
+
+(deftest eacl-rs-005-expansions-list-expiring-and-caveated-relationships
+  ;; eacl-rust BUGS.md EACL-RS-005 and PR206-F1: each expansion failed with
+  ;; :eacl.permission-tree/adapter-contract-violation, also after the grant
+  ;; expired, while the plain control expanded.
+  (binding [orchestration/*qualified-authorization-enabled?* true]
+    (doseq [{:keys [schema qualifier]}
+            [{:schema "definition user {}\ndefinition doc {\n  relation viewer: user\n  permission view = viewer\n}\n"
+              :qualifier {:valid-until-ms 5000}}
+             {:schema "caveat c1(flag bool) {\n  flag\n}\ndefinition user {}\ndefinition doc {\n  relation viewer: user | user with c1\n  permission view = viewer\n}\n"
+              :qualifier {:caveat "c1"}}
+             {:schema "definition user {}\ndefinition doc {\n  relation viewer: user\n  permission view = viewer\n}\n"
+              :qualifier {}}]]
+      (let [conn (schema/create-conn)
+            now (atom 1000)
+            client (api/make-client conn {:clock #(deref now)
+                                          :caveat-evaluator (fixtures/portable-evaluator (atom 0))})
+            a (eacl/spice-object :user "a")
+            b (eacl/spice-object :user "b")
+            d (eacl/spice-object :doc "d")
+            viewers {:expanded-object d :expanded-relation :viewer
+                     :leaf {:subjects [(merge a qualifier) b]}}
+            view {:expanded-object d :expanded-relation :view
+                  :intermediate {:operation :union :children [viewers]}}
+            expand #(:tree-root (eacl/expand-permission-tree client {:resource d :permission %}))]
+        (eacl/write-schema! client schema)
+        (ds/transact! conn [{:eacl/id "a"} {:eacl/id "b"} {:eacl/id "d"}])
+        (eacl/write-relationships!
+         client [{:operation :create :relationship (merge (eacl/->Relationship a :viewer d) qualifier)}
+                 {:operation :create :relationship (eacl/->Relationship b :viewer d)}])
+        (is (= viewers (expand :viewer)) (pr-str qualifier))
+        (is (= view (expand :view)) (pr-str qualifier))
+        (reset! now 9000)
+        (is (= view (expand :view)) "an expired grant stays listed with its deadline")
+        (is (true? (eacl/can? client b :view d)))))))
 
 (deftest qualified-object-deletion-is-atomic-and-bounded
   (let [conn (schema/create-conn)

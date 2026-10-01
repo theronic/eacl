@@ -503,6 +503,27 @@ no verified-release claim existed.
   walks, a plain cross-group walk, and a seeded sweep on every backend, and two
   qualified production mutation controls cover the cursor and the comparator.
 
+### EACL-FORMAL-081 — permission trees failed on qualified relationships
+
+- **Affected:** `expand-permission-tree` on every backend whenever the
+  traversal scanned a Relation holding a caveated or expiring Relationship,
+  live or expired, in a leaf or in an arrow's source Relation.
+- **Impact:** availability. The request failed with
+  `:eacl.permission-tree/adapter-contract-violation`
+  `{:reason :adapter-operation-failed}`.
+- **Root cause:** the tree was the one v8 serving scan that did not request
+  qualified results. Each backend's endpoint scan rejects a stored value
+  carrying a qualifier reference with `:eacl/unsupported-qualifier`, which
+  `adapter-call!` redacted into a contract violation.
+- **Correction:** the tree scans compact qualified edges and lists every
+  stored Relationship. The leaf subject or arrow child node reached through a
+  qualified Relationship carries its `:caveat`, `:caveat-context` (omitted
+  when empty), and `:valid-until-ms`, decoded by the `read-relationships`
+  inspector. Nothing is evaluated, so the tree stays a function of the
+  selected basis, as its answer key already assumes. Decode faults are typed
+  and redacted. Known as PR206-F1 for Caveats; the eacl-rust port found the
+  expiring case (EACL-RS-005).
+
 The authoritative minimized fixtures and closing evidence are under
 `formal/counterexamples/`. Run them with
 `EACL_NREPL_PORT=<dev-port> bin/formal counterexample-replay`.

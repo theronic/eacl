@@ -2606,7 +2606,11 @@
                   (permission-tree/expand
                    adapter
                    {:limits (:permission-tree-limits opts)
-                    :execution-contract contract}
+                    :execution-contract contract
+                    ;; Decodes stored qualifiers for display only. The tree
+                    ;; never reads the request's time or Caveat context, so
+                    ;; its answer key correctly omits the qualification.
+                    :qualification (:qualification opts)}
                    (:resource query)
                    (:permission query))))
               tree (:value answer)]

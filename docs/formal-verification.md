@@ -223,7 +223,13 @@ identity, partial success, and over-limit success.
 
 The formal model is proof-only. Production
 `modules/eacl/src/eacl/permission_tree.cljc` is handwritten and has no claimed
-mechanical Dafny-to-Clojure refinement. Correspondence evidence lives in
+mechanical Dafny-to-Clojure refinement. The model's `Relationship` has no
+qualifier dimension: a leaf is exactly the stored matching Relationships,
+caveated and expiring ones included, which production lists. The qualifier
+keys production adds to a leaf subject or arrow child are display metadata
+outside the model; executable tests check them against an annotating reference
+evaluator and check that erasing them leaves the reference topology
+(EACL-FORMAL-081). Correspondence evidence lives in
 `modules/eacl/test/eacl/permission_tree_test.cljc` (independent evaluator,
 bounded generators, permutation and hostile-realization checks),
 `modules/eacl/test/eacl/contract_support.cljc` plus each backend contract, and

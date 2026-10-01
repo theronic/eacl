@@ -527,6 +527,31 @@
               {:operation :expand-permission-tree :query {}}
               invalid))
             (pr-str invalid))))
+    (testing "qualified tree elements carry only canonical qualifier keys"
+      (let [annotated
+            (-> tree
+                (assoc-in [:intermediate :children 0 :leaf :subjects]
+                          [(assoc subject :caveat "enabled"
+                                  :caveat-context {"flag" true}
+                                  :valid-until-ms 5000)])
+                (assoc-in [:intermediate :children 1 :valid-until-ms] 7000))
+            subject-path [:intermediate :children 0 :leaf :subjects 0]]
+        (is (cache/completed-answer-value-valid?
+             :expand-permission-tree
+             {:operation :expand-permission-tree :query {}}
+             annotated))
+        (doseq [invalid
+                [(assoc-in annotated [:intermediate :children 1 :valid-until-ms] "7000")
+                 (update-in annotated subject-path dissoc :caveat)
+                 (assoc-in annotated (conj subject-path :caveat-context) {})
+                 (assoc-in annotated (conj subject-path :caveat) :enabled)
+                 (assoc-in annotated (conj subject-path :unexpected) true)]]
+          (is (false?
+               (cache/completed-answer-value-valid?
+                :expand-permission-tree
+                {:operation :expand-permission-tree :query {}}
+                invalid))
+              (pr-str invalid)))))
     (is (false?
          (cache/completed-answer-value-valid?
           :count-subjects unbounded {:count 7 :limit -1})))

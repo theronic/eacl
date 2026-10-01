@@ -24,6 +24,7 @@
             [eacl.datascript.qualifier-cache-test :as public-qualifier-cache-test]
             [eacl.authorization.qualification-test :as qualification-test]
             [eacl.engine.relationships :as relationship-engine]
+            [eacl.backend.v8 :as backend-v8]
             [eacl.engine.scan-cache :as scan-cache]
             [eacl.engine.scan-cache-test :as scan-test]
             [eacl.engine.stable-reducer :as reducer]
@@ -87,6 +88,7 @@
         externalize-relationships relay/externalize-relationship-page
         progress-edge relationship-engine/progress-edge
         physical-compare relationship-engine/physical-compare
+        reduce-scan backend-v8/reduce-scan
         inspection-window inspection/window-options
         plan-schema datascript-schema/plan-schema-replacement
         qualify qualification/qualify identity qualification/exact-reuse-identity
@@ -527,6 +529,16 @@
       :redefs {#'relationship-engine/physical-compare
                (fn [scan-kind a b] (physical-compare scan-kind (dissoc a :qualifier-id) (dissoc b :qualifier-id)))
                #'relationship-engine/check-scan-order! (fn [_ _ _ rows] rows)}}
+     :permission-tree-scans-without-qualifiers
+     {:gate #'public-write-test/eacl-rs-005-expansions-list-expiring-and-caveated-relationships
+      :redefs {#'backend-v8/reduce-scan
+               (fn [adapter operation args init callbacks]
+                 (reduce-scan adapter operation
+                              (update args (dec (count args)) dissoc :include-qualifier?)
+                              init callbacks))}}
+     :permission-tree-drops-qualifier-annotations
+     {:gate #'public-write-test/eacl-rs-005-expansions-list-expiring-and-caveated-relationships
+      :redefs {#'qualification/inspect (fn [_ _ _] {})}}
      :inspection-fills-past-candidate-window
      {:gate #'inspection-test/expiry-filter-keeps-the-existing-candidate-work-bound
       :redefs {#'inspection/window-options
@@ -564,7 +576,7 @@
 
 (deftest production-mutations-are-killed-by-conformance-gates
   (let [cases (mutation-cases)]
-    (is (= 110 (count cases)))
+    (is (= 112 (count cases)))
     (doseq [[id {:keys [gate redefs]}] (sort-by key cases)]
       (is (zero? (failures gate)) (str id " unmodified gate must pass"))
       (is (pos? (with-redefs-fn redefs #(failures gate))) (str id " must be detected")))))

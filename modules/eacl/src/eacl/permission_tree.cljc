@@ -1,10 +1,12 @@
 (ns eacl.permission-tree
   "Portable, snapshot-bound shallow permission-tree expansion."
-  (:require [eacl.backend.v8 :as backend]
+  (:require [eacl.authorization.qualification :as qualification]
+            [eacl.backend.v8 :as backend]
             [eacl.consistency :as consistency]
             [eacl.core :as eacl]
             [eacl.execution :as execution]
             [eacl.exact-integer :as exact-integer]
+            [eacl.relationships.edge :as edge]
             [eacl.schema.expression-persistence :as expression-persistence]))
 
 (def default-limits
@@ -226,6 +228,19 @@
       (adapter-contract! :unknown-definition-kind))
     definitions))
 
+(def ^:private qualifier-fault-types
+  #{:eacl.qualifier/invalid :eacl.caveat/invalid})
+
+(defn- qualifier-fault!
+  "Rethrows a stored qualifier or Caveat decode fault with only its type and
+  reason keyword. The original data and cause may hold eids, qualifier ids, or
+  Caveat context values."
+  [type reason]
+  (permission-tree-error!
+   type
+   "A stored Relationship qualifier could not be decoded."
+   {:reason (if (keyword? reason) reason :unavailable)}))
+
 (def ^:private memo-miss
   ;; Identity-safe miss sentinel (CLJS does not intern keyword literals).
   #?(:clj (Object.) :cljs (js/Object.)))
@@ -256,8 +271,16 @@
   "Expands one root against exactly one immutable selected adapter.
 
   Returns a fully externalized tree. Failures throw before any tree is
-  returned; no lazy sequence or internal backend identity escapes."
-  [adapter {:keys [limits execution-contract]} resource permission]
+  returned; no lazy sequence or internal backend identity escapes.
+
+  The tree shows stored Relationships, qualified or not. A leaf subject or
+  arrow child reached through a caveated or expiring Relationship carries
+  that Relationship's `:caveat`, `:caveat-context` (omitted when empty), and
+  `:valid-until-ms`, decoded by `qualification`, the request's qualification
+  state, as `read-relationships` renders them. Nothing is evaluated: no
+  Caveat runs and no clock is read, so an expired Relationship is listed with
+  its deadline and the tree depends only on the selected basis."
+  [adapter {:keys [limits execution-contract qualification]} resource permission]
   (let [limits (normalize-limits limits)
         ;; Request-local single-threaded state: volatiles, not atoms.
         counters (volatile! {:schema-components 0
@@ -350,6 +373,32 @@
                   (let [rendered (eacl/spice-object type external-id)]
                     (vswap! codec-cache assoc cache-key rendered)
                     rendered))))))
+        annotation!
+        (fn [relation-id qualifier-id]
+          ;; Runs inside a controlled scan step, so each throw below crosses
+          ;; adapter-call! unchanged; every error from the decode itself is
+          ;; replaced here, never forwarded.
+          (when-not qualification
+            (permission-tree-error!
+             :eacl/unsupported-capability
+             "Qualified Relationship inspection is not enabled."
+             {:capability :qualified-relationship-inspection}))
+          (check! :permission-tree-qualifier-resolution)
+          (let [annotation
+                (try
+                  (qualification/inspect qualification relation-id qualifier-id)
+                  (catch #?(:clj Throwable :cljs :default) error
+                    (let [{:keys [type reason]} (ex-data error)]
+                      (if (contains? qualifier-fault-types type)
+                        (qualifier-fault! type reason)
+                        ;; A real deadline or cancellation is raised again by
+                        ;; the kernel's own check; anything else, including
+                        ;; an adapter's lookalike execution error, is an
+                        ;; adapter failure.
+                        (do (check! :permission-tree-qualifier-resolution)
+                            (adapter-contract! :adapter-operation-failed))))))]
+            (check! :permission-tree-qualifier-resolution)
+            annotation))
         scan-relation!
         (fn [resource-descriptor relation-definitions leaf?]
           (if (nil? (:internal-id resource-descriptor))
@@ -367,7 +416,8 @@
                     subject-type
                     {:direction :asc
                      :bound-eid nil
-                     :inclusive-bound? false}]
+                     :inclusive-bound? false
+                     :include-qualifier? true}]
                    subjects
                    {:before-realize!
                     #(controlled!
@@ -378,24 +428,34 @@
                       (fn []
                         (check! :permission-tree-relationship-realization)))
                     :step
-                    (fn [acc internal-id]
+                    (fn [acc scanned]
                       (controlled!
                        (fn []
                          (consume! limits counters
                                    :relationship-values 1)
                          (when leaf?
                            (consume! limits counters :leaf-subjects 1))
-                         ;; A leaf renders straight to its public object;
-                         ;; intermediates keep the typed descriptor.
-                         (conj acc
-                               (if leaf?
-                                 (render-internal! subject-type internal-id)
-                                 {:type subject-type
-                                  :internal-id internal-id
-                                  :identity
-                                  [:internal subject-type internal-id]
-                                  :public (render-internal!
-                                           subject-type internal-id)})))))}))))
+                         (when-not (edge/valid? scanned)
+                           (adapter-contract! :invalid-internal-identity))
+                         ;; A compact scan yields a bare eid for a plain row
+                         ;; and [eid qualifier-eid] for a qualified one.
+                         (let [internal-id (edge/endpoint scanned)
+                               public (render-internal! subject-type internal-id)
+                               qualifier-id (edge/qualifier-id scanned)
+                               annotation (when qualifier-id
+                                            (annotation! relation-id qualifier-id))]
+                           ;; A leaf renders straight to its public object;
+                           ;; intermediates keep the typed descriptor and the
+                           ;; annotation of the edge that reached them.
+                           (conj acc
+                                 (if leaf?
+                                   (merge public annotation)
+                                   (cond-> {:type subject-type
+                                            :internal-id internal-id
+                                            :identity
+                                            [:internal subject-type internal-id]
+                                            :public public}
+                                     (seq annotation) (assoc :via annotation))))))))}))))
              []
              relation-definitions)))
         root-type (:type resource)
@@ -472,9 +532,11 @@
                       (let [subjects (scan-relation! resource relations true)]
                         [work
                          (conj values
-                               {:expanded-object (:public resource)
-                                :expanded-relation name
-                                :leaf {:subjects subjects}})]))
+                               (merge
+                                {:expanded-object (:public resource)
+                                 :expanded-relation name
+                                 :leaf {:subjects subjects}}
+                                (:via frame)))]))
                     (do
                       (when (contains? active expansion-key)
                         (permission-tree-error!
@@ -491,7 +553,8 @@
                                   :node (:root operator-expression)
                                   :depth (inc depth)
                                   :root? true
-                                  :active next-active})
+                                  :active next-active
+                                  :via (:via frame)})
                            values]
                           (let [components
                                 (mapv
@@ -508,7 +571,8 @@
                               {:op :assemble
                                :resource resource
                                :name name
-                               :child-count (count components)}
+                               :child-count (count components)
+                               :via (:via frame)}
                               components)
                              values]))))))
 
@@ -566,11 +630,12 @@
                              (let [{:keys [target-kind target-name]}
                                    (get partitions (:type intermediate))]
                                {:op :expand
-                                :resource intermediate
+                                :resource (dissoc intermediate :via)
                                 :name target-name
                                 :expected target-kind
                                 :depth (inc depth)
-                                :active active}))
+                                :active active
+                                :via (:via intermediate)}))
                            intermediates)]
                       [(schedule
                         work
@@ -602,7 +667,8 @@
                          :resource resource
                          :name permission
                          :operation (:op node)
-                         :child-count (count children)}
+                         :child-count (count children)
+                         :via (:via frame)}
                         children)
                        values])
 
@@ -626,7 +692,8 @@
                          :resource resource
                          :name permission
                          :operation :exclusion
-                         :child-count 2}
+                         :child-count 2
+                         :via (:via frame)}
                         children)
                        values])
 
@@ -666,11 +733,12 @@
                           (mapv
                            (fn [intermediate]
                              {:op :expand
-                              :resource intermediate
+                              :resource (dissoc intermediate :via)
                               :name target-name
                               :expected target-kind
                               :depth (inc depth)
-                              :active active})
+                              :active active
+                              :via (:via intermediate)})
                            intermediates)]
                       [(schedule
                         work
@@ -688,24 +756,28 @@
                       (assemble-children values (:child-count frame))]
                   [work
                    (conj remaining
-                         {:expanded-object
-                          (get-in frame [:resource :public])
-                          :expanded-relation (:name frame)
-                          :intermediate
-                          {:operation :union
-                           :children (vec children)}})])
+                         (merge
+                          {:expanded-object
+                           (get-in frame [:resource :public])
+                           :expanded-relation (:name frame)
+                           :intermediate
+                           {:operation :union
+                            :children (vec children)}}
+                          (:via frame)))])
 
                 :assemble-expression
                 (let [[remaining children]
                       (assemble-children values (:child-count frame))]
                   [work
                    (conj remaining
-                         {:expanded-object
-                          (get-in frame [:resource :public])
-                          :expanded-relation (:name frame)
-                          :intermediate
-                          {:operation (:operation frame)
-                           :children (vec children)}})])
+                         (merge
+                          {:expanded-object
+                           (get-in frame [:resource :public])
+                           :expanded-relation (:name frame)
+                           :intermediate
+                           {:operation (:operation frame)
+                            :children (vec children)}}
+                          (:via frame)))])
 
                 (adapter-contract! :unknown-work-frame))]
           ;; The loop-top check! covers the recur boundary; a second check

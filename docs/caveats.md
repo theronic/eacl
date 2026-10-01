@@ -437,6 +437,13 @@ Filtering expired rows consumes the page's candidate budget. A page can be
 empty and still have a continuation cursor; follow `:page-info` rather than
 assuming that an empty page means there are no more rows.
 
+`expand-permission-tree` lists stored Relationships the same way. A leaf
+subject, or an arrow child node, reached through a qualified Relationship
+carries its `:caveat`, `:caveat-context` (omitted when empty) and
+`:valid-until-ms`. The tree never evaluates a Caveat or reads the clock, so it
+shows expired and conditional Relationships next to plain ones; use `can?` or
+`check-permission` for the decision.
+
 ## Decoded qualifier cache
 
 Leave the qualifier cache at its default unless you need to tune it. Set

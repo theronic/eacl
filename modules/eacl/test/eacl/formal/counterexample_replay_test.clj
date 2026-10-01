@@ -165,6 +165,8 @@
     eacl.secure-format-test/records-project-to-maps-and-colliding-members-are-rejected-test
     :EACL-FORMAL-080
     eacl.datascript.qualified-write-test/partial-relationship-walks-over-qualified-rows-are-total-and-terminate
+    :EACL-FORMAL-081
+    eacl.datascript.qualified-write-test/eacl-rs-005-expansions-list-expiring-and-caveated-relationships
     :EACL-FORMAL-090
     eacl.caveats.plan-test/member-literals-are-admitted-like-string-literals
     :EACL-FORMAL-091
