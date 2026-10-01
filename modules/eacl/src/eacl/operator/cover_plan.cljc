@@ -365,7 +365,12 @@
                 (contains? generated permission))
            (generator-definitions plan delegated permission)
 
-           (contains? delegated [resource-type permission-name])
+           ;; Only a real permission name can be delegated; a synthetic
+           ;; generator node of a permission that is not generated falls
+           ;; through to the typed error, never into a comparison of
+           ;; incomparable keys in the sorted delegated set.
+           (and (keyword? permission-name)
+                (contains? delegated [resource-type permission-name]))
            (base-definitions resource-type permission-name)
 
            :else

@@ -79,6 +79,7 @@
             [eacl.operator.recursive-test]
             [eacl.operator.delegated-recursion-test]
             [eacl.operator.delegation-refinement-test]
+            [eacl.operator.folded-operator-test]
             [eacl.engine.memoized-membership-refinement-test]
             [eacl.engine.leveled-membership-refinement-test]
             [eacl.engine.guarded-membership-refinement-test]
@@ -211,6 +212,7 @@
                'eacl.operator.recursive-test
                'eacl.operator.delegated-recursion-test
                'eacl.operator.delegation-refinement-test
+               'eacl.operator.folded-operator-test
                'eacl.engine.memoized-membership-refinement-test
                'eacl.engine.leveled-membership-refinement-test
                'eacl.engine.guarded-membership-refinement-test

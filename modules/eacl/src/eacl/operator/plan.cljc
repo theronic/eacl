@@ -78,6 +78,15 @@
 (defn- operator-free-dag? [dag]
   (not-any? #(contains? #{:intersection :exclusion} (first %)) (:nodes dag)))
 
+(defn ^:no-doc operator-permission?
+  "Whether a sealed expression carries an intersection or exclusion. The
+  semantic DAG folds an operator whose operands normalize to one node
+  (`viewer & viewer` is `viewer`), but the union engine seals the stored
+  expression and refuses it, so such a permission is an operator permission
+  too (`:folded-operator?`): it is never delegated to its own union plan."
+  [{:keys [dag folded-operator?]}]
+  (or (true? folded-operator?) (not (operator-free-dag? dag))))
+
 (defn- closure-analysis
   "The operator-reaching permissions of a plan's closure, its recursive
   components that contain them, and the permissions that reach no operator.
@@ -87,8 +96,8 @@
         edges (:edges certificate)
         operator-permissions
         (into #{}
-              (keep (fn [{:keys [permission dag]}]
-                      (when-not (operator-free-dag? dag) permission)))
+              (keep (fn [{:keys [permission] :as expression}]
+                      (when (operator-permission? expression) permission)))
               (:expressions plan))
         consumers (reduce (fn [index {:keys [from to]}]
                             (update index to (fnil conj []) from))
@@ -539,17 +548,22 @@
                base)))
          (range)
          (:nodes dag))]
-    {:permission permission
-     :expression-format expression/format-version
-     ;; Plan identity follows the canonical semantic DAG, not source grouping
-     ;; or commutative spelling. This is a runtime plan/cursor fingerprint, not
-     ;; a durable permission attribute or source of schema truth.
-     :expression-digest
-     (secure/canonical-tree-digest "eacl/operator-expression/v2" dag)
-     :dag dag
-     :metrics metrics
-     :root (:root dag)
-     :nodes nodes}))
+    (cond->
+     {:permission permission
+      :expression-format expression/format-version
+      ;; Plan identity follows the canonical semantic DAG, not source grouping
+      ;; or commutative spelling. This is a runtime plan/cursor fingerprint, not
+      ;; a durable permission attribute or source of schema truth.
+      :expression-digest
+      (secure/canonical-tree-digest "eacl/operator-expression/v2" dag)
+      :dag dag
+      :metrics metrics
+      :root (:root dag)
+      :nodes nodes}
+      ;; The stored expression has an operator the DAG folded away; the union
+      ;; engine still refuses it (`operator-permission?`).
+      (and (operator-node? (:root resolved)) (operator-free-dag? dag))
+      (assoc :folded-operator? true))))
 
 (defn- child-consumers [nodes]
   (reduce
@@ -869,12 +883,13 @@
          :root root
          :expressions
          (mapv (fn [[permission data]]
-                 {:permission permission
-                  :expression-format (:expression-format data)
-                  :expression-digest (:expression-digest data)
-                  :dag (:dag data)
-                  :metrics (:metrics data)
-                  :root (:root data)})
+                 (cond-> {:permission permission
+                          :expression-format (:expression-format data)
+                          :expression-digest (:expression-digest data)
+                          :dag (:dag data)
+                          :metrics (:metrics data)
+                          :root (:root data)}
+                   (:folded-operator? data) (assoc :folded-operator? true)))
                enriched)
          :dependency-certificate dependency-certificate
          :positive-components (:components dependency-certificate)

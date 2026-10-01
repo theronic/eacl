@@ -2544,6 +2544,36 @@ definition folder {
                                      (:expressions plan))))]
              (delegation-control-set :inherited))))))
 
+;;; Folded operators (EACL-FORMAL-098). `viewer & viewer` normalizes to
+;;; `viewer` in the semantic DAG, but the stored expression keeps the
+;;; intersection, which the union engine refuses. Classifying `manage` by its
+;;; DAG alone delegates both permissions of the cycle to their own union plans:
+;;; the check then denies the viewer and the lookup fails.
+
+(def ^:private folded-control-schema
+  "definition user {}
+definition project {
+  relation viewer: user
+  permission access = manage
+  permission manage = (viewer & viewer) + access
+}")
+
+(defn- folded-control-run []
+  (let [adapter (operator-probe-adapter folded-control-schema #{[:user 1 :viewer :project 10]})]
+    [(operator-typed-or #(engine/can? adapter {:type :user :id 1} :manage {:type :project :id 10}))
+     (operator-typed-or #(mapv :id (:data (engine/lookup-resources
+                                           adapter {:subject {:type :user :id 1} :permission :manage
+                                                    :resource/type :project :first 10}))))]))
+
+(defn operator-delegation-takes-folded-operator-for-union-only-killed?
+  []
+  (let [original operator-plan/operator-permission?]
+    (and (= [true [10]] (folded-control-run))
+         (not= [true [10]]
+               (with-redefs [operator-plan/operator-permission?
+                             (fn [expression] (original (dissoc expression :folded-operator?)))]
+                 (folded-control-run))))))
+
 (defn operator-delegated-generator-wrong-operand-killed?
   []
   (let [original operator-plan/delegated-generator
@@ -3080,7 +3110,9 @@ definition folder {
    :reuse-key-without-caveat-context reuse-key-without-caveat-context-killed?
    :reuse-incomplete-certificate-later reuse-incomplete-certificate-later-killed?
    :reused-certificate-unobserved reused-certificate-unobserved-killed?
-   :kleene-fault-dominates-absorber kleene-fault-dominates-absorber-killed?})
+   :kleene-fault-dominates-absorber kleene-fault-dominates-absorber-killed?
+   :operator-delegation-takes-folded-operator-for-union-only
+   operator-delegation-takes-folded-operator-for-union-only-killed?})
 
 (deftest every-portable-production-mutant-is-killed-test
   (doseq [[id detector] controls]

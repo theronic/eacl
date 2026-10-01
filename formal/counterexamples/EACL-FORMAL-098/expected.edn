@@ -1,0 +1,11 @@
+{:before {:minimized-lookup [:thrown "java.lang.ClassCastException"]
+          :count-and-lookup-subjects [:thrown "java.lang.ClassCastException"]
+          :granted-check :no-permission
+          :delegated-permissions #{[:project :access] [:project :manage]}}
+ :after {:minimized-lookup []
+         :granted-check :has-permission
+         :granted-lookup ["p"]
+         :granted-count 1
+         :delegated-permissions nil
+         :guarded-members #{[:project :access] [:project :manage]}}
+ :twin-equivalent true}

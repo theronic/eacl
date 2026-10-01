@@ -323,6 +323,37 @@
         (is (= sealed (plan/validate-plan adapter sealed)))
         (is (= (:fingerprint sealed) (:fingerprint (seal :removable))))))))
 
+(def ^:private folded-operator-schema
+  "`viewer & viewer` normalizes to `viewer` in the semantic DAG, so `manage`
+  looks union-only there; the stored expression still has the intersection,
+  which the union engine refuses (EACL-FORMAL-098)."
+  "definition user {}
+   definition project {
+     relation viewer: user
+     permission access = manage
+     permission manage = (viewer & viewer) + access
+   }")
+
+(deftest a-folded-operator-keeps-its-permission-an-operator-permission-test
+  (let [sealed (plan/seal-plan (adapter folded-operator-schema :folded) [:project :manage])
+        flags (into {} (map (juxt :permission :folded-operator?)) (:expressions sealed))]
+    (is (plan/operator-plan? sealed))
+    (testing "the stored operator is recorded where the DAG folded it"
+      (is (= {[:project :access] nil [:project :manage] true} flags))
+      (is (= [[:permission :access] [:relation :viewer [:user]] [:union [0 1]]]
+             (get-in (first (filter #(= [:project :manage] (:permission %)) (:expressions sealed)))
+                     [:dag :nodes]))))
+    (testing "so neither permission is handed to its own union plan"
+      (is (nil? (plan/delegated-permissions sealed)))
+      (is (= #{} (plan/union-only-permissions sealed)))
+      (is (= #{[:project :access] [:project :manage]}
+             (:members (plan/guarded-delegation sealed)))))
+    (testing "the flag rides inside the fingerprint, and only where it is needed"
+      (is (= sealed (plan/validate-plan (adapter folded-operator-schema :folded) sealed)))
+      (is (not-any? #(contains? % :folded-operator?)
+                    (:expressions (plan/seal-plan (adapter delegation-schema :delegation)
+                                                  [:folder :removable])))))))
+
 (deftest delegated-generator-follows-the-anchor-and-left-chain-test
   (let [adapter (adapter delegation-schema :delegation-generator)
         generator (fn [permission]

@@ -188,7 +188,9 @@
     :EACL-FORMAL-096
     eacl.spicedb.compatibility-corpus-test/continuation-lines-test
     :EACL-FORMAL-097
-    eacl.spicedb.compatibility-corpus-test/glued-keywords-test})
+    eacl.spicedb.compatibility-corpus-test/glued-keywords-test
+    :EACL-FORMAL-098
+    eacl.operator.folded-operator-test/a-folded-operator-answers-exactly-like-its-unfolded-twin-test})
 
 (defn- read-edn
   [path]

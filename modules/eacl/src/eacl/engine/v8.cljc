@@ -1016,6 +1016,10 @@
     ;; delegated operand's own union plan, or else by the flattened
     ;; generator over the union-only permissions' union plans.
     :recursive-generator :flattened-guarded-generator-v1
+    ;; A permission is delegated to its own union plan only when its stored
+    ;; expression has no operator, including one its semantic DAG folded
+    ;; away (`viewer & viewer`): EACL-FORMAL-098.
+    :delegation-classification :stored-operators-v1
     ;; Strong-Kleene faults: operand decisions, including reordered batched
     ;; membership, are independent of evaluation order.
     :qualified-membership :kleene-fault-operands-v3
