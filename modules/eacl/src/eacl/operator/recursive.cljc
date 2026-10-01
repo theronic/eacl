@@ -1464,7 +1464,10 @@
 (defn- point-cache-key
   [plan permission scope-identity candidate]
   [:operator-recursive-point checkpoint-version
-   (:fingerprint plan) permission scope-identity candidate])
+   (:fingerprint plan) permission scope-identity
+   (-> candidate
+       (update :subject-eid point-reuse/canonical-id)
+       (update :resource-eid point-reuse/canonical-id))])
 
 (defn evaluate-cached-many
   "Returns aligned recursive point decisions with proof-compatible completed

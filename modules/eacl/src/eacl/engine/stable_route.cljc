@@ -481,7 +481,8 @@
   [fingerprint scope subject-type subject-eid resource-eid exact-certificate?]
   (point-reuse/scoped-key
    (cond-> [:membership-point membership-point-version fingerprint
-            subject-type subject-eid resource-eid]
+            subject-type (point-reuse/canonical-id subject-eid)
+            (point-reuse/canonical-id resource-eid)]
      exact-certificate? (conj :exact-certificate))
    scope))
 

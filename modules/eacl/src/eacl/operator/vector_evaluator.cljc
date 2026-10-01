@@ -497,7 +497,9 @@
   [plan permission node-id scope-identity candidate]
   [:operator-acyclic-point 1
    (:fingerprint plan) permission node-id scope-identity
-   (semantic-candidate-key candidate)])
+   (-> (semantic-candidate-key candidate)
+       (update :subject-eid point-reuse/canonical-id)
+       (update :resource-eid point-reuse/canonical-id))])
 
 (defn check-cached-many-eids
   "Evaluates an aligned acyclic vector with proof-compatible completed point

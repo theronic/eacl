@@ -84,3 +84,17 @@
         (binding [subproblem/*populate?* false]
           (point-reuse/publish! nil [[[:plain 3] true]]))
         (is (= [::miss] (point-reuse/reuse! nil [[:plain 3]] ::miss)))))))
+
+(deftest point-keys-hold-one-representation-per-entity-id
+  ;; DataScript's JVM entity ids are boxed Integers while decoded cursor
+  ;; coordinates are Longs. The store compares keys with host equality, so
+  ;; without one representation a decision was kept twice and the exported
+  ;; snapshot failed to restore with duplicate keys.
+  (doseq [id [0 8 127 128 2147483647]]
+    (is (= id (point-reuse/canonical-id id)))
+    #?(:clj
+       (do (is (instance? Long (point-reuse/canonical-id (int id))))
+           (is (.equals ^Object (point-reuse/canonical-id (int id))
+                        (point-reuse/canonical-id (long id))))
+           (is (.equals ^Object [:point (point-reuse/canonical-id (int id))]
+                        [:point (point-reuse/canonical-id (long id))]))))))

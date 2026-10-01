@@ -477,6 +477,15 @@
           {:cases 0}
           (range first-seed (+ first-seed cases))))
 
+(deftest restored-cache-keeps-paged-recursive-decisions-test
+  ;; Seeds 162 and 276 first exposed one decision kept under two keys: a
+  ;; recursive operator cursor carries native entity ids, which decode as
+  ;; Longs, while DataScript's JVM ids are Integers. The exported snapshot
+  ;; then held Clojure-equal duplicate keys and could not be restored.
+  (doseq [seed [162 276]]
+    (let [result (run-case seed)]
+      (is (nil? (:failure result)) (pr-str (:failure result))))))
+
 (deftest wildcard-answers-follow-the-reference-through-every-operator-route-test
   (let [report (run-campaign 1 #?(:clj 40 :cljs 4))]
     (is (nil? (:failure report)) (pr-str (:failure report)))

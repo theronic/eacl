@@ -23,6 +23,16 @@
   [key scope]
   (if scope (conj key scope) key))
 
+(defn canonical-id
+  "The one host representation of a native entity id inside a point key. The
+   store compares keys with host equality, under which a JVM Integer never
+   equals the Long of the same id. DataScript returns Integer entity ids while
+   decoded cursor coordinates are Longs, so one decision could otherwise be
+   kept under two keys that an exported snapshot reports as duplicates."
+  [id]
+  #?(:clj (if (instance? Long id) id (Long/valueOf (long id)))
+     :cljs id))
+
 (defn certified-key?
   "True for the point key of a qualified decision, whose value records the
    interval its evidence certifies."
