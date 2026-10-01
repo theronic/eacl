@@ -6,7 +6,8 @@
   [["eacl.datomic." "eacl/datomic/core.clj"]
    ["eacl.bench." "eacl/datomic/core.clj"]
    ["eacl.datahike." "eacl/datahike/core.clj"]
-   ["eacl.datascript." "eacl/datascript/core.cljc"]])
+   ["eacl.datascript." "eacl/datascript/core.cljc"]
+   ["eacl.datalevin." "eacl/datalevin/core.cljc"]])
 
 (defn file
   "Resolves a repository-relative test artifact from either the repository root

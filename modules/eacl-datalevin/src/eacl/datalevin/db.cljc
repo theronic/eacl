@@ -240,13 +240,18 @@
 
 (defn qualified-relation-datoms
   "Complete qualified Relation stream in bounded native batches. Callers must
-   consume the stream inside the selected snapshot's ownership scope."
+   consume the stream inside the selected snapshot's ownership scope.
+
+   Each batch resumes at the previous batch's last row through
+   `resumed-ave-datoms`: a seek carrying that row's owner would also drop
+   every later row whose owner eid is smaller."
   [db attr prefix]
   (letfn [(step [boundary]
             (lazy-seq
-             (let [rows (ds/seek-datoms db :ave attr
-                                        (if boundary (:v boundary) (into prefix [0 nil]))
-                                        (:e boundary) 1025)
+             (let [rows (if boundary
+                          (resumed-ave-datoms db attr (:v boundary) (:e boundary)
+                                              :asc 1025 max-eid)
+                          (ds/seek-datoms db :ave attr (into prefix [0 nil]) nil 1025))
                    rows (if (and boundary (= [(:e boundary) (:v boundary)]
                                              [(:e (first rows)) (:v (first rows))]))
                           (rest rows) rows)

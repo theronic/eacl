@@ -1,0 +1,8 @@
+{:stream-probe {:rows 1100 :equals-unpaged-ave-index true}
+ :schema-replacement
+ {:write-schema :eacl.schema/relationship-qualifier-in-use
+  :relation-caveats [[:eacl.caveat/name "enabled"]]
+  :hidden-can? true}
+ :batch-boundaries-covered
+ [:inside-a-multi-owner-value :on-a-qualified-value
+  :on-a-plain-value-before-its-endpoints-qualified-row]}
