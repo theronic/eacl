@@ -5,6 +5,7 @@
             [eacl.engine.sealed-plan :as sealed-plan]
             [eacl.operator.cover-plan :as cover-plan]
             [eacl.operator.plan :as plan]
+            [eacl.schema.expression :as expression]
             [eacl.schema.expression-persistence :as persistence]
             [eacl.schema.expression-resolver :as resolver]))
 
@@ -404,6 +405,46 @@
       (is (= (:children (get program union-id))
              (plan/operand-order (dissoc sealed :operand-orders) [:folder :view] union-id
                                  (get program union-id)))))))
+
+(def ^:private self-operand-order-schema
+  "use self
+   definition user {}
+   definition folder {
+     relation parent: folder
+     relation viewer: user
+     relation banned: user
+     permission tree = viewer + parent->tree
+     permission view = (parent->tree + tree + self + viewer) - banned
+     permission strict = parent->tree & self
+   }")
+
+(deftest self-ranks-with-the-relation-leaves-in-the-static-cost-order-test
+  ;; `self` reads the definition's identity relation, so a union or an
+  ;; intersection decides it with the relation leaves, before every arrow and
+  ;; permission reference.
+  (let [sealed-for #(plan/seal-plan (adapter self-operand-order-schema :self-operand-order) [:folder %])
+        order-of (fn [permission instruction]
+                   (let [sealed (sealed-for permission)
+                         program (get-in sealed [:predicate-programs [:folder permission]])
+                         [node-id predicate]
+                         (some (fn [[id predicate]]
+                                 (when (= instruction (:instruction predicate)) [id predicate]))
+                               program)
+                         describe (fn [id]
+                                    (let [{:keys [instruction descriptor target-node]} (get program id)]
+                                      (case instruction
+                                        :direct-membership [:relation (:relation descriptor)]
+                                        :arrow-membership [:arrow (:relation descriptor)]
+                                        :permission-membership [:permission target-node]
+                                        [instruction])))]
+                     (mapv describe (plan/operand-order sealed [:folder permission] node-id predicate))))]
+    (testing "a union"
+      (let [order (order-of :view :any-true)]
+        (is (= #{[:relation expression/self-relation] [:relation :viewer]} (set (take 2 order))))
+        (is (= #{[:arrow :parent] [:permission [:folder :tree]]} (set (drop 2 order))))))
+    (testing "an intersection"
+      (is (= [[:relation expression/self-relation] [:arrow :parent]]
+             (order-of :strict :all-true))))))
 
 (deftest delegated-generator-follows-the-anchor-and-left-chain-test
   (let [adapter (adapter delegation-schema :delegation-generator)

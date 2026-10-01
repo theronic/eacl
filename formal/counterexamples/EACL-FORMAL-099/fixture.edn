@@ -1,0 +1,13 @@
+{:operation :check-and-lookup
+ :schema "use self\ndefinition user {}\ndefinition doc {\n relation viewer: user | doc\n permission view = viewer + self\n permission only = self\n}"
+ :objects ["a" "1" "2"]
+ :relationships [[:user "a" :viewer :doc "1"]]
+ :before {:accepted false :type :eacl.schema/unsupported-feature}
+ :spicedb-v1.56.0
+ {:checks [[:doc "1" :view :doc "1" true]
+           [:doc "1" :view :user "a" true]
+           [:doc "1" :view :doc "2" false]
+           [:doc "1" :only :user "1" false]]
+  :lookup-resources [[:doc :view :doc "2" ["2"]]]
+  :lookup-subjects [[:doc "1" :only :doc ["1"]]
+                    [:doc "1" :only :user ["1"]]]}}

@@ -3048,8 +3048,61 @@ definition folder {
                (with-redefs [qualification/observe-evidence! (fn [_ value] value)]
                  (observe))))))
 
+;;; ---------------------------------------------------------------------------
+;;; SpiceDB `use self`: the identity relation the adapter boundary serves
+
+(def ^:private self-identity-schema
+  "use self
+definition doc {
+  relation viewer: doc
+  permission view = viewer + self
+}")
+
+(defn- self-identity-walk
+  "doc:1's `view` resources, one per page, followed to the last page: doc:1
+  through `self` and doc:2 through `viewer`."
+  []
+  (operator-typed-or
+   (fn []
+     (let [adapter (operator-probe-adapter self-identity-schema
+                                           #{[:doc 1 :viewer :doc 2]})
+           query {:subject {:type :doc :id 1} :permission :view
+                  :resource/type :doc :first 1}]
+       (loop [page (engine/lookup-resources adapter query)
+              ids []
+              pages 1]
+         (let [ids (into ids (map :id) (:data page))]
+           (if (and (get-in page [:page-info :has-next-page?]) (< pages 4))
+             (recur (engine/lookup-resources
+                     adapter
+                     (assoc query :after (get-in page [:page-info :end-cursor])))
+                    ids
+                    (inc pages))
+             ids)))))))
+
+(defn self-identity-scan-ignores-bound-killed?
+  []
+  (let [original backend/identity-scan
+        executed (volatile! 0)]
+    (and (= #{1 2}
+            (let [ids (with-redefs [backend/identity-scan
+                                    (fn [anchor options]
+                                      (vswap! executed inc)
+                                      (original anchor options))]
+                        (self-identity-walk))]
+              (when (and (vector? ids) (apply distinct? ids)) (set ids))))
+         (pos? @executed)
+         ;; A scan that ignores its bound replays the anchor on every page
+         ;; after it: the walk repeats doc:1.
+         (not= [1 2]
+               (vec (sort (with-redefs [backend/identity-scan
+                                        (fn [anchor _] [anchor])]
+                            (let [ids (self-identity-walk)]
+                              (if (vector? ids) ids [ids])))))))))
+
 (def controls
   {:wrong-arrow-direction wrong-arrow-direction-killed?
+   :self-identity-scan-ignores-bound self-identity-scan-ignores-bound-killed?
    :uuid-type-coercion uuid-type-coercion-killed?
    :uuid-comparator-collision uuid-comparator-collision-killed?
    :uuid-dropped-high-half uuid-dropped-high-half-killed?

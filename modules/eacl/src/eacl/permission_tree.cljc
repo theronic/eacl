@@ -7,6 +7,7 @@
             [eacl.execution :as execution]
             [eacl.exact-integer :as exact-integer]
             [eacl.relationships.edge :as edge]
+            [eacl.schema.expression :as expression]
             [eacl.schema.expression-persistence :as expression-persistence]))
 
 (def default-limits
@@ -534,7 +535,11 @@
                          (conj values
                                (merge
                                 {:expanded-object (:public resource)
-                                 :expanded-relation name
+                                 ;; `self`'s identity relation is a `:self` leaf
+                                 ;; whose one subject is the resource itself.
+                                 :expanded-relation (if (= expression/self-relation name)
+                                                      :self
+                                                      name)
                                  :leaf {:subjects subjects}}
                                 (:via frame)))]))
                     (do
@@ -598,6 +603,16 @@
                             :resource resource
                             :name (:name node)
                             :expected :permission
+                            :depth depth
+                            :active active})
+                     values]
+
+                    :self
+                    [(conj work
+                           {:op :expand
+                            :resource resource
+                            :name expression/self-relation
+                            :expected :relation
                             :depth depth
                             :active active})
                      values]

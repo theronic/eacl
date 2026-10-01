@@ -1717,8 +1717,9 @@ Resource limits are outside this rule, and so is one deliberate difference
   characters (lowercase letters, digits and `_`), start with a letter and do
   not end with `_`. A keyword glued to a name (`relationviewer`) is one name.
 - Partials (`use partial`), type annotations (`use typechecking`),
-  `with expiration` (`use expiration`), `rel.any(target)` and `user#...` are
-  supported.
+  `with expiration` (`use expiration`), `self` (`use self`: `permission view =
+  viewer + self` grants the resource itself), `rel.any(target)` and `user#...`
+  are supported. Without `use self`, `self` is an ordinary name.
 
 ```zed
 use expiration
@@ -1786,6 +1787,33 @@ data, see [atomic writes](docs/atomic-writes.md), including the published
 release's limitation for new entities and tempids.
 
 ## Limitations, Deficiencies & Gotchas:
+
+### SpiceDB schema features EACL does not support
+
+EACL accepts a SpiceDB v1.56.0 schema or rejects it with
+`:eacl.schema/unsupported-feature` naming the feature. Of the 1,746 schemas
+SpiceDB accepts in EACL's compatibility corpus, EACL accepts 1,002 and names
+the other 744 unsupported ([SpiceDB schema compatibility](docs/spicedb-schema-compatibility.md)).
+Wildcard subjects (`user:*`) and CEL `exists`/`all` are supported in this
+release; `use self` is supported (`permission view = viewer + self`).
+
+| Feature | Example | EACL |
+| --- | --- | --- |
+| Subject relations (usersets) | `relation viewer: group#member` | unsupported; planned for v8.1 |
+| `nil` | `permission none = nil` | unsupported |
+| Intersection arrows | `permission view = parent.all(view)` | unsupported; `.any()` works as `->` |
+| CEL types | `caveat c(n uint) { n > 1u }` | unsupported: `uint`, `double`, `bytes`, `duration`, `ipaddress`, `any`, nested containers |
+| CEL arithmetic and unary minus | `caveat c(n int) { n + 1 > 2 }` | unsupported |
+| CEL list and map literals, `null` | `caveat c(s string) { s in ["a", "b"] }` | unsupported |
+| CEL ordering of strings and Booleans, equality of lists and maps | `caveat c(s string) { s < "m" }` | unsupported |
+| CEL indexing, functions and methods | `caveat c(xs list<int>) { xs[0] == 1 }` | unsupported |
+| CEL escapes and literals EACL does not read, integers beyond ±2^53, names and sizes beyond EACL's profile | `caveat c(n int) { n == 9007199254740993 }` | unsupported |
+| Namespaced types and caveat names | `definition docs/document {}`, `caveat org/check(...)` | unsupported |
+| Exclusion through recursion | `permission view = viewer - view` | unsupported |
+| Arrows to a target some subject type lacks, or to a relation on some types and a permission on others | `permission view = parent->view` where one of `parent`'s types has no `view` | unsupported |
+| A relation named `self` as an arrow's base (without `use self`) | `permission view = self->view` | unsupported |
+
+### Other limitations
 
 - Caveats use a bounded CEL subset. JVM clients need the optional
   `eacl-caveats-jvm` evaluator; ClojureScript clients need the optional
@@ -1884,10 +1912,12 @@ but it is not a byte-for-byte or operational clone:
 - Schemas follow SpiceDB's language and name rules exactly
   ([SpiceDB schema compatibility](docs/spicedb-schema-compatibility.md)).
   Apart from resource limits and the transitive-wildcard difference below,
-  EACL rejects a valid SpiceDB schema only with `:eacl.schema/unsupported-feature`:
-  subject relations, `nil`, `self`, `.all()`, prefixed names like
-  `org/user`, arrows whose target is missing on some subject type, recursion
-  through an exclusion, and caveats outside EACL's CEL profile. `with
+  EACL rejects a valid SpiceDB schema only with `:eacl.schema/unsupported-feature`
+  ([Limitations](#spicedb-schema-features-eacl-does-not-support)): subject
+  relations, `nil`, `.all()`, prefixed names like `org/user`, arrows whose
+  target is missing on some subject type, recursion through an exclusion, a
+  relation named `self` as an arrow's base, and caveats outside EACL's CEL
+  profile. `use self` is supported. `with
   expiration` is accepted but not enforced, because EACL permits expiring
   relationships on every relation. Object identifiers are arbitrary non-empty
   strings; a dataset that must also load into SpiceDB should follow SpiceDB's
@@ -1898,6 +1928,10 @@ but it is not a byte-for-byte or operational clone:
   on some. EACL deliberately keeps the check per definition and relation and
   rejects them with `:eacl.schema/expression-resolution-failed`
   ([details](docs/spicedb-schema-compatibility.md#deliberate-difference-transitive-wildcards)).
+- SpiceDB v1.56.0's LookupSubjects returns a `self` permission's resource id
+  under any requested subject type (`doc:1#view` lists `user:1`), which its
+  CheckPermission denies. EACL returns the self subject only when the subject
+  type is the resource type, as CheckPermission answers.
 - A relation name is accepted only in the `:permission` slot of
   `expand-permission-tree`; `can?`, `check-permission`, the lookups and the
   counts require a permission (SpiceDB accepts either).

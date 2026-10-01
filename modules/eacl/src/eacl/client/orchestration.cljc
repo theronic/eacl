@@ -52,6 +52,7 @@
             [eacl.caveats.evaluator :as caveat-evaluator]
             [eacl.schema.qualification-admission :as qualification-admission]
             [eacl.relationships.inspection :as inspection]
+            [eacl.schema.expression :as expression]
             [eacl.schema.expression-resolver :as expression-resolver]
             [eacl.consistency :as consistency-v3]
             [eacl.continuation :as continuation]
@@ -3192,7 +3193,16 @@
                  (context-db request-context)))]
           (execution/check! (:execution-contract opts)
                             :schema-read-complete)
-          schema)))))
+          ;; The identity Relation behind `self` is EACL's own, not part of
+          ;; the schema the caller wrote.
+          (cond-> schema
+            (sequential? (:relations schema))
+            (update :relations
+                    (fn [relations]
+                      (into []
+                            (remove #(= expression/self-relation
+                                        (:eacl.relation/relation-name %)))
+                            relations)))))))))
 
 (defn- make-basis
   [{:keys [adapter selected-snapshot semantic-identity selection

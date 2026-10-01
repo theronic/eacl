@@ -297,6 +297,15 @@
                   :target-type :permission
                   :target-name (:name node)}]
 
+                ;; `self` reads the definition's identity relation.
+                :self
+                [{:permission-id permission-id
+                  :resource-type resource-type
+                  :permission-name permission-name
+                  :source-relation-name :self
+                  :target-type :relation
+                  :target-name expression/self-relation}]
+
                 :arrow
                 (let [targets (set (map (juxt :target-kind :target-name)
                                         (:partitions node)))]

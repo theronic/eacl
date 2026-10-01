@@ -9,6 +9,14 @@
 (def format-version :eacl.permission-expression/v1)
 (def digest-domain "eacl/permission-expression/v1")
 
+(def self-relation
+  "The relation a `self` leaf (SpiceDB's `use self`) is evaluated through: one
+   EACL-owned Relation per definition that uses `self`, whose subject type is
+   that definition and whose tuples are the identity, served by the adapter
+   boundary (`eacl.backend.v8`), never stored. No SpiceDB name can collide
+   with it: SpiceDB names start with a letter."
+  :_self)
+
 ;; Hard codec ceilings are deliberately above the calibrated admission policy.
 ;; They exist so a value at an exact supported expression boundary remains
 ;; encodable while malformed direct codec use is still bounded.
@@ -57,7 +65,7 @@
   (when-not (and (keyword? value)
                  (nil? (namespace value))
                  (not-empty (name value))
-                 (not= :self value))
+                 (not= self-relation value))
     (invalid! :invalid-identifier {:context context :value value}))
   value)
 
@@ -114,6 +122,11 @@
    (arrow relation-name partitions false))
   ([relation-name partitions grouped?]
    (simple-keyword! relation-name :arrow-relation)
+   ;; Union plans name a same-resource reference by the source relation
+   ;; `:self` (the adapter contract's permission-definition rows), so a
+   ;; relation named `self` cannot be an arrow's base.
+   (when (= :self relation-name)
+     (invalid! :reserved-arrow-relation {:value relation-name}))
    (grouped! grouped?)
    (when-not (and (sequential? partitions) (seq partitions))
      (invalid! :invalid-arrow-partitions {:value partitions}))
@@ -129,6 +142,15 @@
       :relation relation-name
       :partitions canonical
       :grouped? grouped?})))
+
+(defn self-leaf
+  "SpiceDB's `self` (`use self`): grants exactly the resource object itself
+   as a subject of its own type."
+  ([]
+   (self-leaf false))
+  ([grouped?]
+   (grouped! grouped?)
+   {:op :self :grouped? grouped?}))
 
 (defn- nary
   [op children grouped?]
@@ -205,6 +227,11 @@
     (do
       (exact-map! node #{:op :left :right :grouped?} :exclusion)
       (exclusion (:left node) (:right node) (:grouped? node)))
+
+    :self
+    (do
+      (exact-map! node #{:op :grouped?} :self)
+      (self-leaf (:grouped? node)))
 
     (invalid! :unknown-node-tag {:tag (:op node)})))
 

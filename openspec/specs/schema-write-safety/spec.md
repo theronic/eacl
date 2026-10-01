@@ -41,6 +41,21 @@ Schema admission SHALL accept every schema SpiceDB v1.56.0's WriteSchema accepts
 - **WHEN** `team#member` allows only `user`, `group#member` allows `user:*`, and a later definition declares `relation ggg: group#member` after another declares `relation ttt: team#member`
 - **THEN** schema admission throws `:eacl.schema/expression-resolution-failed` with a `:transitive-wildcard` issue, although SpiceDB v1.56.0 accepts the schema
 
+### Requirement: `use self` grants the resource itself
+With `use self`, a `self` leaf in a permission of definition `T` SHALL grant exactly the resource object as a subject of type `T`, through checks, batches, lookups, counts, expansion and authorized relationship reads, and SHALL never be conditional. EACL SHALL evaluate it through the definition's identity relation `:_self`, which no public request can name and `read-schema` omits. Without `use self`, `self` SHALL be an ordinary name, except as an arrow's base.
+
+#### Scenario: Self grants only the resource itself
+- **WHEN** `doc` declares `permission view = viewer + self` under `use self`
+- **THEN** `doc:1#view@doc:1` holds, and `doc:1#view@doc:2` and `doc:1#view@user:1` do not
+
+#### Scenario: Lookup subjects of another type
+- **WHEN** lookup-subjects asks `doc:1#view` for subjects of type `user`
+- **THEN** `doc:1` is not among them, as SpiceDB v1.56.0's CheckPermission answers (its LookupSubjects lists `user:1`)
+
+#### Scenario: Self as an ordinary name
+- **WHEN** a schema without `use self` declares `relation self: user` and `permission view = self`
+- **THEN** the schema is accepted and `view` reads the relation `self`
+
 ### Requirement: Schema comments are supported
 The parser SHALL accept `//` line comments and `/* */` block comments anywhere whitespace is legal, matching the SpiceDB DSL.
 

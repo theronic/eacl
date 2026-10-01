@@ -53,6 +53,7 @@
             [eacl.datascript.qualified-cursor-test]
             [eacl.datascript.qualified-cache-trace-test]
             [eacl.datascript.qualified-write-test]
+            [eacl.datascript.self-test]
             [eacl.caveats.schema-admission-test]
             [eacl.schema.relation-allowance-test]
             [eacl.datascript.qualified-schema-test]
@@ -187,6 +188,7 @@
                'eacl.datascript.qualified-cursor-test
                'eacl.datascript.qualified-cache-trace-test
                'eacl.datascript.qualified-write-test
+               'eacl.datascript.self-test
                'eacl.caveats.schema-admission-test
                'eacl.schema.relation-allowance-test
                'eacl.datascript.qualified-schema-test

@@ -9,6 +9,7 @@
             [eacl.backend.entity-id :as entity-id]
             [eacl.relationships.edge :as edge]
             [eacl.request.counters :as request-counters]
+            [eacl.schema.expression :as expression]
             [eacl.spicedb.consistency :as consistency]))
 
 (def adapter-version 8)
@@ -379,6 +380,90 @@
           :profile profile})))
     profile))
 
+(defn ^:no-doc identity-scan
+  "The identity relation's ordered scan from `anchor`: the anchor itself when
+  it lies inside the requested bound, and nothing else."
+  [anchor {:keys [direction bound-eid inclusive-bound? limit]}]
+  (if (and (or (nil? limit) (pos? limit))
+           (or (nil? bound-eid)
+               (if (= :desc direction)
+                 ((if inclusive-bound? >= >) bound-eid anchor)
+                 ((if inclusive-bound? <= <) bound-eid anchor))))
+    [anchor]
+    []))
+
+(defn- with-self-identity
+  "Serves the identity Relation behind SpiceDB's `self`
+  (`expression/self-relation`) at the adapter boundary: a resource relates to
+  itself, as a subject of its own type, and to nothing else. Nothing is
+  stored for it, and its edges carry no qualifier, so every engine route,
+  cursor and cache reads it as an ordinary definite relation. Its relation
+  ids come from the snapshot's own `:relation-defs`, read once per resource
+  type and only for a same-type read."
+  [operations]
+  (let [relation-defs (:relation-defs operations)
+        known (atom {})
+        identity?
+        (fn [subject-type resource-type relation-eid]
+          (and (= subject-type resource-type)
+               (contains?
+                (if-some [ids (get @known resource-type)]
+                  ids
+                  (let [ids (into #{}
+                                  (keep :relation-id)
+                                  (relation-defs resource-type
+                                                 expression/self-relation))]
+                    (swap! known assoc resource-type ids)
+                    ids))
+                relation-eid)))
+        scan-forward (:subject->resources operations)
+        scan-reverse (:resource->subjects operations)
+        match? (:direct-match? operations)]
+    (cond->
+     (assoc operations
+            :subject->resources
+            (fn [subject-type subject-eid relation-eid resource-type options]
+              (if (identity? subject-type resource-type relation-eid)
+                (identity-scan subject-eid options)
+                (scan-forward subject-type subject-eid relation-eid
+                              resource-type options)))
+            :resource->subjects
+            (fn [resource-type resource-eid relation-eid subject-type options]
+              (if (identity? subject-type resource-type relation-eid)
+                (identity-scan resource-eid options)
+                (scan-reverse resource-type resource-eid relation-eid
+                              subject-type options)))
+            :direct-match?
+            (fn [subject-type subject-eid relation-eid resource-type resource-eid]
+              (if (identity? subject-type resource-type relation-eid)
+                (= subject-eid resource-eid)
+                (match? subject-type subject-eid relation-eid
+                        resource-type resource-eid))))
+
+      (fn? (:direct-edge operations))
+      (update :direct-edge
+              (fn [direct-edge]
+                (fn [subject-type subject-eid relation-eid resource-type resource-eid]
+                  (if (identity? subject-type resource-type relation-eid)
+                    (when (= subject-eid resource-eid) resource-eid)
+                    (direct-edge subject-type subject-eid relation-eid
+                                 resource-type resource-eid)))))
+
+      (fn? (:direct-match-many? operations))
+      (update :direct-match-many?
+              (fn [match-many?]
+                (fn [{:keys [direction descriptor candidates] :as request}]
+                  (let [{:keys [subject-type resource-type relation-eid]} descriptor]
+                    (if (identity? subject-type resource-type relation-eid)
+                      (let [anchor (if (= :forward direction)
+                                     (:subject-eid descriptor)
+                                     (:resource-eid descriptor))]
+                        (mapv (fn [[candidate-type eid]]
+                                (and (= resource-type candidate-type)
+                                     (= anchor eid)))
+                              candidates))
+                      (match-many? request)))))))))
+
 (defn make-adapter
   [{:keys [id capabilities operations state fingerprint deterministic?
            identity-contract runtime-guards? traversal-execution
@@ -448,11 +533,12 @@
         (when-let [read-generation (:schema-generation operations)]
           (delay (read-generation)))
         operations
-        (assoc operations
-               :schema-generation
-               (if schema-generation
-                 (fn [] @schema-generation)
-                 (constantly nil)))]
+        (-> operations
+            (assoc :schema-generation
+                   (if schema-generation
+                     (fn [] @schema-generation)
+                     (constantly nil)))
+            with-self-identity)]
     (when (and (contains? (:cache-proofs normalized) :ordered-generations)
                (not (fn? (:proof-frame operations))))
       (invalid-adapter!

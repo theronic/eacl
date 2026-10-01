@@ -190,7 +190,9 @@
     :EACL-FORMAL-097
     eacl.spicedb.compatibility-corpus-test/glued-keywords-test
     :EACL-FORMAL-098
-    eacl.operator.folded-operator-test/a-folded-operator-answers-exactly-like-its-unfolded-twin-test})
+    eacl.operator.folded-operator-test/a-folded-operator-answers-exactly-like-its-unfolded-twin-test
+    :EACL-FORMAL-099
+    eacl.datomic.self-counterexample-test/self-counterexample-replays-on-datomic-test})
 
 (defn- read-edn
   [path]

@@ -115,6 +115,7 @@ starts no test JVM and only evaluates a supplied form in an existing server.
 | `NativeGenerationCoherence.dfy` | forward native-generation frame, empty dependencies, stale endpoint exclusion, component cleanup/stamping, and lifecycle isolation |
 | `ScalarFrontierCoherence.dfy` | globally ordered native generations, full canonical dependency-generation identity, derived scalar-frontier soundness, complete proof frames, demand identity, and completed-only publication, and the singleton dependency frontier (one relation's generation) that scopes the shared scan-response cache |
 | `SchemaPlanCost.dfy` | one recursive-plan compilation per permission root/schema generation and bounded page-sensitive stream batches |
+| `SelfIdentity.dfy` | SpiceDB's `self` leaf is the typed identity relation, each identity scan the adapter boundary answers is the bounded, limited scan of that relation, and the leaf is never unknown |
 | `TemporalSafety.dfy` | unbounded cache/cursor transition predicates |
 | `WireFormat.dfy` | strict abstract boundary variants and bounds |
 | `PermissionTree.dfy` | typed shallow expansion topology, denotation, active-path cycles, structural budgets, and all-or-error outcomes |

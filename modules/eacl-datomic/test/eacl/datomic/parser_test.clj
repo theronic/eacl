@@ -3,6 +3,8 @@
   ;; pattern #".*-test$" did not match the underscore name, so these tests were
   ;; silently excluded from `clj -X:test` runs.
   (:require [clojure.test :as t :refer [deftest testing is]]
+            [eacl.schema.expression :as expression]
+            [eacl.schema.expression-resolver :as expression-resolver]
             [eacl.spicedb.parser :as parser]
             [eacl.datomic.impl :as impl]))
 
@@ -182,14 +184,16 @@
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unsupported keyword: 'nil'"
             (parser/->eacl-schema (parser/parse-schema schema))))))
 
-  (testing "self keyword is rejected during validation"
+  (testing "the self keyword is admitted; flat v7 storage cannot hold it"
     ;; `self` is a keyword only after `use self`; before it, it is a name.
     (let [schema "use self
                   definition user {
                     permission view = self
                   }"]
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unsupported keyword: 'self'"
-            (parser/->eacl-schema (parser/parse-schema schema))))))
+      (is (= [(expression/self-leaf)]
+             (mapv :root (:expressions (expression-resolver/validate-schema schema)))))
+      (is (= :eacl.schema/operator-storage-disabled
+             (ex-type #(parser/->eacl-schema (parser/parse-schema schema)))))))
 
   (testing ".all() arrow function is rejected during validation"
     (let [schema "definition user {}
@@ -403,12 +407,9 @@
             (str "keyword '" reserved "' should not parse as a permission name"))))
 
     (testing "`any`, `all` and, without `use self`, `self` are names in SpiceDB"
-      (doseq [permission-name ["any" "all"]]
+      (doseq [permission-name ["any" "all" "self"]]
         (is (= #{(impl/Permission :doc (keyword permission-name) {:relation :owner})}
                (set (:permissions (parser/->eacl-schema (parser/parse-schema (schema permission-name))))))))
-      (is (= :eacl.schema/unsupported-feature
-             (ex-type #(parser/->eacl-schema (parser/parse-schema (schema "self")))))
-          "EACL reserves the name `self`")
       (is (parse-error? (str "use self\n" (schema "self")))
           "`use self` makes `self` a keyword"))))
 

@@ -820,6 +820,14 @@
 
                 :permission nil
 
+                :self
+                (add! sign
+                      (map :relation-id
+                           (:partitions
+                            (relation-descriptor adapter relation-cache
+                                                 (first permission)
+                                                 expression/self-relation))))
+
                 :arrow
                 (let [descriptor
                       (arrow-descriptor adapter relation-cache

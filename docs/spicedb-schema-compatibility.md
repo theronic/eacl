@@ -38,13 +38,14 @@ exactly as SpiceDB's `ReadSchema` prints it.
 | `use typechecking` and `permission p: user \| org = ...` | Supported: annotations are checked as SpiceDB checks them, then discarded |
 | `rel.any(target)` | Supported (same as `rel->target`) |
 | `rel.all(target)` | `:eacl.schema/unsupported-feature` |
-| `nil`, `use self` with `self` | `:eacl.schema/unsupported-feature` |
+| `use self` with `self` | Supported: `self` grants the resource itself ([below](#self)) |
+| `nil` | `:eacl.schema/unsupported-feature` |
 | Wildcards `user:*`, `user:* with cav` | Supported ([wildcard subjects](../README.md#wildcard-subjects)) |
 | Subject relations `group#member` | `:eacl.schema/unsupported-feature`; `user#...` is the plain type `user` |
 | Prefixed names `org/user` | `:eacl.schema/unsupported-feature` (definitions and subject types; EACL types are simple keywords) |
 | An arrow whose target some subject type lacks, or is a relation on some types and a permission on others | `:eacl.schema/unsupported-feature` |
 | Recursion through an exclusion (`p = viewer - p`) | `:eacl.schema/unsupported-feature` |
-| A definition, relation or permission named `self` | `:eacl.schema/unsupported-feature` (reserved by EACL's storage) |
+| A relation named `self` as an arrow's base (`self->x`, without `use self`) | `:eacl.schema/unsupported-feature`: EACL's union plans name a same-resource reference with the source relation `self`. Every other use of the name `self` is supported. |
 | Caveats | Supported within EACL's CEL profile ([docs/caveats.md](caveats.md)). Other valid caveats are `:eacl.schema/unsupported-feature`: names with a `/` prefix, non-ASCII, longer than 64 bytes or reserved by the profile; parameter types `any`, `uint`, `double`, `bytes`, `duration`, `ipaddress`, nested containers, or type arguments on a basic type (`int<string>`); more than 32 parameters; and expressions outside the profile or its bounds (an issue with `:profile-reason :resource-limit` and the `:offset` in the expression). |
 | Caveated relations without qualified admission (`{:allow-caveats? false}`) | `:eacl.schema/unsupported-feature` (unchanged) |
 
@@ -240,6 +241,33 @@ comment to CEL, which rejects it). Comments and whitespace outside that span
 are dropped; `//` comments inside it are valid CEL and `/* */` comments are
 not. EACL stores exactly this text as the caveat's expression source.
 
+## `self`
+
+With `use self`, `self` in a permission of definition `T` grants exactly the
+resource object itself, as a subject of type `T`: `doc:1#view@doc:1` holds for
+`permission view = viewer + self`, `doc:1#view@doc:2` does not, and
+`doc:1#view@user:1` does not, although EACL's situated objects let `user:1` and
+`doc:1` be one entity. It composes with `+`, `&`, `-` and arrows
+(`parent->myself`, where `myself = self`, reaches the parent object itself),
+lookups and counts include the
+resource itself, and `expand-permission-tree` shows a leaf with
+`:expanded-relation :self` whose one subject is the resource. `self` is never
+conditional and never faults. These answers were checked against SpiceDB
+v1.56.0's CheckPermission, LookupResources, LookupSubjects and
+ExpandPermissionTree (`eacl.datascript.self-test`).
+
+EACL evaluates `self` through the definition's identity relation `:_self`
+(subject type `T`): schema writes keep one such Relation per definition that
+uses `self`, no tuple is ever stored for it, and the adapter boundary
+(`eacl.backend.v8`) answers its scans and membership probes as the identity.
+It is not part of `read-schema`, and no public request can name it.
+
+One difference is deliberate: SpiceDB's LookupSubjects returns the resource's
+id under any requested subject type (`doc:1#view` with subject type `user`
+lists `user:1`), which its CheckPermission denies. EACL returns the self
+subject only when the subject type is the resource type, as CheckPermission
+answers.
+
 ## The corpus
 
 The corpus has 4,359 schemas, 1,746 accepted and 2,613 rejected by SpiceDB:
@@ -254,7 +282,9 @@ expressions, and random token sequences. Each schema was
 written twice, each time to a fresh tenant (`serve-testing` keys data by
 bearer token), and a schema whose verdict differed between writes is not in
 the corpus. Every entry records SpiceDB's verdict, the first line of its error
-message for a rejection, and its `ReadSchema` text for an acceptance.
+message for a rejection, and its `ReadSchema` text for an acceptance. Of the
+1,746 schemas SpiceDB accepts, EACL accepts 1,002 and reports the other 744
+as `:eacl.schema/unsupported-feature`.
 
 The generator lives in the eacl-rust repository under `tools/spicedb-corpus`
 (Python 3, standard library only). With the SpiceDB container listening on

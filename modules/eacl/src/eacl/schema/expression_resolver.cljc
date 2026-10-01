@@ -9,6 +9,7 @@
             [eacl.schema.expression-graph :as expression-graph]
             [eacl.schema.expression-limits :as expression-limits]
             [eacl.schema.expression-policy :as expression-policy]
+            [eacl.schema.model :as model]
             [eacl.spicedb.parser :as parser]))
 
 (defn- catalog
@@ -213,6 +214,9 @@
     :arrow
     (resolve-arrow catalog resource-type permission-name path node issues)
 
+    :self
+    (expression/self-leaf (boolean (:grouped? node)))
+
     :union
     (let [children (resolve-children catalog resource-type permission-name
                                      path (:children node) issues)]
@@ -317,6 +321,28 @@
        :aggregate-metrics
        (expression-limits/check-aggregate! metadata limits)}))))
 
+(defn- uses-self?
+  [root]
+  (loop [pending [root]]
+    (if-let [node (peek pending)]
+      (case (:op node)
+        :self true
+        (:union :intersection) (recur (into (pop pending) (:children node)))
+        :exclusion (recur (conj (pop pending) (:left node) (:right node)))
+        (recur (pop pending)))
+      false)))
+
+(defn- self-relations
+  "The identity Relation (`expression/self-relation`) of every definition
+   whose permissions use `self`, sorted by definition."
+  [expressions]
+  (->> expressions
+       (filter (comp uses-self? :root))
+       (map :resource-type)
+       distinct
+       (sort-by str)
+       (mapv #(model/Relation % expression/self-relation %))))
+
 (defn resolve-parse-tree
   "Validates parser-level restrictions and resolves every expression in one
    parsed candidate schema without invoking flat permission storage."
@@ -356,7 +382,7 @@
      (cond-> {:definitions (mapv (comp keyword key)
                                  (sort-by key (:definitions transformed)))
               :expressions expressions
-              :relations relations
+              :relations (into relations (self-relations expressions))
               :expression-metadata metadata
               :aggregate-expression-metrics aggregate-metrics
               :dependency-certificate dependency-certificate}

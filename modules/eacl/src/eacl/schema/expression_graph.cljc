@@ -40,7 +40,7 @@
 (defn- node-dependencies
   [from sign path node]
   (case (:op node)
-    :relation
+    (:relation :self)
     []
 
     :permission

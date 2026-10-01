@@ -80,6 +80,7 @@
                                        (:children node)))})]
     (case (:op node)
       :identifier {:op :computed :name (:name node)}
+      :self {:op :self}
       :arrow {:op :arrow :tupleset (:base node) :target (:target node)
               :function (when (= :any (:syntax node)) "any")}
       :union (flat :union)

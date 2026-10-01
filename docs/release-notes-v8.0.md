@@ -986,6 +986,19 @@ permissions. Beyond either bound the schema fails with
 `:typechecking`; unused partials are never expanded. See
 [resource limits](spicedb-schema-compatibility.md#resource-limits).
 
+`use self` is supported. `permission view = viewer + self` grants the resource
+object itself as a subject of its own type, through every route (checks,
+batches, lookups, counts, `expand-permission-tree`, authorized
+`read-relationships`) and every cache; `self` is never conditional. It is
+evaluated through an EACL-owned identity Relation (`:_self`) per definition
+that uses it: the adapter boundary serves its tuples, nothing is stored for it,
+and `read-schema` omits it. Without `use self`, `self` is an ordinary name
+again (except as an arrow's base). Upgrade every serving Peer before writing a
+schema that uses `self`: an older Peer cannot decode its expression and fails
+closed. SpiceDB's LookupSubjects lists a `self` resource under any requested
+subject type; EACL lists it only under its own type, as CheckPermission
+answers ([`self`](spicedb-schema-compatibility.md#self)).
+
 One difference is deliberate. SpiceDB v1.56.0 caches its transitive-wildcard
 check by relation name across definitions, so it accepts some schemas whose
 subject relation reaches a wildcard, on every write or only on some. EACL keeps

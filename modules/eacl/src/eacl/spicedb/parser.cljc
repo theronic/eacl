@@ -384,6 +384,16 @@
 ;; Parsing accepts full SpiceDB syntax; validation enforces EACL limits.
 ;; ============================================================================
 
+(declare extract-base-expr-identifier)
+
+(def ^:private reserved-arrow-base-issue
+  {:type :reserved-name
+   :kind :arrow-base
+   :name "self"
+   :message (str "Unsupported feature: a relation named 'self' as an arrow's base (self->x)."
+                 " EACL's union plans name a same-resource reference with the source relation"
+                 " 'self'. Rename the relation.")})
+
 (defn- collect-parse-tree-issues
   "Walks parse tree and collects all EACL compatibility issues.
    Returns a vector of issue maps with informative error messages."
@@ -404,12 +414,17 @@
                         (some #(and (vector? (second %)) (= :paren-expr (first (second %)))) base-exprs))
                (swap! issues conj
                       {:type    :paren-arrow
-                       :message "Unsupported feature: Parenthesized expressions as arrow bases or targets (e.g., (a + b)->c). Arrows take a single relation base."})))
+                       :message "Unsupported feature: Parenthesized expressions as arrow bases or targets (e.g., (a + b)->c). Arrows take a single relation base."}))
+             (when (and (= 2 (count base-exprs))
+                        (= "self" (extract-base-expr-identifier (first base-exprs))))
+               (swap! issues conj reserved-arrow-base-issue)))
 
             ;; Check for .all() function (only .any() is implicitly supported via arrow)
            :arrow-func-expr
            (let [func-name-node (some #(when (and (vector? %) (= :arrow-func-name (first %))) %) (rest node))
                  func-name      (second func-name-node)]
+             (when (= "self" (extract-identifier (second node)))
+               (swap! issues conj reserved-arrow-base-issue))
              (when (= func-name "all")
                (swap! issues conj
                       {:type     :unsupported-arrow-function
@@ -422,13 +437,6 @@
                   {:type    :unsupported-keyword
                    :keyword "nil"
                    :message "Unsupported keyword: 'nil'. EACL does not support nil permissions."})
-
-            ;; Check for self expression (might be supportable in future)
-           :self-expr
-           (swap! issues conj
-                  {:type    :unsupported-keyword
-                   :keyword "self"
-                   :message "Unsupported keyword: 'self'. EACL does not support self-referencing permissions."})
 
             ;; Check for type paths with namespaces
            :type-path
@@ -482,26 +490,6 @@
                                     res-type "/" rel-name ". EACL does not support conditional access via caveats.")})))
     @issues))
 
-(def ^:private reserved-names
-  "Names EACL's storage reserves. SpiceDB reads `self` as a name unless
-   `use self` is declared."
-  #{"self"})
-
-(defn- collect-name-issues
-  [definitions]
-  (vec
-   (for [[res-type {:keys [relations permissions]}] (sort-by key definitions)
-         [kind declared] (concat [[:definition res-type]]
-                                 (map #(vector :relation %) (sort (keys relations)))
-                                 (map #(vector :permission (:name %)) permissions))
-         :when (contains? reserved-names declared)]
-     {:type :reserved-name
-      :kind kind
-      :name declared
-      :resource-type res-type
-      :message (str "Unsupported feature: EACL reserves the name '" declared "' ("
-                    (name kind) " on definition '" res-type "'). Rename it.")})))
-
 (defn validate-eacl-restrictions
   "Validates that a parsed SpiceDB schema conforms to EACL restrictions.
    Takes a parse tree and throws ex-info if any unsupported features are found.
@@ -511,13 +499,12 @@
    - Only single-level arrows (no a->b->c)
    - No .all() arrow function (only implicit .any() via arrow)
    - No nil keyword
-   - No self keyword
    - No namespaced type paths (docs/document)
    - Wildcards (user:*) require explicit wildcard admission
      (`:allow-wildcards? true`, the expression-storage path)
    - No subject relations (group#member)
    - Caveated branches require explicit qualified schema admission
-   - No definition, relation or permission named `self`
+   - No relation named `self` as an arrow's base (`self->x`, without `use self`)
 
    Partials are expanded and unused partials ignored: the restrictions read
    the tree `transform-schema` validated (`:parse-tree`) when present.
@@ -530,8 +517,7 @@
          relation-issues (collect-relation-issues (:definitions transformed-schema)
                                                   (true? allow-caveats?)
                                                   (true? allow-wildcards?))
-         name-issues     (collect-name-issues (:definitions transformed-schema))
-         all-issues      (vec (concat parse-issues relation-issues name-issues))]
+         all-issues      (vec (concat parse-issues relation-issues))]
      (when (seq all-issues)
        (let [first-msg (:message (first all-issues))
              total     (count all-issues)
@@ -584,10 +570,7 @@
                        :node node}))
 
       :self-expr
-      (throw (ex-info "Unsupported keyword: 'self'."
-                      {:type :eacl.schema/unsupported-feature
-                       :eacl/error :eacl.schema/unsupported-feature
-                       :node node}))
+      {:op :self}
 
       (throw (ex-info "Malformed permission base expression."
                       {:type :eacl.schema/malformed-permission-expression

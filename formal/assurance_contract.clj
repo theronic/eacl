@@ -143,6 +143,10 @@
    {:source "formal/dafny/RoutingCertificate.dfy"
     :claim :conditional-exact-path-derivation-and-linear-logical-checker-work
     :minimum-proof-efforts 52}
+   :self-identity-relation
+   {:source "formal/dafny/SelfIdentity.dfy"
+    :claim :self-leaf-is-the-typed-identity-relation-served-by-bounded-scans
+    :minimum-proof-efforts 9}
    :semantic-foundation
    {:source "formal/dafny/Semantics.dfy"
     :minimum-proof-efforts 21}
@@ -348,13 +352,15 @@
      :reverse-least-fixed-point-completeness
      :completed-boolean-render-read-determinism
      :limit-fails-closed
-     :one-recursive-plan-compilation-per-root-generation]
+     :one-recursive-plan-compilation-per-root-generation
+     :self-leaf-is-the-typed-identity-relation]
     :dafny
     ["formal/dafny/AcyclicEngine.dfy"
      "formal/dafny/RecursiveEngine.dfy"
      "formal/dafny/RoutingCertificate.dfy"
      "formal/dafny/SchemaPlanCost.dfy"
-     "formal/dafny/Semantics.dfy"]
+     "formal/dafny/Semantics.dfy"
+     "formal/dafny/SelfIdentity.dfy"]
     :adapter-obligations
     [:immutable-snapshot
      :identity-round-trip
@@ -395,14 +401,16 @@
      :relationship-keyset-page-decision-exact
      :limit-fails-closed
      :bounded-page-stream-prefetch
-     :one-recursive-plan-compilation-per-root-generation]
+     :one-recursive-plan-compilation-per-root-generation
+     :self-identity-scan-is-the-bounded-identity-relation-scan]
     :dafny
     ["formal/dafny/AcyclicEngine.dfy"
      "formal/dafny/OrderedMerge.dfy"
      "formal/dafny/PageWindow.dfy"
      "formal/dafny/RecursiveEngine.dfy"
      "formal/dafny/RoutingCertificate.dfy"
-     "formal/dafny/SchemaPlanCost.dfy"]
+     "formal/dafny/SchemaPlanCost.dfy"
+     "formal/dafny/SelfIdentity.dfy"]
     :adapter-obligations
     [:immutable-snapshot
      :identity-round-trip

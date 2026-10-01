@@ -1,6 +1,7 @@
 (ns eacl.schema.errors
   "Portable structured failures for public requests that name schema entries
-  absent from the request's selected immutable snapshot.")
+  absent from the request's selected immutable snapshot."
+  (:require [eacl.schema.expression :as expression]))
 
 (def ^:private catalog-key ::catalog)
 
@@ -42,7 +43,12 @@
   [{:keys [relations permissions] :as schema}]
   (or
    (get schema catalog-key)
-   (let [relations (or relations [])
+   (let [;; The identity Relation behind `self` is EACL's own: no public
+         ;; request writes, filters on, or expands it.
+         relations (into []
+                         (remove #(= expression/self-relation
+                                     (:eacl.relation/relation-name %)))
+                         (or relations []))
          permissions (or permissions [])]
      {:definitions
       (into
