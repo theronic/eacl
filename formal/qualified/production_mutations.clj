@@ -72,7 +72,10 @@
             [eacl.operator.seekable-evidence-test :as seekable-test]
             [eacl.operator.recursive :as recursive]
             [eacl.operator.vector-evaluator :as vector]
-            [eacl.operator.vector-evaluator-test :as vector-test]))
+            [eacl.operator.vector-evaluator-test :as vector-test]
+            [eacl.formal.qualified.operator-bridge :as operator-bridge]
+            [eacl.datascript.kleene-fault-test :as kleene-test]
+            [eacl.datascript.caveat-context-admission-test :as admission-test]))
 
 (defn failures [gate]
   (let [events (atom [])]
@@ -132,7 +135,11 @@
         plan-entry @#'staged/plan-entry
         plan-batch staged/plan-batch
         plan-retractions staged/plan-retraction-batch
-        write-relationship! core/write-relationship!]
+        write-relationship! core/write-relationship!
+        combine evidence/combine
+        caveat-index engine/caveat-parameter-index
+        add-counter counters/add!
+        reject-ill-typed context/reject-ill-typed!]
     {:temporal-collection-resident-lookup-ignores-interval
      {:gate #'temporal-test/collection-certificates-guard-resident-answers-and-replacement
       :redefs {#'cache/lookup-answer (fn [store key _] (lookup-answer store key nil))}}
@@ -441,9 +448,60 @@
      :evidence-witness-validation-bypassed
      {:gate #'vector-test/exact-evidence-witnesses-avoid-rechecking-proven-nodes
       :redefs {#'vector/validate-evidence-witnesses! (fn [& _] nil)}}
-     :cached-grant-hides-encountered-witness-fault
-     {:gate #'vector-test/exact-evidence-witnesses-avoid-rechecking-proven-nodes
-      :redefs {#'vector/demanded-witness-fault (constantly nil)}}
+     ;; Strong-Kleene fault semantics and fail-fast context admission.
+     :fault-dominates-boolean-absorber
+     {:gate #'evidence-test/a-definite-absorber-decides-beside-a-fault
+      :redefs {#'evidence/combine (fn [op a b]
+                                    (if (or (evidence/fault? a) (evidence/fault? b))
+                                      (evidence/fault :mutant/dominant :fault)
+                                      (combine op a b)))}}
+     :public-union-fault-dominates-grant
+     {:gate #'kleene-test/a-definite-operand-absorbs-a-faulting-one-on-every-route-in-any-order
+      :redefs {#'evidence/combine (fn [op a b]
+                                    (if (and (= :union op) (or (evidence/fault? a) (evidence/fault? b)))
+                                      (evidence/fault :mutant/dominant :fault)
+                                      (combine op a b)))}}
+     :operator-fault-is-decisive
+     {:gate #'operator-bridge/scalar-intersection-and-exclusion-refinement
+      :redefs {#'scalar/decisive? (fn [op value]
+                                    (or (evidence/fault? value)
+                                        (if (= :union op) (evidence/has? value) (evidence/no? value))))}}
+     :released-row-fault-fails-the-walk
+     {:gate #'kleene-test/a-faulting-edge-that-reaches-no-resource-never-fails-a-walk
+      :redefs {#'least-path/stream-next (fn [ctx s]
+                                          (let [[value next-stream :as result] (stream-next ctx s)]
+                                            (when value (evidence/throw-if-fault! (get next-stream :evidence true)))
+                                            result))}}
+     :definite-stream-drops-conditional-before-filter
+     {:gate #'kleene-test/a-filter-edge-composes-with-every-possible-decision
+      :redefs {#'engine/fetch-inclusive-candidates
+               (fn [result-type fetch-exclusive bound limit inclusive-evidence-fn]
+                 (filterv #(or (not (contains? % :evidence)) (evidence/has? (:evidence %)) (evidence/fault? (:evidence %)))
+                          (inclusive-candidates result-type fetch-exclusive bound limit inclusive-evidence-fn)))}}
+     :context-admission-bypassed
+     {:gate #'admission-test/a-value-no-reachable-declaration-admits-is-rejected-before-evaluation
+      :redefs {#'context/reject-ill-typed! (fn [_ _] nil)}}
+     :context-admission-ignores-filter-relation
+     {:gate #'admission-test/a-relationship-filter-clause-adds-its-relation-to-the-reachable-caveats
+      :redefs {#'engine/caveat-parameter-index (fn ([db rt p] (caveat-index db rt p nil))
+                                                 ([db rt p _] (caveat-index db rt p nil)))}}
+     :context-admission-rejects-ambiguous-values
+     {:gate #'admission-test/admission-ignores-undeclared-and-unreachable-fields-and-accepts-ambiguous-ones
+      :redefs {#'context/reject-ill-typed!
+               (fn [prepared index]
+                 (doseq [[parameter types] index
+                         :when (contains? (context/value prepared) parameter)
+                         type (keys types)]
+                   (reject-ill-typed prepared {parameter {type #{"mutant"}}})))}}
+     :masked-faults-unmetered
+     {:gate #'evidence-test/an-absorbed-fault-is-metered
+      :redefs {#'counters/add! (fn ([counter] (when-not (= :masked-faults counter) (add-counter counter)))
+                                 ([counter amount] (when-not (= :masked-faults counter) (add-counter counter amount))))}}
+     :wildcard-exclusion-fails-on-unconsumed-fault
+     {:gate #'kleene-test/a-faulting-subject-is-excluded-from-the-wildcard-and-fails-only-the-page-that-consumes-it
+      :redefs {#'engine/wildcard-excluded? (fn [decision]
+                                             (evidence/throw-if-fault! decision)
+                                             (not (evidence/has? decision)))}}
      :raw-clock-regresses
      {:gate #'clock-test/client-samples-once-and-snapshots-pin-time
       :redefs {#'clock/clock clojure.core/identity}}
@@ -576,7 +634,7 @@
 
 (deftest production-mutations-are-killed-by-conformance-gates
   (let [cases (mutation-cases)]
-    (is (= 112 (count cases)))
+    (is (= 121 (count cases)))
     (doseq [[id {:keys [gate redefs]}] (sort-by key cases)]
       (is (zero? (failures gate)) (str id " unmodified gate must pass"))
       (is (pos? (with-redefs-fn redefs #(failures gate))) (str id " must be detected")))))

@@ -1,0 +1,20 @@
+{:id :EACL-FORMAL-083
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace "eacl-rust BUGS.md EACL-RS-008 (rs008-definite; seed 31, scenario 102)"
+ :minimized-fixture "fixture.edn"
+ :impact :other
+ :affected-versions
+ ["v8.0 pre-release before strong-Kleene fault semantics"]
+ :affected-backends [:shared :datomic :datascript :datahike]
+ :root-cause
+ "Under the default :definite result policy, a relationship-filtered lookup's raw candidate stream dropped every candidate whose decision was not a definite grant before the filter edge was consulted, so a conditional candidate whose filter edge faulted produced an empty page, while :detailed, or a context deciding the candidate true, failed the same request. The result policy decided whether the request failed."
+ :fix
+ "Filtered lookups request a raw candidate stream that keeps every possibly active decision, faults included. Each candidate's decision is composed with its filter edge (strong Kleene) before the result policy selects which decided items are shown; a consumed faulting composition fails the page under either policy."
+ :closing-evidence
+ ["eacl.datascript.kleene-fault-test/a-filter-edge-composes-with-every-possible-decision"
+  "eacl.datascript.caveat-context-admission-test/a-relationship-filter-clause-adds-its-relation-to-the-reachable-caveats"
+  "eacl.datascript.caveat-context-admission-test/the-eacl-rust-context-type-repros-are-rejected-at-admission"
+  "QualifiedEvidence.KleeneIsSoundForEveryResolution"]
+ :notes
+ "The original repro faults through a context-type mismatch on the filter relation's Caveat; fail-fast admission now counts a filter clause's Relation among the reachable Caveats and rejects it before evaluation. The closing fixture uses a missing map key."}

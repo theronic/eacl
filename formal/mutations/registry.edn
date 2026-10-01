@@ -25,7 +25,8 @@
   :missing-required-read-field :nested-relationship-update-validation
   :false-public-identity-presence :numeric-public-id-native-eid-alias
   :false-stable-edge-presence :false-evaluation-control :false-timeout-control
-  :false-cancellation-control :unsupported-subject-relation-downgrade]
+  :false-cancellation-control :unsupported-subject-relation-downgrade
+  :kleene-fault-dominates-absorber]
  :historical-mutant-count 152
  :historical-clojure-mutant-count 138
  :historical-model-mutant-count 14
@@ -370,6 +371,16 @@
    :target-symbol "route/oracle-class"
    :consumer-symbol "route/check-many-eids"
    :detector "membership-consulted-false-until-absent-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :kleene-fault-dominates-absorber
+   :mechanism :executed-production
+   :mutation :let-a-fault-dominate-a-definite-absorber
+   :target-symbol "evidence/combine"
+   :consumer-symbol "route/check-eids"
+   :detector "kleene-fault-dominates-absorber-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
    {:test

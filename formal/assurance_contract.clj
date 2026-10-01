@@ -183,7 +183,7 @@
     :entry-points ["formal/qualified/model.clj"
                    "formal/qualified/model_test.clj"
                    "formal/qualified/mutation_test.clj"]
-    :theorems [:pointwise-residual-and-authoritative-fault-algebra
+    :theorems [:pointwise-strong-kleene-residual-and-fault-algebra
                :finite-positive-least-fixed-point
                :inert-preparation-and-atomic-temporal-publication
                :exclusive-expiry-and-non-monotonic-permission

@@ -15,9 +15,11 @@
             [eacl.operator.plan :as plan]
             [eacl.operator.vector-evaluator :as vector-evaluator]))
 
-(defn demand [op a b]
-  (if (or (= :failure (model/kind contract/universe (:value a)))
-          (= (if (= op :union) :has :no) (model/kind contract/universe (:value a))))
+(defn demand
+  "Demand order of the machines: an operand that is a definite absorber
+  decides alone; a fault never does, so the other operand is evaluated."
+  [op a b]
+  (if (= (if (= op :union) :has :no) (model/kind contract/universe (:value a)))
     a
     (model/combine contract/universe op a b)))
 
@@ -36,7 +38,7 @@
 
 (defn assert-refinement! [expected actual]
   (let [observed (bridge/model-evidence actual)]
-    (is (= (:value expected) (:value observed)))
+    (is (model/same? contract/universe (:value expected) (:value observed)))
     (is (= (:end expected) (:end observed)))
     (is (= (:complete? expected) (:complete? observed)))
     (is (= actual (evidence/decode (evidence/encode actual))))))

@@ -2,7 +2,7 @@
  :controls
  [:omitted-qualifier-read :missing-qualifier-is-plain
   :inclusive-expiry :expired-caveat-still-runs
-  :conditional-is-true :fault-is-absence
+  :conditional-is-true :fault-is-absence :fault-dominates-absorber
   :maximum-instead-of-minimum-horizon :emitted-only-cursor-horizon
   :incomplete-certificate-publishes :time-only-removes-permission
   :context-omitted-from-cache :evaluator-omitted-from-cache

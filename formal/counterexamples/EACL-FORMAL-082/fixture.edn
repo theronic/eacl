@@ -1,0 +1,17 @@
+{:original
+ {:schema
+  "caveat c1(n int, s string) { n >= 0 && s != \"b\" }\ndefinition project {}\ndefinition group {\n  relation member: project with c1\n  permission share = member\n}\ndefinition org {\n  relation reader: org\n  relation manager: group\n  permission share = manager->share + reader->share\n}"
+  :objects ["a" "r" "o"]
+  :relationships [{:subject [:project "a"] :relation :member :resource [:group "r"]
+                   :caveat "c1" :caveat-context {"n" 0}}]
+  :request {:subject [:project "a"] :permission :share :resource/type :org
+            :caveat-context {"n" "b"}}}
+ :runtime-fault
+ {:schema-shapes [:acyclic "permission share = manager->share"
+                  :recursive "permission share = manager->share + reader->share"]
+  :caveat "caveat bad(m map<bool>) { m[\"x\"] }"
+  :relationships [{:subject [:project "a"] :relation :member :resource [:group "r"]
+                   :caveat "bad"}]
+  :request {:subject [:project "a"] :permission :share :resource/type :org
+            :caveat-context {"m" {}}}
+  :cache-modes [false true]}}

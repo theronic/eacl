@@ -167,6 +167,12 @@
     eacl.datascript.qualified-write-test/partial-relationship-walks-over-qualified-rows-are-total-and-terminate
     :EACL-FORMAL-081
     eacl.datascript.qualified-write-test/eacl-rs-005-expansions-list-expiring-and-caveated-relationships
+    :EACL-FORMAL-082
+    eacl.datascript.kleene-fault-test/a-faulting-edge-that-reaches-no-resource-never-fails-a-walk
+    :EACL-FORMAL-083
+    eacl.datascript.kleene-fault-test/a-filter-edge-composes-with-every-possible-decision
+    :EACL-FORMAL-084
+    eacl.datascript.kleene-fault-test/a-definite-operand-absorbs-a-faulting-one-on-every-route-in-any-order
     :EACL-FORMAL-090
     eacl.caveats.plan-test/member-literals-are-admitted-like-string-literals
     :EACL-FORMAL-091

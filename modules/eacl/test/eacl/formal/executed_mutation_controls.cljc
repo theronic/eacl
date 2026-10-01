@@ -2824,6 +2824,40 @@ definition folder {
                           (fn [value] (if (evidence/no? value) :absent (original value)))]
               (consulting-control-run))))))
 
+;;; Strong-Kleene faults. In `view = reader + parent->view`, document 20 has a
+;;; faulting reader grant (qualifier 7) and the plain parent 21, which user 1
+;;; reads plainly: the grant absorbs the fault. Document 31's only path
+;;; crosses the faulting parent edge from 30 (qualifier 8), which nobody
+;;; reads: the absent target absorbs the fault. The production point route
+;;; must answer true and false; a fault-dominant composition answers faults.
+
+(def ^:private kleene-control-relationships
+  #{[:user 1 :reader :doc 20 7] [:doc 21 :parent :doc 20] [:user 1 :reader :doc 21]
+    [:doc 30 :parent :doc 31 8]})
+
+(defn- kleene-control-run []
+  (let [adapter (operator-probe-adapter leveled-control-schema kleene-control-relationships)
+        fault (evidence/fault :eacl.caveat/evaluation :missing-map-key)
+        options {:adapter adapter
+                 :plan (sealed-plan/seal-plan adapter [:doc :view])
+                 :subject-type :user :subject-eid 1 :qualification {:time 0}}]
+    (with-redefs [qualification/qualify
+                  (fn [_ _ compact-edge]
+                    (if (vector? compact-edge) fault (some? compact-edge)))]
+      (mapv #(evidence/value (route/check-eids (assoc options :resource-eid %))) [20 31]))))
+
+(defn kleene-fault-dominates-absorber-killed?
+  []
+  (let [original evidence/combine]
+    (and (= [true false] (kleene-control-run))
+         (not= [true false]
+               (with-redefs [evidence/combine
+                             (fn [op a b]
+                               (if (or (evidence/fault? a) (evidence/fault? b))
+                                 (evidence/fault :eacl.caveat/evaluation :dominant)
+                                 (original op a b)))]
+                 (kleene-control-run))))))
+
 ;;; Set-algebra result reuse. A request at 100 publishes its decisions under
 ;;; certified point keys; a later request looks them up under its own
 ;;; certified scope. `expiring` is certified until 200 and `incomplete` has an
@@ -3045,7 +3079,8 @@ definition folder {
    :reuse-past-certificate-end reuse-past-certificate-end-killed?
    :reuse-key-without-caveat-context reuse-key-without-caveat-context-killed?
    :reuse-incomplete-certificate-later reuse-incomplete-certificate-later-killed?
-   :reused-certificate-unobserved reused-certificate-unobserved-killed?})
+   :reused-certificate-unobserved reused-certificate-unobserved-killed?
+   :kleene-fault-dominates-absorber kleene-fault-dominates-absorber-killed?})
 
 (deftest every-portable-production-mutant-is-killed-test
   (doseq [[id detector] controls]

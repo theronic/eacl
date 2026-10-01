@@ -9,9 +9,11 @@ include "QualifiedTemporal.dfy"
 // A point decision is modelled as the evidence of a finite derivation tree
 // over qualified edges. LeveledMembership.dfy and GuardedMembership.dfy prove
 // that the recursive searches' certificates are those of such a derivation.
+// Evidence is Kleene: a decisive witness may mask a faulting operand, and its
+// certificate ends with that witness, so reuse never outlives the masking.
 module CertifiedPointReuse {
   import opened E = QualifiedEvidence
-  import opened T = QualifiedTemporal
+  import opened Temporal = QualifiedTemporal
 
   // The collision-checked qualification scope of a certified key: the exact
   // reuse identity without its evaluation time, which the certificate
@@ -42,9 +44,10 @@ module CertifiedPointReuse {
     prior.start < next.start && !Reusable(prior, next.start)
   }
 
-  // temporal/point-answer-valid? after decoding a restored entry's evidence
+  // temporal/point-answer-valid? after decoding a restored entry's evidence:
+  // no world of the evidence is U.
   predicate Admitted(universe: set<nat>, entry: Entry) {
-    !entry.evidence.value.Fault? && Before(entry.start, entry.evidence.end) &&
+    Definite(entry.evidence.value) && Before(entry.start, entry.evidence.end) &&
     entry.kind == Classify(universe, entry.evidence.value)
   }
 
@@ -77,7 +80,8 @@ module CertifiedPointReuse {
   {}
 
   // A reused decision is the decision a fresh evaluation makes at the later
-  // time, on the same basis and scope.
+  // time, on the same basis and scope. Only the leaf certificates are used;
+  // faults of composed values may change after the certificate ends.
   lemma ReusedDecisionIsTheFreshDecision(
     universe: set<nat>, tree: Tree, qids: map<nat, nat>, qs: map<nat, Qualifier>, start: int, later: int)
     requires forall q | q in qs :: Within(universe, qs[q].caveat)
@@ -92,12 +96,10 @@ module CertifiedPointReuse {
     if later != start {
       forall id | id in leaves
         ensures Within(universe, leaves[id].value) && Within(universe, laterLeaves[id].value)
-        ensures NoNewFaults(leaves[id].value, laterLeaves[id].value)
         ensures leaves[id].complete && Before(later, leaves[id].end) ==> leaves[id].value == laterLeaves[id].value
       {
         QualifiedLeafIsWithin(universe, qids[id], qs, start);
         QualifiedLeafIsWithin(universe, qids[id], qs, later);
-        ExpiryCannotCreateFaults(universe, qids[id], qs, start, later);
         if Before(later, leaves[id].end) {
           QualifierCertificateIsSound(universe, qids[id], qs, start, later);
         }
@@ -132,5 +134,17 @@ module CertifiedPointReuse {
     requires Admitted(universe, entry)
     ensures entry.kind != Failure
     ensures entry.kind == Classify(universe, entry.evidence.value)
-  {}
+  {
+    DefiniteOutcomesAreDecided(universe, entry.evidence.value);
+  }
+
+  // A failure is never reused from a restored entry, whatever kind it claims.
+  lemma FailureIsNotAdmitted(universe: set<nat>, entry: Entry)
+    requires Classify(universe, entry.evidence.value) == Failure
+    ensures !Admitted(universe, entry)
+  {
+    if Definite(entry.evidence.value) {
+      DefiniteOutcomesAreDecided(universe, entry.evidence.value);
+    }
+  }
 }

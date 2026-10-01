@@ -1,0 +1,16 @@
+{:original
+ {:schema
+  "caveat c1(n int, s string) { n >= 0 && s != \"ab\" }\ncaveat c2(role string) { role != \"b\" }\ndefinition user {}\ndefinition doc {\n  relation viewer: user with c2\n  relation owner: user with c1\n  permission view = viewer\n}"
+  :objects ["u" "o" "d"]
+  :relationships [{:subject [:user "u"] :relation :viewer :resource [:doc "d"] :caveat "c2"}
+                  {:subject [:user "o"] :relation :owner :resource [:doc "d"] :caveat "c1"}]
+  :request {:subject [:user "u"] :permission :view :resource/type :doc
+            :caveat-context {"n" "x"}
+            :resource/relationship {:relation :owner :subject [:user "o"]}}}
+ :runtime-fault
+ {:filter-caveat "caveat bad(m map<bool>) { m[\"x\"] }"
+  :contexts {:conditional {"m" {}}
+             :granted {"m" {} "role" "a"}
+             :denied {"m" {} "role" "b"}}
+  :result-policies [:definite :detailed]
+  :cache-modes [false true]}}
