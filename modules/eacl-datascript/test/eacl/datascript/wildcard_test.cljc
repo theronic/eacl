@@ -84,6 +84,31 @@
       (is (false? (eacl/can? client (contract/->user "alias") :view (contract/->area "a1")))
           "an alias must not turn the wildcard into a concrete subject"))))
 
+(deftest wildcard-subjects-stay-inside-the-public-identity-boundary-test
+  (let [conn (datascript/create-conn)
+        client (datascript/make-client conn {:cache cache/no-cache})
+        error-reason (fn [f]
+                       (try (f) nil
+                            (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+                              (:reason (ex-data error)))))]
+    (seed-objects! conn)
+    (eacl/write-schema! client contract/wildcard-schema)
+    (eacl/create-relationship! client (contract/->user "*") :viewer (contract/->area "a1"))
+    (testing "a wildcard with a subject relation is rejected, not widened to every user"
+      (is (= :unsupported-subject-relation
+             (error-reason #(eacl/create-relationship!
+                           client (assoc (contract/->user "*") :relation :member)
+                           :viewer (contract/->area "a2")))))
+      (is (false? (eacl/can? client (contract/->user "alice") :view (contract/->area "a2")))))
+    (testing "a numeric public ID equal to the wildcard entity's eid names no object"
+      (let [wildcard-eid (ds/entid (ds/db conn) wildcard/lookup-ref)]
+        (is (zero? (:retracted-datoms
+                    (eacl/delete-object! client (contract/->user wildcard-eid))))
+            "deleting it must not remove every type's wildcard relationships")
+        (is (true? (eacl/can? client (contract/->user "alice") :view (contract/->area "a1"))))
+        (is (false? (eacl/can? client (contract/->user wildcard-eid) :view (contract/->area "a1")))
+            "an unknown subject holds nothing")))))
+
 (deftest unused-wildcard-branch-keeps-subject-lookups-bounded-test
   (let [conn (datascript/create-conn)
         client (datascript/make-client conn {:cache cache/no-cache})
