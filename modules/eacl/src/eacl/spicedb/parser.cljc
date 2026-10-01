@@ -43,8 +43,10 @@
          whitespace slot exists inside it: whitespace and comments there
          always belong to the stored source. The body ends at the first
          closing brace outside a string literal, a line comment, or a
-         block comment. *)
-      caveat-body = #'\\{(?:\"(?:\\\\.|[^\"\\\\])*\"|//[^\\n\\r]*|/\\*[\\s\\S]*?\\*/|[^}\"/]|/(?![/*]))*\\}'
+         block comment. Runs of ordinary characters are one repetition, so
+         the regex engine recurses per string, comment or escape, never per
+         character; a long body cannot overflow the parsing thread's stack. *)
+      caveat-body = #'\\{[^}\"/]*(?:(?:\"[^\"\\\\]*(?:\\\\.[^\"\\\\]*)*\"|//[^\\n\\r]*|/\\*[\\s\\S]*?\\*/|/(?![/*]))[^}\"/]*)*\\}'
 
       (* Definition block *)
       definition = <'definition'> type-path <'{'> line-end* definition-body line-end* <'}'>
