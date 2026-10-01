@@ -125,3 +125,18 @@
             expression (nth expressions (.nextInt rng (count expressions)))]
         (is (= (model/evaluate types expression context {}) (partial/evaluate types expression context {})))
         (is (= (model/estimate-work types expression context) (partial/estimate-work types expression context)))))))
+
+(deftest admitted-member-literals-are-model-typed-plans
+  ;; `m.name` is the literal \"name\". compile-plan admits it only when the
+  ;; finite oracle types the plan, so no admitted Caveat faults on every
+  ;; evaluation when validate-plan re-checks its literals.
+  (let [parameters {"m" [:map :string :bool]}
+        bound (:string-utf8-bytes model/limits)]
+    (doseq [n [1 (dec bound) bound (inc bound) (+ 4 bound)]
+            :let [source (str "m." (apply str (repeat n "k")) " == true")
+                  admitted (try (:plan (plan/compile-plan source parameters))
+                                (catch clojure.lang.ExceptionInfo _ nil))]]
+      (is (= (<= n bound) (some? admitted)) (str n "-byte member"))
+      (when admitted
+        (is (= :bool (model/plan-type parameters admitted)))
+        (is (= admitted (plan/validate-plan parameters admitted)))))))

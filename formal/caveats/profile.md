@@ -47,9 +47,11 @@ and decimal safe-integer literals, JSON-style double-quoted string literals,
 parentheses, `!`, `&&`, `||`, scalar `==`/`!=`, int/timestamp ordering,
 scalar membership in a same-typed list, string key membership in a map,
 string-key map indexing (`m[k]` or `m.key`), and the string methods
-`contains`, `startsWith`, and `endsWith`. Indexing a supplied map at an absent
-key is an error. An absent map parameter is missing context. Timestamp values
-come from typed parameters; timestamp constructors/selectors are excluded.
+`contains`, `startsWith`, and `endsWith`. `m.key` indexes with the string
+literal `"key"`, admitted under the same bound as a quoted literal. Indexing a
+supplied map at an absent key is an error. An absent map parameter is missing
+context. Timestamp values come from typed parameters; timestamp
+constructors/selectors are excluded.
 
 Repeated ungrouped unary operators are rejected. Negative decimal integers
 are literals, not general arithmetic negation. Comparisons require equal

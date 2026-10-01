@@ -286,7 +286,7 @@ These are explicit profile limits, not full CEL or SpiceDB compatibility.
 | --- | ---: |
 | Source UTF-8 bytes / tokens / grouping depth | 8192 / 1024 / 32 |
 | Plan nodes / depth | 256 / 32 |
-| String UTF-8 bytes | 4096 |
+| String UTF-8 bytes, including the key of an `m.member` access | 4096 |
 | Entries in each list or map | 128 |
 | Total context entries / canonical payload bytes | 1024 / 16384 |
 | Conservative evaluation work units | 1048576 |

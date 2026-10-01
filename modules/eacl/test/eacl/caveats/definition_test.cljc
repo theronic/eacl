@@ -68,3 +68,15 @@
   (is (= [[:eacl.caveat/name "c"]] (:eacl.relation/caveats (first (staged "user with c")))))
   (is (= :eacl.schema/duplicate-relation-branch (error-type #(staged "user with c | user with c"))))
   (is (= :eacl.schema/invalid-caveat-reference (error-type #(staged "user with missing")))))
+
+(deftest over-long-member-is-rejected-at-schema-admission
+  ;; Admitting this Caveat left every check through `viewer` failing with
+  ;; :eacl.authorization/evaluation-failure [:eacl.caveat/evaluation :resource-limit].
+  (let [member (apply str (repeat 4097 "a"))
+        schema (str "caveat longfield(m map<bool>) {\n m." member " == true\n}\n"
+                    "definition user {}\ndefinition doc {\n relation viewer: user with longfield\n"
+                    " permission view = viewer\n}")]
+    (is (= {:type :eacl.caveat/invalid :reason :resource-limit :caveat "longfield" :offset 4}
+           (try (resolver/validate-schema schema nil {:allow-caveats? true}) nil
+                (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) e
+                  (select-keys (ex-data e) [:type :reason :caveat :offset])))))))

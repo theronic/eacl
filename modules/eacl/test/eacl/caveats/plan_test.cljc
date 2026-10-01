@@ -1,7 +1,9 @@
 (ns eacl.caveats.plan-test
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is]]
             [clojure.string :as str]
-            [eacl.caveats.plan :as plan]))
+            [eacl.caveats.partial :as partial]
+            [eacl.caveats.plan :as plan]
+            [eacl.caveats.values :as values]))
 
 (defn reason [f]
   (try (f) nil (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) e (:reason (ex-data e)))))
@@ -119,3 +121,23 @@
   (doseq [expression malformed-plans]
     (is (keyword? (reason #(plan/validate-plan [] expression)))))
   (is (= :resource-limit (reason #(plan/decode-plan (apply str (repeat 100 "[")))))))
+
+(deftest member-literals-are-admitted-like-string-literals
+  ;; `m.name` indexes with the string literal "name". Evaluation re-validates
+  ;; every literal, so a member the parser admitted past the string bound
+  ;; faulted with :resource-limit on every evaluation of its definition.
+  (let [parameters [["m" [:map :string :bool]]]
+        at-bound (apply str (repeat (:string-utf8-bytes values/limits) "a"))
+        over-bound (str at-bound "a")]
+    (doseq [member [at-bound over-bound]]
+      (is (= (reason #(plan/compile-plan (str "m[\"" member "\"] == true") parameters))
+             (reason #(plan/compile-plan (str "m." member " == true") parameters)))))
+    (is (= {:offset 2 :reason :resource-limit}
+           (try (plan/compile-plan (str "m." over-bound " == true") parameters) nil
+                (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) e
+                  (select-keys (ex-data e) [:offset :reason])))))
+    (let [{:keys [plan]} (plan/compile-plan (str "m." at-bound " == true") parameters)]
+      (is (= plan (plan/validate-plan parameters plan)))
+      (is (= {:outcome :true} (partial/evaluate parameters plan {"m" {at-bound true}} {})))
+      (is (= {:outcome :error :reason :missing-map-key}
+             (partial/evaluate parameters plan {"m" {}} {}))))))

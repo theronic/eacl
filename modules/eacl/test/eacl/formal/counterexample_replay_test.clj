@@ -154,7 +154,9 @@
     :EACL-FORMAL-074
     eacl.core-test/missing-public-read-keys-fail-before-dispatch-test
     :EACL-FORMAL-075
-    eacl.core-test/nested-relationship-mutations-fail-before-protocol-dispatch-test})
+    eacl.core-test/nested-relationship-mutations-fail-before-protocol-dispatch-test
+    :EACL-FORMAL-090
+    eacl.caveats.plan-test/member-literals-are-admitted-like-string-literals})
 
 (defn- read-edn
   [path]

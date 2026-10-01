@@ -41,6 +41,11 @@ Schema admission SHALL parse Caveat declarations, require a Boolean result in th
 - **WHEN** a Caveat expression cannot produce Boolean permissionship
 - **THEN** schema validation rejects it
 
+#### Scenario: Member access is a bounded string literal
+- **WHEN** a Caveat indexes a map as `m.name` with a name longer than the 4096-byte string bound
+- **THEN** schema validation fails with `:eacl.caveat/invalid :reason :resource-limit`, as it does for `m["name"]`
+- **AND** every admitted Caveat's plan passes the plan validation that each evaluation repeats
+
 ### Requirement: Relation branches explicitly allow Caveats
 A Relation subject branch SHALL declare which Caveat may qualify a Relationship. A Relationship may carry zero or one Caveat, and the stored Caveat MUST be allowed for its resolved Relation branch.
 

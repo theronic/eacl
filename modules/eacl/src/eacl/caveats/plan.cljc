@@ -28,15 +28,23 @@
 (defn- fail! [reason offset]
   (values/error! reason {:offset offset}))
 
+(defn- admit-string-literal!
+  "Admits a source string value under the bounds every evaluation re-checks
+   (`validate-plan`), failing at `offset`. A `.name` member is the string
+   literal \"name\" and is admitted here too, so an admitted definition never
+   faults on every evaluation."
+  [value offset]
+  (try (values/encode-context [["literal" :string]] {"literal" value})
+       (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) e
+         (fail! (if (= :resource-limit (:reason (ex-data e))) :resource-limit :literal-type) offset)))
+  value)
+
 (defn- read-string-token [source start]
   (loop [i (inc start) pieces []]
     (when (>= i (count source)) (fail! :syntax-error start))
     (let [c (code-at source i)]
       (cond
-        (= c 34) (let [value (apply str pieces)]
-                   (try (values/encode-context [["literal" :string]] {"literal" value})
-                        (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) e
-                          (fail! (if (= :resource-limit (:reason (ex-data e))) :resource-limit :literal-type) start)))
+        (= c 34) (let [value (admit-string-literal! (apply str pieces) start)]
                    [{:kind :literal :type :string :value value :offset start} (inc i)])
         (< c 32) (fail! :syntax-error i)
         (= c 92)
@@ -172,7 +180,8 @@
                           (let [op (get {"contains" :contains "startsWith" :starts-with "endsWith" :ends-with} (:value member))]
                             (when-not op (fail! :unsupported-operation (:offset member)))
                             (let [arg (expression 1)] (expect ")") (recur (node op [p arg] offset)))))
-                        (recur (node :index [p (node :literal [:string (:value member)] (:offset member))] offset))))
+                        (recur (node :index [p (node :literal [:string (admit-string-literal! (:value member) (:offset member))]
+                                                     (:offset member))] offset))))
                     :else p))))
             (unary []
               (if-let [bang (accept "!")] (node :not [(primary)] (:offset bang)) (primary)))
