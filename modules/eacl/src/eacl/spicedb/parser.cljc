@@ -35,11 +35,16 @@
       schema = line-end* (definition | caveat-definition) (line-end* (definition | caveat-definition))* line-end*
 
       (* Named typed Caveats; the expression parser owns CEL profile checks. *)
-      caveat-definition = <'caveat'> identifier <'('> line-end* caveat-parameters? line-end* <')'> <'{'> caveat-source <'}'>
+      caveat-definition = <'caveat'> identifier <'('> line-end* caveat-parameters? line-end* <')'> caveat-body
       caveat-parameters = caveat-parameter (<','> line-end* caveat-parameter)*
       caveat-parameter = identifier caveat-type
       caveat-type = identifier (<'<'> identifier <'>'>)?
-      caveat-source = #'(?:\"(?:\\\\.|[^\"\\\\])*\"|//[^\\n\\r]*|[^}\"/]|/(?!/))*'
+      (* One terminal from the opening brace through the closing one, so no
+         whitespace slot exists inside it: whitespace and comments there
+         always belong to the stored source. The body ends at the first
+         closing brace outside a string literal, a line comment, or a
+         block comment. *)
+      caveat-body = #'\\{(?:\"(?:\\\\.|[^\"\\\\])*\"|//[^\\n\\r]*|/\\*[\\s\\S]*?\\*/|[^}\"/]|/(?![/*]))*\\}'
 
       (* Definition block *)
       definition = <'definition'> type-path <'{'> line-end* definition-body line-end* <'}'>
@@ -268,13 +273,22 @@
   [parse-tree]
   (reduce add-definition {} (filter #(node-of? :definition %) parse-tree)))
 
+(defn- body-source-span
+  "Span of the text between a Caveat body's braces. The node's own span also
+   covers any whitespace before the opening brace."
+  [body-node]
+  (when-let [[_ end] (insta/span body-node)]
+    [(inc (- end (count (second body-node)))) (dec end)]))
+
 (defn- caveat-entity
-  "Builds one named Caveat from its declaration node."
+  "Builds one named Caveat. Its source is the body text between the braces,
+   verbatim, so comments and whitespace there are always part of it."
   [[_ name-node & children]]
   (let [name (extract-identifier name-node)
         parameter-node (some #(when (= :caveat-parameters (first %)) %) children)
-        source-node (some #(when (= :caveat-source (first %)) %) children)
-        source (second source-node)
+        body-node (some #(when (= :caveat-body (first %)) %) children)
+        body (second body-node)
+        source (subs body 1 (dec (count body)))
         parameters
         (mapv (fn [[_ parameter-name [_ type-node item-node]]]
                 (let [type (keyword (extract-identifier type-node))
@@ -287,7 +301,7 @@
          (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
            (throw (ex-info "Invalid Caveat declaration."
                            (assoc (ex-data error) :caveat name
-                                  :source-span (insta/span source-node)) error))))))
+                                  :source-span (body-source-span body-node)) error))))))
 
 (defn- add-caveat [caveats node]
   (let [entity (caveat-entity node)

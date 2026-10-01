@@ -51,7 +51,9 @@ string-key map indexing (`m[k]` or `m.key`), and the string methods
 literal `"key"`, admitted under the same bound as a quoted literal. Indexing a
 supplied map at an absent key is an error. An absent map parameter is missing
 context. Timestamp values come from typed parameters; timestamp
-constructors/selectors are excluded.
+constructors/selectors are excluded. The source is the exact text between the
+definition's braces; `//` comments are whitespace and block comments are
+rejected.
 
 Repeated ungrouped unary operators are rejected. Negative decimal integers
 are literals, not general arithmetic negation. Comparisons require equal

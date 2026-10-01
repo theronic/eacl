@@ -1,5 +1,5 @@
 (ns eacl.caveats.definition-test
-  (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is]]
+  (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is testing]]
             [eacl.caveats.definition :as definition]
             [eacl.spicedb.parser :as parser]
             [eacl.schema.expression-resolver :as resolver]))
@@ -80,3 +80,36 @@
            (try (resolver/validate-schema schema nil {:allow-caveats? true}) nil
                 (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) e
                   (select-keys (ex-data e) [:type :reason :caveat :offset])))))))
+
+(defn- caveat-outcome [body]
+  (let [schema (str "caveat c(x int, s string) " body "\ndefinition user {}")]
+    (try {:source (:eacl.caveat/expression-source
+                   (first (:caveats (resolver/validate-schema schema nil {:allow-caveats? true}))))}
+         (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) e
+           (select-keys (ex-data e) [:type :reason :offset :source-span])))))
+
+(deftest caveat-source-is-the-verbatim-body-text
+  ;; Only the body text between the braces is stored, verbatim. A leading
+  ;; block comment used to be consumed as schema whitespace when, and only
+  ;; when, it contained `}`, so whether a Caveat was admitted and what source
+  ;; it stored depended on what its comment said.
+  (doseq [[body source] [["{x == 1}" "x == 1"]
+                         ["{  // note }\n  x == 1 }" "  // note }\n  x == 1 "]
+                         ["{\n s == \"/* } */\" // } */\n}" "\n s == \"/* } */\" // } */\n"]]]
+    (is (= {:source source} (caveat-outcome body))))
+  (testing "block comments are outside the profile, whatever they contain"
+    (doseq [[body offset] [["{ /* } */ x == 1 }" 1]
+                           ["{ /* c */ x == 1 }" 1]
+                           ["{ /* a */ /* } */ x == 1 }" 1]
+                           ["{ x == 1 /* } */ }" 8]
+                           ["{ x == 1 /* c */ }" 8]]]
+      (is (= {:type :eacl.caveat/invalid :reason :unsupported-operation :offset offset
+              :source-span [27 (+ 27 (- (count body) 2))]}
+             (caveat-outcome body))
+          body)))
+  (testing "a comment before the body is schema whitespace"
+    (is (= {:source " x == 1 "}
+           (caveat-outcome "/* } */ { x == 1 }"))))
+  (is (= {:type :eacl.caveat/invalid :reason :syntax-error :offset 8 :source-span [27 35]}
+         (caveat-outcome "{   x == }"))
+      "the source span covers exactly the text between the braces"))

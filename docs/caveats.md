@@ -161,6 +161,13 @@ Names and parameter names use ASCII identifiers of up to 64 bytes. A Caveat
 can have at most 32 parameters. CEL keywords, type names, and the `__eacl_`
 prefix are reserved. Invalid definitions fail before replacing the schema.
 
+A Caveat stores the exact text between its braces as its source, including
+whitespace and comments. The body ends at the first `}` outside a string
+literal, a `//` comment or a `/* */` comment. The profile accepts `//`
+comments but not block comments, so a body containing a block comment is
+rejected with `:eacl.caveat/invalid`, wherever it appears. A comment before the
+opening brace is ordinary schema whitespace.
+
 ## Write and check a qualified Relationship
 
 Write the schema above with `eacl/write-schema!`. This example uses `acl` and

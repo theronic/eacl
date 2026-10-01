@@ -46,6 +46,11 @@ Schema admission SHALL parse Caveat declarations, require a Boolean result in th
 - **THEN** schema validation fails with `:eacl.caveat/invalid :reason :resource-limit`, as it does for `m["name"]`
 - **AND** every admitted Caveat's plan passes the plan validation that each evaluation repeats
 
+#### Scenario: Stored source is the text between the braces
+- **WHEN** a Caveat body contains whitespace or `//` comments
+- **THEN** the stored expression source is exactly the text between its braces
+- **AND** a body containing a `/* */` comment is rejected as outside the profile, whatever the comment contains
+
 ### Requirement: Relation branches explicitly allow Caveats
 A Relation subject branch SHALL declare which Caveat may qualify a Relationship. A Relationship may carry zero or one Caveat, and the stored Caveat MUST be allowed for its resolved Relation branch.
 

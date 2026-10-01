@@ -1,0 +1,10 @@
+{:stored-source :text-between-the-braces
+ :results
+ [{:body "{ /* } */ x == 1 }" :type :eacl.caveat/invalid :reason :unsupported-operation :offset 1}
+  {:body "{ /* c */ x == 1 }" :type :eacl.caveat/invalid :reason :unsupported-operation :offset 1}
+  {:body "{ /* a */ /* } */ x == 1 }" :type :eacl.caveat/invalid :reason :unsupported-operation :offset 1}
+  {:body "{ /* } */ /* b */ x == 1 }" :type :eacl.caveat/invalid :reason :unsupported-operation :offset 1}
+  {:body "{ x == 1 /* } */ }" :type :eacl.caveat/invalid :reason :unsupported-operation :offset 8}
+  {:body "{ // } c\n x == 1 }" :accepted true :stored-source " // } c\n x == 1 "}]
+ :source-span "exactly the text between the braces"
+ :comment-before-the-opening-brace :schema-whitespace}

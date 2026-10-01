@@ -160,7 +160,9 @@
     :EACL-FORMAL-091
     eacl.schema.expression-limits-test/encoded-byte-limit-precedes-codec-ceilings-test
     :EACL-FORMAL-092
-    eacl.schema.expression-resolver-test/declaration-errors-follow-source-order-test})
+    eacl.schema.expression-resolver-test/declaration-errors-follow-source-order-test
+    :EACL-FORMAL-093
+    eacl.caveats.definition-test/caveat-source-is-the-verbatim-body-text})
 
 (defn- read-edn
   [path]

@@ -1,0 +1,11 @@
+{:operation :validate-schema
+ :caveat-header "caveat c(x int)"
+ :bodies
+ [{:body "{ /* } */ x == 1 }" :before {:accepted true :stored-source " x == 1 "}}
+  {:body "{ /* c */ x == 1 }" :before {:type :eacl.caveat/invalid :reason :unsupported-operation :offset 1}}
+  {:body "{ /* a */ /* } */ x == 1 }" :before {:accepted true :stored-source " x == 1 "}}
+  {:body "{ /* } */ /* b */ x == 1 }" :before {:type :eacl.caveat/invalid :reason :unsupported-operation :offset 1}}
+  {:body "{ x == 1 /* } */ }" :before {:type :eacl.schema/parse-error}}
+  {:body "{ // } c\n x == 1 }" :before {:accepted true :stored-source " // } c\n x == 1 "}}]
+ :spicedb-v1.56.0 {:accepts-block-comments-in-caveat-bodies true
+                   :stores "normalized CEL, not the source text"}}
