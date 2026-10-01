@@ -15,7 +15,7 @@ Defines how `write-schema!` admits and replaces a schema without side effects on
 - **THEN** the thrown error's `ex-data` has `:reason :syntax`, the 1-based `:line` and `:column` of the offending token, and what was `:expected` and `:found`
 
 ### Requirement: Schemas follow the SpiceDB v1.56.0 schema language
-Schema admission SHALL accept every schema SpiceDB v1.56.0's WriteSchema accepts, or reject it only with `:eacl.schema/unsupported-feature` naming the construct EACL cannot serve, and SHALL reject every schema SpiceDB rejects. SpiceDB's validation SHALL run before EACL's restrictions, so `:eacl.schema/unsupported-feature` names a feature of a valid SpiceDB schema; the one exception is a Caveat body whose CEL EACL can neither evaluate nor type-check. The compatibility corpus (`modules/eacl/test/eacl/spicedb/fixtures/spicedb-1.56-corpus.edn`) records SpiceDB's verdict for each of its schemas, and every entry SHALL hold on the JVM and in ClojureScript. Resource limits (`:expression-limits`, nesting depth) are outside this requirement.
+Schema admission SHALL accept every schema SpiceDB v1.56.0's WriteSchema accepts, or reject it only with `:eacl.schema/unsupported-feature` naming the construct EACL cannot serve, and SHALL reject every schema SpiceDB rejects. SpiceDB's validation SHALL run before EACL's restrictions, so `:eacl.schema/unsupported-feature` names a feature of a valid SpiceDB schema; the one exception is a Caveat body whose CEL EACL can neither evaluate nor type-check. The compatibility corpus (`modules/eacl/test/eacl/spicedb/fixtures/spicedb-1.56-corpus.edn`) records SpiceDB's verdict for each of its schemas, and every entry SHALL hold on the JVM and in ClojureScript. Resource limits (`:expression-limits`, including the validation work bounds derived from `:maximum-schema-source-bytes`, and nesting depth) are outside this requirement. As a deliberate difference, EACL SHALL apply SpiceDB's transitive-wildcard rule per definition and relation, and SHALL reject with `:eacl.schema/expression-resolution-failed` the schemas SpiceDB v1.56.0 accepts only because it caches that check by relation name (the corpus's `:spicedb-defects`).
 
 #### Scenario: SpiceDB statement terminators
 - **WHEN** a schema ends statements with `;`, or continues a permission expression on the next line after a binary operator
@@ -36,6 +36,10 @@ Schema admission SHALL accept every schema SpiceDB v1.56.0's WriteSchema accepts
 #### Scenario: Invalid SpiceDB schema with an unsupported feature
 - **WHEN** a schema declares `relation viewer: user:*` and references a relation that does not exist
 - **THEN** schema admission throws the reference error, not `:eacl.schema/unsupported-feature`
+
+#### Scenario: Transitive wildcard behind SpiceDB's relation-name cache
+- **WHEN** `team#member` allows only `user`, `group#member` allows `user:*`, and a later definition declares `relation ggg: group#member` after another declares `relation ttt: team#member`
+- **THEN** schema admission throws `:eacl.schema/expression-resolution-failed` with a `:transitive-wildcard` issue, although SpiceDB v1.56.0 accepts the schema
 
 ### Requirement: Schema comments are supported
 The parser SHALL accept `//` line comments and `/* */` block comments anywhere whitespace is legal, matching the SpiceDB DSL.
@@ -113,6 +117,17 @@ Schema admission SHALL measure each permission's canonical expression payload ex
 #### Scenario: Payload beyond the codec ceiling under default limits
 - **WHEN** a permission's arrows resolve over 256 subject types, so that its canonical payload exceeds 1 MiB or 262,144 codec entries
 - **THEN** validation throws `:eacl.schema/expression-limit` with `:dimension :encoded-byte-size` and `:maximum 131072`, not `:eacl.format/invalid`
+
+### Requirement: Schema validation work is bounded by the source-byte limit
+Schema admission SHALL bound the work of validating a schema by the client's `:maximum-schema-source-bytes`. Translating partials and expanding definitions SHALL visit at most a quarter of that many statements, and `use typechecking` annotations SHALL visit at most that many relations and permissions in total; beyond either bound admission SHALL throw `:eacl.schema/expression-limit` with `:dimension :partial-expansion` or `:dimension :typechecking`, `:maximum`, `:actual-at-least` and `:limit :maximum-schema-source-bytes`. Unused partials SHALL NOT be expanded. These are resource limits, outside the SpiceDB compatibility requirement.
+
+#### Scenario: Doubling partials
+- **WHEN** a schema's partials each reference the previous one twice, forty levels deep, and a definition uses the last
+- **THEN** schema admission throws `:eacl.schema/expression-limit` with `:dimension :partial-expansion` instead of expanding 2^39 members
+
+#### Scenario: Unused doubling partials
+- **WHEN** the same partials are declared and no definition uses them
+- **THEN** schema admission accepts the schema
 
 ### Requirement: A Relation that holds Relationships cannot be removed
 A schema replacement under the default `:error` orphan policy SHALL reject removing a Relation identity that holds any stored Relationship, whether plain, expiring, expired, or Caveated, with `:eacl.schema/relation-in-use` carrying the Relation and the number of retained Relationships, on every backend. Speculative `:retain-inert` planning SHALL report such a Relation whatever qualifier its first indexed Relationship carries.

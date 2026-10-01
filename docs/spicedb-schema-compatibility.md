@@ -13,6 +13,11 @@ supported by EACL". The one exception is a caveat body that uses CEL EACL can
 neither evaluate nor type-check (function calls, macros, map literals): EACL
 cannot tell whether SpiceDB accepts it, and reports it as unsupported.
 
+Two things are outside the rule: [resource limits](#resource-limits), and one
+[deliberate difference](#deliberate-difference-transitive-wildcards), where
+SpiceDB v1.56.0 accepts some schemas only because its transitive-wildcard
+check is cached by relation name and EACL rejects them.
+
 The rules below were derived from SpiceDB's source at tag `v1.56.0`
 (`pkg/schemadsl`, `pkg/schema`, `internal/namespace`, `pkg/caveats` and
 `proto/internal/core/v1/core.proto`) and confirmed against
@@ -43,19 +48,25 @@ exactly as SpiceDB's `ReadSchema` prints it.
 | Caveats | Supported within EACL's CEL profile ([docs/caveats.md](caveats.md)). Other valid caveats are `:eacl.schema/unsupported-feature`: names with a `/` prefix, non-ASCII, longer than 64 bytes or reserved by the profile; parameter types `any`, `uint`, `double`, `bytes`, `duration`, `ipaddress`, nested containers, or type arguments on a basic type (`int<string>`); more than 32 parameters; and expressions outside the profile or its bounds (an issue with `:profile-reason :resource-limit` and the `:offset` in the expression). |
 | Caveated relations without qualified admission (`{:allow-caveats? false}`) | `:eacl.schema/unsupported-feature` (unchanged) |
 
-Resource limits are outside this contract. A valid SpiceDB schema that
-exceeds EACL's configured expression limits (`:expression-limits`, for example
-a permission deeper than 64 levels) is rejected with
-`:eacl.schema/expression-limit`, and the parser stops at 256 nested
-parentheses with `:eacl.schema/parse-error {:reason :nesting-depth}`.
+## Resource limits
 
-Validation is linear in the schema with its partials expanded, and the limits
-that bound it come first:
+Resource limits are outside the compatibility rule. A valid SpiceDB schema
+that exceeds one of the limits below is rejected with
+`:eacl.schema/expression-limit` (with its `:dimension`), or with
+`:eacl.schema/parse-error` for nesting. (The bounds of EACL's CEL profile are
+part of the profile: a Caveat beyond them is `:eacl.schema/unsupported-feature`,
+as the table above says.) The configurable limits are the client's
+`:expression-limits` ([README](../README.md#eacl-id-configuration)): each
+default can be tightened or raised up to a portable hard ceiling.
 
-- EACL's source limits (each relation's subject-type count, each permission's
-  source nodes, depth and fan-in, in the resolver's order) are checked before
-  SpiceDB's reference checks, so a permission that exceeds them reports
-  `:eacl.schema/expression-limit` rather than one issue per leaf.
+- `:maximum-schema-source-bytes` (1,048,576 by default, also the ceiling)
+  bounds the schema text in UTF-8 bytes (`:dimension :source-bytes`) and the
+  two validation bounds below.
+- The per-permission and aggregate expression limits bound each permission
+  and the schema's permissions together, for example a permission deeper
+  than `:maximum-source-depth` (64 levels by default).
+- The parser stops at 256 nested parentheses with `:eacl.schema/parse-error
+  {:reason :nesting-depth}`. This limit is fixed.
 - Partials expand by copying: `partial b { ...a ...a }` doubles `a`, and a
   few lines of such partials stand for billions of members (SpiceDB itself
   copies them all). Translating partials and expanding definitions visit at
@@ -69,8 +80,15 @@ that bound it come first:
   which the schema is `:eacl.schema/expression-limit {:dimension
   :typechecking}`.
 
-Both expansion errors carry `:maximum`, `:actual-at-least` and
-`:limit :maximum-schema-source-bytes`.
+Both validation bounds carry `:maximum`, `:actual-at-least` and
+`:limit :maximum-schema-source-bytes`, and scale with that limit.
+
+Validation is linear in the schema with its partials expanded, and the limits
+that bound it come first. EACL's source limits (each relation's subject-type
+count, each permission's source nodes, depth and fan-in, in the resolver's
+order) are checked before SpiceDB's reference checks, so a permission that
+exceeds them reports `:eacl.schema/expression-limit` rather than one issue per
+leaf.
 
 ## Errors
 
@@ -86,7 +104,7 @@ Both expansion errors carry `:maximum`, `:actual-at-least` and
 | `:eacl.schema/incomplete-type-annotation` | With `use typechecking`, a reachable subject type missing from an annotation |
 | `:eacl.schema/permission-alias-cycle` | Permissions that only alias each other in a cycle (`a = b`, `b = a`, or `p = p`) |
 | `:eacl.caveat/invalid` | An invalid caveat: unknown type, wrong type arity, duplicate or unreferenceable parameter, CEL syntax or type error, non-`bool` result, unused parameter |
-| `:eacl.schema/expression-limit` | A resource limit (see above), including `:dimension :partial-expansion` and `:dimension :typechecking` |
+| `:eacl.schema/expression-limit` | A [resource limit](#resource-limits), including `:dimension :partial-expansion` and `:dimension :typechecking` |
 
 ## Lexing
 
@@ -243,13 +261,19 @@ The generator lives in the eacl-rust repository under `tools/spicedb-corpus`
 `localhost:18443`, `build_corpus.py corpus.json` writes the raw results and
 `emit_edn.py corpus.json spicedb-1.56-corpus.edn` writes this fixture.
 
-## Known SpiceDB defect
+## Deliberate difference: transitive wildcards
 
-SpiceDB v1.56.0 caches its transitive-wildcard check by relation name alone,
-across definitions. When an earlier relation with the same name has no
-wildcard, a later `group#member` that reaches `user:*` is accepted; within one
-definition the result depends on Go map order, so one schema can be accepted
-and rejected on successive writes. EACL applies the rule per definition and
-relation and rejects these schemas. The corpus keeps three reproductions under
-`:spicedb-defects` and excludes every schema whose verdict varied across
-repeated writes.
+SpiceDB rejects a subject relation that reaches a wildcard
+(`relation ggg: group#member` where `group`'s `member` is `user:*`), but
+v1.56.0 caches that check by relation name alone, across definitions. When an
+earlier relation with the same name has no wildcard, a later `group#member`
+that reaches `user:*` is accepted; within one definition the result depends on
+Go map order, so one schema can be accepted and rejected on successive writes.
+
+EACL deliberately keeps the check per definition and relation, and rejects
+these schemas with `:eacl.schema/expression-resolution-failed` and a
+`:transitive-wildcard` issue. Apart from resource limits, this is the one
+place where EACL rejects a schema SpiceDB accepts with an error other than
+`:eacl.schema/unsupported-feature`. The corpus keeps three reproductions under
+`:spicedb-defects`, which the corpus test expects EACL to reject, and excludes
+every schema whose verdict varied across repeated writes.

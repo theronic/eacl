@@ -1465,6 +1465,15 @@ also accepted by direct schema writers and the explicit Datomic v7-to-v8
 permission migration. A permission whose canonical payload is larger than
 `:maximum-expression-bytes` fails with `:eacl.schema/expression-limit
 {:dimension :encoded-byte-size :maximum m :actual n}`, however large it is.
+`:maximum-schema-source-bytes` (1,048,576 by default, also its ceiling) bounds
+the schema text in UTF-8 bytes and the work of validating it: expanding
+partials may visit at most a quarter of that many statements, and `use
+typechecking` at most that many relations and permissions. Beyond either bound
+the schema fails with `:eacl.schema/expression-limit` and `:dimension
+:partial-expansion` or `:typechecking`. Like the other expression limits and
+the parser's 256-level nesting limit, these are resource limits, outside the
+SpiceDB compatibility rule
+([resource limits](docs/spicedb-schema-compatibility.md#resource-limits)).
 Two Peers may deliberately use different profiles: a stricter Peer can reject
 a schema accepted by a looser Peer, but schemas accepted by both have identical
 permission meaning. The profile is never written to the database and never
@@ -1674,7 +1683,9 @@ accepts is accepted by EACL, or rejected with `:eacl.schema/unsupported-feature`
 naming a feature EACL cannot serve; every schema SpiceDB rejects is rejected.
 A corpus of 4,359 schemas with SpiceDB's verdicts checks this on every test
 run ([SpiceDB schema compatibility](docs/spicedb-schema-compatibility.md)).
-Use `eacl/write-schema!` to define your schema.
+Resource limits are outside this rule, and so is one deliberate difference
+(see [Differences from SpiceDB](#differences-from-spicedb)). Use
+`eacl/write-schema!` to define your schema.
 
 - A statement ends at `;` or at a line end after a name, keyword, `)`, `}`
   or `*`. After an operator such as `+`, `&`, `-`, `->` or `|` it continues on
@@ -1844,8 +1855,9 @@ but it is not a byte-for-byte or operational clone:
   Only `expand-permission-tree` refuses cycles (`:eacl.permission-tree/cycle-detected`)
   and depth beyond `:permission-tree-limits` (`:max-depth 50` by default).
 - Schemas follow SpiceDB's language and name rules exactly
-  ([SpiceDB schema compatibility](docs/spicedb-schema-compatibility.md)). EACL
-  rejects a valid SpiceDB schema only with `:eacl.schema/unsupported-feature`:
+  ([SpiceDB schema compatibility](docs/spicedb-schema-compatibility.md)).
+  Apart from resource limits and the transitive-wildcard difference below,
+  EACL rejects a valid SpiceDB schema only with `:eacl.schema/unsupported-feature`:
   wildcards, subject relations, `nil`, `self`, `.all()`, prefixed names like
   `org/user`, arrows whose target is missing on some subject type, recursion
   through an exclusion, and caveats outside EACL's CEL profile. `with
@@ -1853,6 +1865,12 @@ but it is not a byte-for-byte or operational clone:
   relationships on every relation. Object identifiers are arbitrary non-empty
   strings; a dataset that must also load into SpiceDB should follow SpiceDB's
   object-ID rules.
+- SpiceDB v1.56.0 caches its transitive-wildcard check by relation name across
+  definitions, so it accepts some schemas whose subject relation reaches a
+  wildcard (`group#member` where `member` is `user:*`), on every write or only
+  on some. EACL deliberately keeps the check per definition and relation and
+  rejects them with `:eacl.schema/expression-resolution-failed`
+  ([details](docs/spicedb-schema-compatibility.md#deliberate-difference-transitive-wildcards)).
 - A relation name is accepted only in the `:permission` slot of
   `expand-permission-tree`; `can?`, `check-permission`, the lookups and the
   counts require a permission (SpiceDB accepts either).

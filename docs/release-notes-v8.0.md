@@ -901,3 +901,67 @@ The behavior is compared with SpiceDB v1.56.0's answers to all 59 corpus
 cases ([fixture](../formal/fixtures/caveat-comprehensions/README.md)), checked
 against the finite model in `formal/caveats/`, and its fold algebra is proved
 in `formal/dafny/CaveatOutcomes.dfy`.
+
+## SpiceDB schema language
+
+EACL reads the schema language of SpiceDB v1.56.0 exactly
+([SpiceDB schema compatibility](spicedb-schema-compatibility.md)). Every
+schema SpiceDB accepts is accepted, or rejected only with
+`:eacl.schema/unsupported-feature` naming the construct EACL cannot serve;
+every schema SpiceDB rejects is rejected with a typed error. SpiceDB's
+validation runs before EACL's restrictions. A corpus of 4,359 schemas, each
+written to SpiceDB v1.56.0, checks this on the JVM and in ClojureScript.
+
+Breaking changes:
+
+1. **Names SpiceDB rejects now fail with `:eacl.schema/invalid-name`.**
+   Definition, relation and permission names must match
+   `^[a-z][a-z0-9_]{1,62}[a-z0-9]$` (3 to 64 characters, no trailing `_`), so
+   `relation r: user` now fails. Rename before upgrading: rewrite the schema
+   to rename a permission; for a relation or definition with stored
+   Relationships, add the new name, copy the Relationships, then remove the
+   old name. Migrations that re-validate stored v7 schema text apply the same
+   rules.
+2. **Empty and comment-only schema text is an empty schema**, not
+   `:eacl.schema/parse-error`; `eacl/write-schema!` refuses it over a
+   non-empty schema with `:eacl.schema/empty-schema-guard`. The rest of the
+   syntax is SpiceDB's too: `relationviewer: user`, `a->b->c`, `(a + b)->c`,
+   two statements on one line without `;`, Unicode whitespace other than
+   space, tab and line ends, and letters newer than Unicode 15.0 are
+   rejected; `;` and expressions continued after an operator on the next
+   line are accepted.
+3. **Unstratified exclusions and missing or mixed arrow targets are now
+   `:eacl.schema/unsupported-feature`** (with `:unstratified-exclusion` and
+   `:arrow-target` issues), and so are valid Caveats outside EACL's CEL
+   profile (previously `:eacl.caveat/invalid`). A schema SpiceDB rejects
+   reports SpiceDB's error even when it also uses an unsupported feature;
+   EACL's source limits are still checked first.
+4. **The first schema write after upgrading advances the schema generation
+   once, because caveat sources are rewritten to the CEL expression.** v8.0.0
+   stored a Caveat's whole body as `:eacl.caveat/expression-source`; EACL now
+   stores the expression SpiceDB compiles, without the whitespace and
+   comments around it. Stored v8.0.0 sources still evaluate. The first write
+   of an unchanged schema with Caveats rewrites them in place, so it is not a
+   no-op and cached answers are recomputed under the new generation; Caveats
+   keep their identity, so their Relationships are unaffected, and the next
+   write is a no-op. Write schemas from upgraded Peers: a v8.0.0 Peer writing
+   the same schema stores the whole bodies again.
+5. **Instaparse is no longer a dependency.** `instaparse/instaparse` is
+   removed from `dev.eacl/eacl`; applications that used it transitively must
+   declare it.
+
+Resource limits stay outside the compatibility rule.
+`:maximum-schema-source-bytes` (1,048,576 by default) now also bounds
+validation work: expanding partials visits at most a quarter of it in
+statements, and `use typechecking` at most that many relations and
+permissions. Beyond either bound the schema fails with
+`:eacl.schema/expression-limit` and `:dimension :partial-expansion` or
+`:typechecking`; unused partials are never expanded. See
+[resource limits](spicedb-schema-compatibility.md#resource-limits).
+
+One difference is deliberate. SpiceDB v1.56.0 caches its transitive-wildcard
+check by relation name across definitions, so it accepts some schemas whose
+subject relation reaches a wildcard, on every write or only on some. EACL keeps
+the check per definition and relation and rejects them with
+`:eacl.schema/expression-resolution-failed`
+([details](spicedb-schema-compatibility.md#deliberate-difference-transitive-wildcards)).
