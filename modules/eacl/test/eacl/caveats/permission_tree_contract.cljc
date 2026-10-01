@@ -5,8 +5,9 @@
   The tree lists every stored Relationship. A leaf subject, or an arrow child
   node, reached through a qualified Relationship carries that Relationship's
   `:caveat`, `:caveat-context` (omitted when empty), and `:valid-until-ms`,
-  as `read-relationships` renders them. Nothing is evaluated, so the tree does
-  not change when a deadline passes."
+  as `read-relationships` renders them. A wildcard subject (`user:*`) is the
+  subject `*` and carries its Relationship's qualifier keys the same way.
+  Nothing is evaluated, so the tree does not change when a deadline passes."
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [is testing]]
             [eacl.client.orchestration :as orchestration]
             [eacl.core :as eacl]))
@@ -19,7 +20,7 @@
        " permission view = viewer\n"
        "}\n"
        "definition doc {\n"
-       " relation viewer: user | user with enabled\n"
+       " relation viewer: user | user with enabled | user:* with enabled\n"
        " relation banned: user\n"
        " relation folder: folder\n"
        " permission view = viewer + folder->view\n"
@@ -38,6 +39,9 @@
    (assoc (eacl/->Relationship (object :user "c") :viewer doc)
           :caveat "enabled" :caveat-context {"flag" true})
    (assoc (eacl/->Relationship (object :user "e") :viewer doc) :caveat "enabled")
+   ;; A wildcard grant that never applies: its Caveat is false, then it expires.
+   (assoc (eacl/->Relationship (eacl/spice-object :user "*") :viewer doc)
+          :caveat "enabled" :caveat-context {"flag" false} :valid-until-ms 8000)
    (eacl/->Relationship (object :user "b") :banned doc)
    (assoc (eacl/->Relationship folder-f :folder doc) :valid-until-ms 7000)
    (eacl/->Relationship folder-g :folder doc)
@@ -72,7 +76,7 @@
 (def ^:private doc-viewer-leaf
   {:expanded-object doc
    :expanded-relation :viewer
-   :leaf {:subjects (mapv annotated (take 4 relationships))}})
+   :leaf {:subjects (mapv annotated (take 5 relationships))}})
 
 (defn- folder-view
   [folder subjects]
