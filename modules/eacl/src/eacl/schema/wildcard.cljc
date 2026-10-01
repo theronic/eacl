@@ -6,7 +6,10 @@
   branch's Caveat alternatives. Every `T:*` subject is one EACL-owned subject
   entity: the subject-type slot of each endpoint tuple keeps `user:*` apart
   from `group:*`, so the reserved public ID `*` resolves without knowing the
-  type.")
+  type."
+  ;; `object?` names a wildcard object here; ClojureScript's core predicate
+  ;; of the same name is not used.
+  (:refer-clojure :exclude [object?]))
 
 (def object-id
   "The reserved public object ID of a wildcard subject."
