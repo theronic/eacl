@@ -280,11 +280,11 @@
                            (fnil inc 1000))]
                [:certified-value-under-a-plain-key
                 (update-in snapshot [:entries (index membership) :key 2 4] pop)]
-               [:before-fault-free-admission
+               [:before-kleene-fault-semantics
                 (assoc-in snapshot
                           [:entries (index membership) :key 2 3 :compiler-plan-compatibility
                            :operator-plan :qualified-membership]
-                          :ordered-caveat-operands-v1)]]]
+                          :certified-fault-free-operands-v2)]]]
         (let [target (datascript/make-client conn options)]
           (is (= :eacl/incompatible-cache-snapshot
                  (error-type #(datascript/restore-cache-snapshot! target tampered bounds)))

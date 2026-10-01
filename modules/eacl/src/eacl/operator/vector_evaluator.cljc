@@ -207,19 +207,11 @@
 
 (declare check-many-normalized)
 
-(defn- decisive? [op result]
-  (or (evidence/fault? result)
-      (if (= :union op) (evidence/has? result) (evidence/no? result))))
-
-(defn- demanded-witness-fault [candidate]
-  ;; These faults have already been encountered by traversal. Neither a
-  ;; cached answer nor a later Boolean absorber may erase that demand.
-  (when-let [proofs (:evidence-witnesses candidate)]
-    (reduce-kv (fn [fault _ value]
-                 (if (evidence/fault? value)
-                   (if fault (evidence/combine :union fault value) value)
-                   fault))
-               nil proofs)))
+(defn- decisive?
+  "A definite absorber: `true` for a union, `false` for an intersection or
+  an exclusion's left operand. A fault is never decisive."
+  [op result]
+  (if (= :union op) (evidence/has? result) (evidence/no? result)))
 
 (defn check-many-eids
   "Evaluates a distinct vector of complete typed candidate contexts and
@@ -298,15 +290,15 @@
                 ;; its depth must not consume the JVM or JavaScript stack.
                 (evaluate! [[permission node-id :as node-key] indexes continue]
                   (let [initial (get @memo node-key unresolved-row)
+                        ;; An exact node witness, a faulting one included, is
+                        ;; that node's value; composition decides whether a
+                        ;; definite sibling absorbs its fault.
                         witnessed
                         (reduce
                          (fn [values index]
                            (let [candidate (nth candidates index)
-                                 proofs (:evidence-witnesses candidate)
-                                 fault (when (and proofs (= permission root-permission) (= node-id root-id))
-                                         (demanded-witness-fault candidate))]
+                                 proofs (:evidence-witnesses candidate)]
                              (cond
-                               fault (assoc values index fault)
                                (contains? proofs node-key) (assoc values index (get proofs node-key))
                                (contains? (:true-nodes candidate) node-key) (assoc values index true)
                                :else values)))
@@ -373,11 +365,13 @@
                                   (into []
                                         (keep (fn [[[index probes] own]]
                                                 (when (and (second probes)
-                                                           (not (or (evidence/has? own) (evidence/fault? own))))
+                                                           (not (evidence/has? own)))
                                                   [index (second probes)])))
                                         (map vector indexed-probes own-decisions))
                                   ;; Match scalar union demand: a definite own
-                                  ;; grant or fault does not demand the wildcard.
+                                  ;; grant decides alone. A faulting own tuple
+                                  ;; still demands the wildcard, whose grant
+                                  ;; absorbs the fault (strong Kleene).
                                   decisions (into own-decisions
                                                   (dispatch! (mapv second wildcard-probes)))
                                   probe-indexes (into (mapv first indexed-probes)
@@ -545,10 +539,7 @@
             keys (mapv #(point-reuse/scoped-key
                          (point-cache-key plan permission node-id scope-identity %) scope)
                        candidates)
-            ;; A candidate with a demanded witness fault is never looked up.
-            probed (filterv #(not (demanded-witness-fault (nth candidates %))) indexes)
-            found (zipmap probed (point-reuse/reuse! qualification (mapv keys probed) ::miss))
-            reused (mapv #(get found % ::miss) indexes)
+            reused (point-reuse/reuse! qualification keys ::miss)
             miss-indexes (filterv #(= ::miss (nth reused %)) indexes)
             misses (mapv candidates miss-indexes)
             miss-decisions

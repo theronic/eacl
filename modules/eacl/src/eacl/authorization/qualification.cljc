@@ -130,18 +130,6 @@
               (qualifier/error! :missing-relation))
             (qualifier/relation-allowance relation))))
 
-(defn declares-caveats?
-  "Whether a relation can demand a Caveat. Reordered membership searches
-   cannot preserve fault demand for such a relation. Malformed metadata also
-   requires the ordered evaluator, which reports it only if demanded."
-  [request relation-id]
-  (try
-    (boolean (some some? (relation-allowance request relation-id)))
-    (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
-      (if (= :eacl.qualifier/invalid (:type (ex-data error)))
-        true
-        (throw error)))))
-
 (defn- allowed! [request relation-id caveat-id]
   (let [allowed (relation-allowance request relation-id)]
     (when-not (contains? allowed caveat-id) (qualifier/error! :caveat-not-allowed))))
@@ -251,17 +239,26 @@
                              (if (keyword? (:reason result)) (:reason result) :invalid-outcome))
       (evidence/fault :eacl.caveat/evaluation :invalid-outcome))))
 
+(defn- edge-fault
+  "One faulted edge: a Kleene unknown carrying a sanitized reason. Recorded on
+   the request's `:qualifier-faults` meter so that a fault absorbed by a
+   definite answer remains observable."
+  [type reason]
+  (counters/add! :qualifier-faults)
+  (evidence/fault type reason))
+
 (defn qualify
   "Returns evidence for one compact native edge. The ordinary integer branch
-   allocates nothing and never dereferences request state. All authoritative
-   faults remain faults, including faults on subtracting edges."
+   allocates nothing and never dereferences request state. Authoritative
+   faults remain faults, including faults on subtracting edges; composition
+   decides whether a definite operand absorbs them."
   [request relation-id compact-edge]
   (if-not (vector? compact-edge)
     (if (nil? compact-edge)
       false
       (if (edge/valid? compact-edge)
         true
-        (evidence/fault :eacl.qualifier/invalid :qualifier-ref)))
+        (edge-fault :eacl.qualifier/invalid :qualifier-ref)))
     (do
       (execution/check! :qualifier-resolution)
       (try
@@ -271,13 +268,15 @@
           (allowed! request relation-id caveat)
           (if (and valid-until-ms (>= (:time request) valid-until-ms))
             false
-            (evidence/with-certificate
+            (let [value (evidence/with-certificate
               (if caveat (caveat-evidence request definition caveat-context) true)
-              valid-until-ms true)))
+                          valid-until-ms true)]
+              (when (evidence/fault? value) (counters/add! :qualifier-faults))
+              value)))
         (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
           (let [{:keys [type reason]} (ex-data error)]
             (if (contains? #{:eacl.qualifier/invalid :eacl.caveat/invalid
                              :eacl.caveat/evaluator-unavailable
                              :eacl.authorization/invalid-evidence} type)
-              (evidence/fault type (if (keyword? reason) reason :unavailable))
+              (edge-fault type (if (keyword? reason) reason :unavailable))
               (throw error))))))))

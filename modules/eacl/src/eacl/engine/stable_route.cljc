@@ -122,9 +122,14 @@
   Qualification annotates the same physical paths with bounded residuals
   and temporal evidence. A visited state retains the union of its incoming
   path prefixes, and only a changed full value/certificate revisits it.
-  Conditional matches continue the existing search; definite witnesses and
-  demanded faults terminate it. Either exhausted side of a bidirectional
-  arm covers every matching pair, including its qualified evidence."
+  Path values compose with strong-Kleene connectives (the union of path
+  conjunctions equals the tree's value in every completion), so the answer
+  does not depend on rule or scan order. A definite witness terminates the
+  search; a conditional or faulting path never does, because a later
+  witness can still absorb it. A faulting via edge is still joined with its
+  target, which can make the path false. Either exhausted side of a
+  bidirectional arm covers every matching pair, including its qualified
+  evidence."
   [{:keys [adapter fetch-fn plan subject-type subject-eid resource-eid
            cut-point! physical-chunk-size qualification
            max-admissions max-commands max-transitions max-values max-stack]
@@ -151,7 +156,9 @@
         qualify (if qualification
                   (fn [relation value] (qualification/qualify qualification relation value))
                   (fn [_ value] (some? value)))
-        done? (fn [value] (or (evidence/has? value) (evidence/fault? value)))
+        ;; Only a definite grant ends the search. A fault is a Kleene unknown:
+        ;; a later witness may still absorb it.
+        done? evidence/has?
         counters (volatile! {:admissions 0 :transitions 0 :commands 0
                              :fetched-values 0})
         fetch! (fn [descriptor]
@@ -246,7 +253,9 @@
                 (let [via-edge (nth vias via-index)
                       via (if (= skip-intermediate (edge/endpoint via-edge))
                             false (qualify via-relation-eid via-edge))
-                      path (if (or (evidence/no? via) (evidence/fault? via))
+                      ;; A faulting via is still joined with its target: an
+                      ;; absent target makes the path false.
+                      path (if (evidence/no? via)
                              via
                              (evidence/combine
                               :arrow via
@@ -279,7 +288,7 @@
                                     (qualify via-relation-eid
                                              (via-probe? resource-type eid via-relation-eid
                                                          intermediate-type (edge/endpoint holding-edge))))
-                              path (if (or (evidence/no? via) (evidence/fault? via))
+                              path (if (evidence/no? via)
                                      via
                                      (evidence/combine :arrow via
                                                        (qualify target-relation-eid holding-edge)))
@@ -409,7 +418,7 @@
                                                          (evidence/combine
                                                           :arrow prefix
                                                           (qualify (:via-relation-eid rule) compact-edge)))]
-                                               (if (or (evidence/no? via) (evidence/fault? via))
+                                               (if (evidence/no? via)
                                                  (do (vswap! answer #(evidence/combine :union % via))
                                                      (if (done? @answer) (reduced successors) successors))
                                                  (conj successors
@@ -690,27 +699,29 @@
     (evidence-class value)))
 
 (defn- joined-class
-  "An arrow's via edge (neither absent nor a fault) and its target tuple
-  together: decisive until the earlier deadline only when both are
-  decisive."
+  "An arrow's via edge and its target tuple together, as strong-Kleene
+  conjunction: absent when either is absent (even when the other faults),
+  otherwise a fault when either faults, conditional when either is, and
+  decisive until the earlier deadline only when both are decisive."
   [via held]
   (cond
-    (= :absent held) :absent
-    (= :fault held) :fault
+    (or (= :absent via) (= :absent held)) :absent
+    (or (= :fault via) (= :fault held)) :fault
     (or (= :conditional via) (= :conditional held)) :conditional
     :else [:decisive (let [a (second via) b (second held)]
                        (cond (nil? a) b (nil? b) a :else (min a b)))]))
 
 (defn- note!
-  "One class's contribution at `level`: ::kept, ::absent, or ::fault. A
-  decisive value that ends before `level` notes its deadline as skipped;
-  conditional evidence is noted and otherwise treated as absent."
+  "One class's contribution at `level`: ::kept or ::absent. A decisive value
+  that ends before `level` notes its deadline as skipped. Conditional and
+  faulting evidence is noted as uncertain and otherwise treated as absent:
+  a fault never decides, so the search keeps looking for a witness that
+  absorbs it, and an exhausted search that met one is decided exactly."
   [{:keys [skipped conditional?]} level class]
   (if (keyword? class)
     (case class
       :absent ::absent
-      :fault ::fault
-      :conditional (do (vreset! conditional? true) ::absent))
+      (:fault :conditional) (do (vreset! conditional? true) ::absent))
     (if (lasts? (second class) level)
       ::kept
       (do (vswap! skipped later (second class)) ::absent))))
@@ -764,35 +775,16 @@
               (into #{}
                     (filter #(every? plain-relations (:alternatives %)))
                     (mapcat :guards (mapcat identity (vals reverse-rules))))
-              ;; Complete unqualified holdings prove a leaf total at every
-              ;; resource. Remove these leaves/guards from the audit graph.
-              fault-rules
-              (update-vals
-               reverse-rules
-               (fn [rules]
-                 (into []
-                       (keep (fn [rule]
-                               (let [guards (filterv #(not (contains? plain-guards %))
-                                                     (:guards rule))]
-                                 (when-not (and (empty? guards) (contains? plain-relations rule))
-                                   (if (seq guards)
-                                     (assoc rule :guards guards)
-                                     (dissoc rule :guards))))))
-                       rules)))
               plain-memo (volatile! {})
               entry {:reverse-rules reverse-rules
                      :holdings holdings
                      :plain-relations plain-relations
                      :plain-guards plain-guards
-                     :fault-rules fault-rules
                      :possible (possible-nodes reverse-rules subject-type holdings)
                      :memo plain-memo
                      :memos (volatile! {plain-level plain-memo})
                      :skips (volatile! {})
                      :answers (volatile! {})
-                     ;; Private to this sequential request; certificates
-                     ;; only grow after a closure has been fully checked.
-                     :fault-free (volatile! {})
                      :guard-classes (volatile! {})
                      :extended (volatile! {})}]
           (add-membership-stats! {:holding-scans (count slices)})
@@ -862,7 +854,6 @@
                    endpoint (edge/endpoint compact-edge)]
                (cond
                  (= :absent via) nil
-                 (= :fault via) :fault
                  (= :arrow-oracle (:rule rule))
                  (joined-class via (oracle-class (oracle (:target-node rule) endpoint)))
                  (= subject-type (:target-subject-type rule))
@@ -893,13 +884,14 @@
 
 (defn ^:no-doc guards-outcome
   "Whether a rule's guards hold at `eid` at `level`: ::kept when every guard
-  holds, ::absent when one does not hold at this level, or ::fault.
+  holds, ::absent when one does not hold at this level, or ::undecided.
 
   A guard holds when one of its alternatives lasts at `level`; the others
   are noted as any skipped evidence is. A subtracted guard holds only when
   it is plainly absent. A plainly present one closes the rule at every
-  level. Any other value is ::fault: access could appear when it expires,
-  so the resource is decided exactly instead."
+  level, even beside a faulting alternative. Any other value is ::undecided:
+  access could appear when it expires, or a fault leaves it unknown, so the
+  resource is decided exactly instead."
   [{:keys [plain-guards probe] :as search} notes level guards eid]
   (loop [index 0]
     (if (= index (count guards))
@@ -917,10 +909,13 @@
                 (if (= present? (= :negative (:sign guard))) ::absent ::kept))
               (let [classes (guard-classes search guard eid)]
                 (if (= :negative (:sign guard))
+                  ;; A plainly present subtracted alternative closes the rule
+                  ;; at every level, whatever the others are (a fault
+                  ;; included). Any other present value, a fault or evidence
+                  ;; that can expire, is decided exactly.
                   (cond
-                    (some #(= :fault %) classes) ::fault
                     (some #(and (vector? %) (nil? (second %))) classes) ::absent
-                    (some #(not= :absent %) classes) ::fault
+                    (some #(not= :absent %) classes) ::undecided
                     :else ::kept)
                   (loop [i 0]
                     (if (= i (count classes))
@@ -934,13 +929,13 @@
   A guarded reference contributes its target state. For an arrow, each
   intermediate whose via edge lasts at `level` contributes its target state
   (arrow to a permission), or its target's decision (arrow to a relation or
-  to an oracle's permission). Returns the new stack, ::found, or ::fault."
+  to an oracle's permission). Returns the new stack, ::found, or ::undecided."
   [{:keys [probe intermediates qualify oracle] :as search} notes level stack rule eid memo skips]
   (let [guarded (if-let [guards (:guards rule)]
                   (guards-outcome search notes level guards eid)
                   ::kept)]
     (cond
-      (= ::fault guarded) ::fault
+      (= ::undecided guarded) ::undecided
       (= ::absent guarded) stack
       (= :self-permission (:rule rule)) (conj stack [(:target-node rule) eid])
       :else
@@ -955,7 +950,6 @@
                   via (evidence-class (qualify (:via-relation-eid rule) compact-edge))]
               (cond
                 (= :absent via) (recur (dec index) stack)
-                (= :fault via) ::fault
 
                 (= :arrow-permission kind)
                 (let [outcome (note! notes level via)]
@@ -975,7 +969,6 @@
                             (when conditional? (vreset! (:conditional? notes) true)))
                           stack)
                         :else (recur (dec index) (conj stack state))))
-                    (= ::fault outcome) ::fault
                     :else (recur (dec index) stack)))
 
                 :else
@@ -988,15 +981,14 @@
                                               (:intermediate-type rule) endpoint
                                               (:wildcard-eid rule)))))
                       outcome (note! notes level (joined-class via held))]
-                  (cond
-                    (= ::kept outcome) ::found
-                    (= ::fault outcome) ::fault
-                    :else (recur (dec index) stack)))))))))))
+                  (if (= ::kept outcome)
+                    ::found
+                    (recur (dec index) stack)))))))))))
 
 (defn- base-outcome
   "Decides a state's rules without successors at `level`: relation rules
   from the subject's holdings and oracle rules from the oracle, each once
-  its guards hold. ::found when one lasts there, ::fault, or nil."
+  its guards hold. ::found when one lasts there, ::undecided, or nil."
   [{:keys [probe qualify subject-type oracle] :as search} notes level rules eid]
   (loop [index 0]
     (when (< index (count rules))
@@ -1008,7 +1000,7 @@
                           (guards-outcome search notes level guards eid)
                           ::kept)]
             (cond
-              (= ::fault guarded) ::fault
+              (= ::undecided guarded) ::undecided
               (= ::absent guarded) (recur (inc index))
               :else
               (let [outcome (note! notes level
@@ -1019,16 +1011,15 @@
                                                (probe (:relation-eid rule)
                                                       (:resource-type rule) eid
                                                       (:wildcard-eid rule))))))]
-                (cond
-                  (= ::kept outcome) ::found
-                  (= ::fault outcome) ::fault
-                  :else (recur (inc index))))))
+                (if (= ::kept outcome)
+                  ::found
+                  (recur (inc index))))))
           (recur (inc index)))))))
 
 (defn ^:no-doc search-level
   "One depth-first search from `root-state` in the graph of evidence that
   lasts at `level`, reusing and extending that level's memo. Returns
-  ::found, ::fault, or, when exhausted, `{:skipped deadline :conditional?
+  ::found, ::undecided, or, when exhausted, `{:skipped deadline :conditional?
   flag}`: the latest deadline and whether any conditional evidence the
   search skipped.
 
@@ -1066,7 +1057,7 @@
               (cond
                 (not (keyword? expanded)) (recur expanded visited)
                 (= ::found expanded) (do (vswap! memo assoc root-state true) ::found)
-                :else ::fault))
+                :else ::undecided))
             (let [known (get @memo frame)]
               (cond
                 (true? known) (do (vswap! memo assoc root-state true) ::found)
@@ -1088,113 +1079,10 @@
                       outcome (base-outcome search notes level rules eid)]
                   (cond
                     (= ::found outcome) (do (vswap! memo assoc root-state true) ::found)
-                    (= ::fault outcome) ::fault
+                    (= ::undecided outcome) ::undecided
                     :else (recur (push-successors stack rules eid subject-type
                                                   holdings possible)
                                  (conj! visited frame))))))))))))
-
-(defn- fault-free-checker
-  "Certifies a request-local overapproximation of every relationship the
-   reordered search could skip. Absence of declared Caveats alone is not a
-   proof: an expiration qualifier can be malformed. Only a fully explored
-   closure is retained, including cycles; encountering uncertain evidence
-   defers the root to ordered evaluation without publishing any certificate.
-
-   Guards are included even when another guard would suppress their rule.
-   This can conservatively defer extra roots, but cannot hide a demanded
-   fault. All reads and graph work use the search's ordinary limits."
-  [{:keys [root subject-type probe intermediates qualify oracle step! admit!] :as search}
-   {:keys [fault-rules fault-free plain-relations]}]
-  (let [certain? (fn [value]
-                   (or (boolean? value)
-                       (and (evidence/complete? value)
-                            (boolean? (evidence/value value)))))
-        certain-edge? (fn [relation compact-edge]
-                        (or (not (vector? compact-edge))
-                            (certain? (qualify relation compact-edge))))
-        held (fn [rule eid]
-               (certain-edge? (:relation-eid rule)
-                              (probe (:relation-eid rule) (:resource-type rule) eid
-                                     (:wildcard-eid rule))))
-        certify! (fn [node eid]
-                   (if-let [known (get @fault-free node)]
-                     (let [grown (conj! known eid)]
-                       (when-not (identical? known grown)
-                         (vswap! fault-free assoc node grown)))
-                     (vswap! fault-free assoc node (transient #{eid}))))
-        successor (fn [stack target eid]
-                    ;; Most ancestors in a page have already been checked.
-                    ;; Index by node to reuse those certificates without
-                    ;; allocating or hashing another [node eid] pair.
-                    (if (contains? (get @fault-free target) eid)
-                      stack (conj stack [target eid])))
-        expand
-        (fn [stack rule eid]
-          (case (:rule rule)
-            :relation
-            (when (or (contains? plain-relations rule)
-                      (not= subject-type (:subject-type rule)) (held rule eid))
-              stack)
-            :oracle
-            (when (certain? (oracle (:target-node rule) eid)) stack)
-            :self-permission
-            (successor stack (:target-node rule) eid)
-            (:arrow-relation :arrow-permission :arrow-oracle)
-            (if (and (= :arrow-relation (:rule rule))
-                     (not= subject-type (:target-subject-type rule)))
-              stack
-              (reduce
-               (fn [stack compact-edge]
-                 (let [via (if (vector? compact-edge)
-                             (qualify (:via-relation-eid rule) compact-edge)
-                             true)
-                       endpoint (edge/endpoint compact-edge)]
-                   (cond
-                     (not (certain? via)) (reduced nil)
-                     (evidence/no? via) stack
-                     (= :arrow-permission (:rule rule)) (successor stack (:target-node rule) endpoint)
-                     :else
-                     (if (if (= :arrow-oracle (:rule rule))
-                           (certain? (oracle (:target-node rule) endpoint))
-                           (certain-edge? (:target-relation-eid rule)
-                                          (probe (:target-relation-eid rule)
-                                                 (:intermediate-type rule) endpoint
-                                                 (:wildcard-eid rule))))
-                       stack (reduced nil)))))
-               stack
-               (intermediates (:resource-type rule) eid (:via-relation-eid rule)
-                              (:intermediate-type rule))))))]
-    (fn [resource-eid]
-      (loop [stack [[root resource-eid]] visited #{}]
-        (if (empty? stack)
-          (do (doseq [[node eid] visited] (certify! node eid)) true)
-          (let [[node eid :as frame] (peek stack)
-                stack (pop stack)]
-            (step! (count stack))
-            (if (or (contains? (get @fault-free node) eid) (contains? visited frame))
-              (recur stack visited)
-              (do
-                (admit!)
-                (if-let [next-stack
-                         (reduce
-                          (fn [stack rule]
-                            (if (if-let [guards (:guards rule)]
-                                  (every? (fn [guard]
-                                            (or (every? #(contains? plain-relations %) (:alternatives guard))
-                                                (every? #(or (= :absent %) (vector? %))
-                                                        (guard-classes search guard eid))))
-                                          guards)
-                                  true)
-                              (or (expand stack rule eid) (reduced nil))
-                              (reduced nil)))
-                          stack (get fault-rules node))]
-                  (if (empty? next-stack)
-                    (do
-                      (certify! node eid)
-                      (doseq [[node eid] visited] (certify! node eid))
-                      true)
-                    (recur next-stack (conj visited frame)))
-                  false)))))))))
 
 (defn ^:no-doc decide-leveled
   "Decides one resource level by level. The first search keeps only plain
@@ -1203,10 +1091,13 @@
   Found at deadline `v`: evidence true until `v`. No witness path's
   bottleneck lies strictly between `v` and the previous level, because its
   first skipped edge would have raised the next level. So `v` is the latest
-  first-expiry over witness paths, the exact end of the grant. Exhausted with
-  nothing skipped: false, which stays false because relationships only
-  expire. ::qualified when a fault is met, or when only conditional evidence
-  remains; the exact point check then decides the resource."
+  first-expiry over witness paths, the exact end of the grant. A definite
+  witness decides even beside faulting or conditional alternatives, because
+  a grant absorbs them (strong Kleene). Exhausted with nothing skipped:
+  false, which stays false because relationships only expire. ::qualified
+  when the search met a fault or conditional evidence and found no witness,
+  or met an undecided guard; the exact point check then decides the
+  resource."
   [search entry resource-eid]
   (let [root-state [(:root search) resource-eid]]
     (loop [level plain-level]
@@ -1217,7 +1108,7 @@
             true
             (evidence/with-certificate true level true))
 
-          (= ::fault outcome) ::qualified
+          (= ::undecided outcome) ::qualified
 
           (:skipped outcome)
           (do (add-membership-stats! {:levels 1})
@@ -1256,23 +1147,17 @@
   resources: one value per resource, with the permissionship `check-eids`
   returns for that point.
 
-  Internal optimization: callers must establish that witnesses and guards
-  cannot demand order-sensitive faults. This search reorders alternatives;
-  falling back on an encountered fault cannot recover a fault hidden by an
-  earlier decisive witness. Engine operand admission enforces this condition
-  by routing closures that declare Caveats to ordered evaluation instead.
-  Production callers also set `:verify-fault-freedom?` to discharge the
-  data-dependent part of this precondition, including malformed expiration
-  qualifiers. Direct kernel/model callers can supply their own total-input
-  proof instead.
+  The search reorders alternatives freely: under strong-Kleene fault
+  semantics the decision does not depend on the order in which witnesses
+  are found, and a fault never stops it.
 
   - A decisive answer is plain true, or true until the latest first-expiry
     over its witness paths (`decide-leveled`). That certificate is sound and
     may end later than the point check's, which is the first witness it
     happened to find.
   - Plain false stays false, because relationships only expire.
-  - A resource whose decision meets a fault, or rests only on conditional
-    evidence, gets `check-eids`' own value.
+  - A resource whose search met a fault or conditional evidence without a
+    definite witness gets `check-eids`' own value.
 
   The request-scoped `:context` (from `membership-context`) holds what later
   calls reuse over the same basis:
@@ -1297,7 +1182,7 @@
   resource the search defers. An oracle's false that ends at a deadline is
   conditional (`oracle-class`), so a search that meets it defers too."
   [{:keys [fetch-fn adapter plan subject-type subject-eid resource-eids
-           context cut-point! physical-chunk-size qualification oracle fallback verify-fault-freedom?
+           context cut-point! physical-chunk-size qualification oracle fallback
            holding-limit
            max-admissions max-commands max-transitions max-values max-stack]
     :or {holding-limit holdings-limit
@@ -1404,8 +1289,6 @@
                                        {:max-admissions max-admissions
                                         :staged 1}))
                      (aset counts 0 (inc (aget counts 0))))}
-          fault-free? (when (and qualification verify-fault-freedom?)
-                        (fault-free-checker search entry))
           searched (volatile! 0)
           reused (volatile! 0)
           computed (volatile! #{})
@@ -1438,9 +1321,7 @@
                             (do (vswap! reused inc)
                                 (vswap! answers assoc resource-eid cached)
                                 cached)
-                            (let [value (if (and fault-free? (not (fault-free? resource-eid)))
-                                          ::qualified
-                                          (decide-leveled search entry resource-eid))]
+                            (let [value (decide-leveled search entry resource-eid)]
                               (vswap! searched inc)
                               (vswap! computed conj resource-eid)
                               (when-not (= ::qualified value)

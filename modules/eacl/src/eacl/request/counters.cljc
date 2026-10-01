@@ -31,7 +31,14 @@
    :scan-shared-hits
    :scan-misses
    :range-derivations
-   :range-compositions])
+   :range-compositions
+   ;; Fault diagnostics. `:qualifier-faults` counts qualified edges whose
+   ;; qualification faulted; `:masked-faults` counts compositions in which a
+   ;; definite operand absorbed a fault (strong-Kleene semantics). A request
+   ;; that succeeds with either counter positive had a fault that did not
+   ;; affect its answer.
+   :qualifier-faults
+   :masked-faults])
 
 (def ^:private known-counter-keys (set counter-keys))
 (def ^:private counter-index (zipmap counter-keys (range)))

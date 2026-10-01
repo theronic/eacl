@@ -969,7 +969,9 @@
     ;; delegated operand's own union plan, or else by the flattened
     ;; generator over the union-only permissions' union plans.
     :recursive-generator :flattened-guarded-generator-v1
-    :qualified-membership :certified-fault-free-operands-v2
+    ;; Strong-Kleene faults: operand decisions, including reordered batched
+    ;; membership, are independent of evaluation order.
+    :qualified-membership :kleene-fault-operands-v3
     :membership-subjects :typed-wildcard-variants-v1
     :versions
     {:cover operator-plan/cover-version
@@ -1878,7 +1880,11 @@
       :cut-point! (stable-cut-point)
       :page-size page-size
       :qualification *qualification*
-      :result-policy *lookup-result-policy*
+      ;; A raw candidate stream keeps every possibly active decision, faults
+      ;; included: its consumer composes each one with a filter edge before
+      ;; applying the public policy (a conditional candidate whose filter
+      ;; faults must fail, not vanish).
+      :result-policy (if raw? :possible *lookup-result-policy*)
       :after (when (= :asc direction) edge)
       :before (when (= :desc direction) edge)
       :last-window? (and (= :desc direction) (nil? edge))
@@ -1911,23 +1917,6 @@
               candidates)))
     []))
 
-(defn- ordered-operator-membership?
-  "Caveat faults are demand-sensitive. The leveled search reorders witnesses,
-   so caveated closures use ordered point operands (and tabled guarded
-   members). Plain and expiration-only closures keep the batched search."
-  [plan permission]
-  (when *qualification*
-    (let [compute #(hash-map
-                    :ordered?
-                    (boolean
-                     (some (fn [relation]
-                             (qualification/declares-caveats? *qualification* relation))
-                           (get-in plan [:relation-closures permission :all]))))]
-      (:ordered?
-       (if-let [plans (:sealed-plans *schema-cache*)]
-         (memoized-map-derived! plans [::ordered-operator-membership (:fingerprint plan) permission] compute)
-         (compute))))))
-
 (defn- delegated-operand-oracle
   "The oracle for a delegated operator plan's operands
   (`operator-plan/delegation`). Each union-only operand is decided through
@@ -1936,8 +1925,10 @@
   - `:batched` serves lookups and counts. Candidates that share one subject
     (every forward page and count) go through `stable-route/check-many-eids`
     with one request-scoped membership context, so holdings, intermediates,
-    and decided ancestors are read once per request. Caveated operands retain
-    ordered point checks because their faults are demand-sensitive.
+    and decided ancestors are read once per request. Faults compose with
+    strong-Kleene connectives, so the reordered search decides Caveated
+    operands too: a definite witness absorbs a fault, and a resource that
+    rests on a fault or a residual gets its exact point value.
   - `:point` serves a single check, where the exact point check is already
     the cheapest decision.
 
@@ -1945,8 +1936,7 @@
   modes by the guarded membership search over its program, with a
   request-scoped context. Its guards and witnesses ask this oracle for the
   permissions they name. A resource the search defers gets the tabled
-  evaluator's exact value. A guarded member whose closure declares Caveats
-  uses that evaluator directly.
+  evaluator's exact value.
 
   Returns the oracle's `:delegate`, its `:point-delegate` (which reproduces a
   check's certificates), and the attempt counter of its routed read path. A
@@ -1955,7 +1945,6 @@
   candidates of one subject from one scan."
   [db plan mode]
   (let [{:keys [fetch-fn attempts]} (stable-fetch-fn db)
-        ordered? #(ordered-operator-membership? plan %)
         context (when (= :batched mode) (stable-route/membership-context))
         guarded (:members (operator-plan/guarded-delegation plan))
         guarded-context (when (seq guarded)
@@ -1964,9 +1953,8 @@
                        {:adapter db
                         :fetch-fn fetch-fn
                         :qualification *qualification*
-                        :verify-fault-freedom? true
                         ;; A point visits few resources; a page amortizes a
-                        ;; larger holding slice and its metadata certificate.
+                        ;; larger holding slice.
                         :holding-limit (if (= :point mode) 64 512)
                         :cut-point! (stable-cut-point)})
         point (fn [permission candidates]
@@ -2007,8 +1995,6 @@
                    :checkpoint? false}))
         guarded-decide
         (fn guarded-decide [permission subject-type subject-eid resource-eids]
-          (if (ordered? permission)
-            (mapv #(tabled permission subject-type subject-eid %) resource-eids)
             (stable-route/check-many-eids
              (assoc options
                     :plan (if (contains? guarded permission)
@@ -2021,17 +2007,16 @@
                     :oracle (fn [target eid]
                               (first (guarded-decide target subject-type subject-eid [eid])))
                     :fallback (when (contains? guarded permission)
-                                (fn [eid] (tabled permission subject-type subject-eid eid)))))))
+                              (fn [eid] (tabled permission subject-type subject-eid eid))))))
         guarded-delegate (fn [permission candidates]
                            (by-subject #(guarded-decide permission %1 %2 %3) candidates))
         union-delegate
         (if context
           (fn [permission candidates]
             (let [{:keys [subject-type subject-eid]} (first candidates)]
-              (if (and (not (ordered? permission))
-                       (every? #(and (= subject-eid (:subject-eid %))
+              (if (every? #(and (= subject-eid (:subject-eid %))
                                      (= subject-type (:subject-type %)))
-                               candidates))
+                          candidates)
                 (stable-route/check-many-eids
                  (assoc options
                         :plan (stable-plan db permission)
@@ -2494,7 +2479,9 @@
   wildcard entry excludes it, the wildcard entry's. A touch-cover subject
   without a definite grant is excluded under every result policy: a
   conditional subject keeps its own conditional entry, and the wildcard's
-  grant must not complete it."
+  grant must not complete it. A faulting subject is excluded too: the
+  wildcard entry does not grant it, and its own candidate fails the walk
+  when a page consumes it."
   [decision]
   (not (evidence/has? decision)))
 
@@ -2525,9 +2512,10 @@
                                   (evaluate (mapv #(spice-object subject-type %) chunk))))
                         (partition-all operator-batch-schedule/maximum-width candidates))]
     (report-adapter-attempts! attempts)
+    ;; The touch subjects are this walk's own candidates: a faulting decision
+    ;; is excluded here and fails only the page that consumes its candidate.
     (into []
           (keep (fn [[eid decision]]
-                  (evidence/throw-if-fault! decision)
                   (when (wildcard-excluded? decision)
                     (spice-object subject-type eid))))
           (map vector candidates decisions))))

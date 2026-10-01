@@ -469,8 +469,11 @@
           (eacl/lookup-resources client {:subject alice :permission :pruned
                                          :resource/type :folder :first 10
                                          :caveat-context {} :cache? false}))
-        (is (zero? (:searched @stats 0))
-            "a caveated guarded member goes directly to the ordered evaluator")))
+        ;; Strong-Kleene faults make the reordered guarded search sound for
+        ;; Caveated members too; conditional resources defer to the exact
+        ;; tabled evaluator.
+        (is (pos? (:searched @stats 0)) "a caveated guarded member is searched")
+        (is (pos? (:fallbacks @stats 0)) "conditional resources are decided exactly")))
     (doseq [time [100 250 350]
             context [{} {"flag" true} {"flag" false}]
             permission [:inherited :pruned]]

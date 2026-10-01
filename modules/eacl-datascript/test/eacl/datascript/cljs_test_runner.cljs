@@ -123,9 +123,9 @@
             [eacl.datascript.safe-retraction-test]
             [eacl.datascript.snapshot-lifecycle-test]
             [eacl.datascript.set-algebra-reuse-test]
-            [eacl.datascript.operator-fault-demand-test]
+            [eacl.datascript.kleene-fault-test]
             [eacl.engine.wildcard-membership-test]
-            [eacl.engine.fault-free-membership-test]
+            [eacl.engine.kleene-membership-test]
             [eacl.datascript.set-algebra-reuse-differential-test]
             [eacl.datascript.storage-test]
             [eacl.datascript.wildcard-test]
@@ -265,9 +265,9 @@
                'eacl.datascript.safe-retraction-test
                'eacl.datascript.snapshot-lifecycle-test
                'eacl.datascript.set-algebra-reuse-test
-               'eacl.datascript.operator-fault-demand-test
+               'eacl.datascript.kleene-fault-test
                'eacl.engine.wildcard-membership-test
-               'eacl.engine.fault-free-membership-test
+               'eacl.engine.kleene-membership-test
                'eacl.datascript.set-algebra-reuse-differential-test
                'eacl.datascript.storage-test
                'eacl.datascript.wildcard-test

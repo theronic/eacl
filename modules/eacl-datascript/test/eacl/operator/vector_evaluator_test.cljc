@@ -534,7 +534,11 @@
         (is (= :conditional-permission (evidence/permissionship (first (:result after)))))
         (is (= [true false true true true false true false] (:result granted)))
         (is (every? false? (:result denied)))
-        (is (every? evidence/fault? (:result fault)))
+        ;; An ill-typed value faults every evaluated Caveat edge. A definite
+        ;; denial still absorbs it (strong Kleene): exactly the decisions
+        ;; that are false whatever the Caveat says stay false.
+        (is (= (mapv #(if (false? %) false :fault) (:result granted))
+               (mapv #(cond (evidence/fault? %) :fault (false? %) false :else %) (:result fault))))
         (is (= prior-entries (get-in (subproblem/stats store) [:tiers :denotation :entries])))
         (let [reverse-options {:adapter adapter :plan sealed
                                :candidates (mapv #(assoc % :direction :reverse) candidates)
@@ -585,9 +589,12 @@
                           (first (remove #{(second root-key)}
                                          (keys (get-in sealed [:predicate-programs [:document :view]]))))]
                 fault (evidence/fault :test/failure :invalid)]
-            (with-redefs [direct/dispatch-edges (fn [& _] (throw (ex-info "Fault already encountered" {})))]
-              (is (= [fault] (vector-evaluator/check-cached-many-eids
-                              (assoc options :candidates [(assoc candidate :evidence-witnesses {leaf-key fault})]))))))
+            ;; A witness is an exact node value of this request, a shortcut
+            ;; and never an override: the completed decision is reused
+            ;; without evaluation, beside a faulting witness too.
+            (with-redefs [direct/dispatch-edges (fn [& _] (throw (ex-info "Completed decision is reused" {})))]
+              (is (= [true] (vector-evaluator/check-cached-many-eids
+                             (assoc options :candidates [(assoc candidate :evidence-witnesses {leaf-key fault})]))))))
           (is (= :witness-scope
                  (:reason (error-data #(vector-evaluator/check-cached-many-eids
                                         (dissoc options :witness-scope)))))))))

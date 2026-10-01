@@ -1,6 +1,9 @@
-(ns eacl.engine.fault-free-membership-test
-  "Exhaustive finite graphs compare admitted batching with ordered points,
-   including malformed metadata, cycles and both resource orders."
+(ns eacl.engine.kleene-membership-test
+  "Exhaustive finite graphs compare reordered batched membership with
+   ordered points, including malformed metadata, cycles and both resource
+   orders. Under strong-Kleene faults the reordered search needs no
+   fault-freedom precondition: a definite witness absorbs a fault and a
+   resource that rests on one is decided exactly."
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is]]
             [eacl.authorization.evidence :as evidence]
             [eacl.authorization.qualification :as qualification]
@@ -54,7 +57,7 @@
            plan plans
            order [[1 2 1] [2 1 2]]
            :let [options {:adapter adapter :plan plan :subject-type :user :subject-eid 7
-                          :verify-fault-freedom? true :physical-chunk-size 1}
+                          :physical-chunk-size 1}
                  expected (mapv #(evidence/value
                                   (route/check-eids (assoc options :resource-eid % :qualification (request))))
                                 order)
@@ -64,10 +67,10 @@
            :when (not= expected actual)]
        {:graph code :root (:root plan) :order order :expected expected :actual actual}))))
 
-(deftest certified-batching-preserves-ordered-faults-on-every-two-node-graph
+(deftest batched-membership-equals-ordered-points-on-every-two-node-graph
   ;; Six possible edges, each absent, plain, expiring or malformed: 4^6
   ;; graphs. Compare fault values as well as permissionship. Duplicate roots
-  ;; and opposite query orders exercise request-local proof/answer reuse.
+  ;; and opposite query orders exercise request-local answer reuse.
   (doseq [holding-limit [1 256]]
     (with-redefs [route/holdings-limit holding-limit]
       (is (nil? (run-campaign)) (str "holdings limit " holding-limit)))))

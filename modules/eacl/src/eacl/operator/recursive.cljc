@@ -5,7 +5,12 @@
   contexts.  It then evaluates the signed question graph dependency-first.
   Positive components use a deterministic fact worklist; intersection state
   is materialized only after its sealed anchor fact exists.  Negative edges
-  may consume absence only after their dependency component is complete."
+  may consume absence only after their dependency component is complete.
+
+  Qualified facts compose with strong-Kleene connectives and accumulate by
+  union to the least fixed point in the per-completion order
+  false < fault < true. A faulting via edge is joined with its target like
+  any other via, so it faults a head only when the target can hold."
   (:require [eacl.authorization.evidence :as evidence]
             [eacl.authorization.evidence-index :as evidence-index]
             [eacl.authorization.point-reuse :as point-reuse]
@@ -526,7 +531,9 @@
                              (qualification/qualify qualification (:via-relation-eid partition) compact-edge)
                              true)]
                    (cond
-                     (or (evidence/no? via) (evidence/fault? via))
+                     ;; A faulting via is a Kleene unknown joined with its
+                     ;; target below; only a definite denial is inactive.
+                     (evidence/no? via)
                      [dependencies probes probe-vias (evidence/combine :union inactive via)]
 
                      permission-target?
@@ -926,7 +933,9 @@
   ;; Positive components accumulate derivations, including their certificates.
   ;; Replacing a grounded grant with a cyclic alternative can circulate distinct
   ;; deadlines forever. Union retains that witness while still propagating
-  ;; residual growth, incomplete absence evidence, and every encountered fault.
+  ;; residual growth, incomplete absence evidence, and every fault no grant
+  ;; absorbs. The accumulation is the least fixed point in the
+  ;; per-completion order false < fault < true.
   (let [prior (get (:facts state) head false)
         value (evidence/combine :union prior derived)]
     (if (= value prior)
@@ -940,23 +949,6 @@
         (cond-> (assoc state :facts facts)
           (not pending?) (update :agenda conj head)
           (not pending?) (update :queued conj head))))))
-
-(defn- unanchored-evidence [state rule slot anchor]
-  ;; No join is retained before an anchor has a nonempty completion set.
-  ;; A false anchor supplies a conservative certificate by itself. Already
-  ;; encountered faults remain authoritative even without an allocated join.
-  (if (nil? slot)
-    (or (reduce (fn [fault dependency]
-                  (let [value (dependency-value state dependency)]
-                    (if (evidence/fault? value)
-                      (if fault (evidence/combine :intersection fault value) value)
-                      fault))) nil (:dependencies rule))
-        anchor)
-    (let [child (dependency-value state (nth (:dependencies rule) slot))
-          prior (get (:facts state) (:key rule) false)]
-      (cond (evidence/fault? child) (evidence/combine :intersection prior child)
-            (evidence/fault? prior) prior
-            :else anchor))))
 
 (defn- charge-evidence-anchor! [rule limits counters]
   (let [states (inc (:anchor-states @counters))
@@ -986,10 +978,15 @@
           (let [prior (get-in state [:join-states key])
                 anchor (when (= kind :intersection)
                          (dependency-value state (nth dependencies (:anchor-slot rule))))
+                ;; No join is retained before the anchor can hold. A false
+                ;; anchor decides the intersection with its own certificate,
+                ;; whatever its siblings are, faults included (strong
+                ;; Kleene). A faulting anchor allocates the join: a false
+                ;; sibling can still make the intersection false.
                 unanchored? (and (= kind :intersection) (nil? prior)
-                                 (or (evidence/no? anchor) (evidence/fault? anchor)))]
+                                 (evidence/no? anchor))]
             (if unanchored?
-              [state (unanchored-evidence state rule slot anchor)]
+              [state anchor]
               (let [_ (when (and (= kind :intersection) (nil? prior))
                         (charge-evidence-anchor! rule limits counters))
                     joined (if prior
@@ -1368,7 +1365,9 @@
                                 (let [lower? (contains? (:lower graph) q)
                                       upper? (contains? (:upper graph) q)]
                                   (case (evidence/permissionship decision)
-                                    :evaluation-failure true
+                                    ;; A fault is neither definitely true nor
+                                    ;; definitely false.
+                                    :evaluation-failure (and (not lower?) upper?)
                                     :has-permission upper?
                                     :no-permission (not lower?)
                                     :conditional-permission (and (not lower?) upper?))))

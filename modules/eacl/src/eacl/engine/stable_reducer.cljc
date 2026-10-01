@@ -313,7 +313,7 @@
          (fn [{:keys [weights pending new-ids queued changes weight-size] :as stage} item]
            (if (nil? item)
              stage
-             (let [incoming (evidence/throw-if-fault! (:evidence item true))
+             (let [incoming (:evidence item true)
                    id (work-id item)
                    seen? (or (contains? (:admitted state) id) (contains? new-ids id))
                    previous (if seen? (get weights id true) false)
@@ -730,10 +730,12 @@
       ;; `value->successors` remains as a mutation-test seam. Production scan
       ;; kinds have exactly one successor and use the allocation-free path.
       (if-let [qualified (:qualified state)]
+        ;; A faulting row is a Kleene unknown carried on the path: it is
+        ;; possibly active, and only a consumed root decision that depends on
+        ;; it fails. A row that leads to no root never fails the walk.
         (let [relation (when (edge/qualifier-id value)
                          (:relation-eid (or descriptor (item-scan-descriptor item))))
-              value-evidence (evidence/throw-if-fault!
-                              (qualification/qualify (:request qualified) relation value))
+              value-evidence (qualification/qualify (:request qualified) relation value)
               joined (evidence/combine :arrow (:evidence item true) value-evidence)
               successor (when-not (evidence/no? joined)
                           (cond-> (scan-successor item (edge/endpoint value))
@@ -818,12 +820,19 @@
       (if (contains? (:processed qualified) eid)
         state
         (let [incoming (:evidence item true)
+              policy (:result-policy qualified)
               value (if (evidence/has? incoming)
                       incoming
-                      (evidence/throw-if-fault! ((:candidate-evidence-fn qualified) eid item)))
+                      ((:candidate-evidence-fn qualified) eid item))
+              ;; This root is consumed: its complete decision fails a public
+              ;; walk when it faults in some completion. A `:possible` raw
+              ;; stream instead hands every possibly active decision, faults
+              ;; included, to a caller that composes it further.
+              _ (when-not (= :possible policy) (evidence/throw-if-fault! value))
               conditional? (= :conditional-permission (evidence/permissionship value))
               include? (or (evidence/has? value)
-                           (and (= :detailed (:result-policy qualified)) conditional?))
+                           (and (= :detailed policy) conditional?)
+                           (and (= :possible policy) (not (evidence/no? value))))
             ;; Only revisitable roots need a delivered/filtered identity.
               qualified (cond-> qualified
                           (:revision item) (update :processed conj eid)
@@ -958,8 +967,10 @@
   (when (and qualification (not (fn? candidate-evidence-fn)))
     (throw (ex-info "Qualified discovery requires complete candidate evidence."
                     {:type :eacl.reducer/missing-candidate-evaluator})))
+  ;; `:possible` is internal: a raw candidate stream whose consumer composes
+  ;; each decision further before applying the public policy.
   (when (and (contains? options :result-policy)
-             (not (contains? #{:definite :detailed} result-policy)))
+             (not (contains? #{:definite :detailed :possible} result-policy)))
     (throw (ex-info "Invalid discovery result policy."
                     {:type :eacl.reducer/invalid-result-policy})))
   (map->ReducerState

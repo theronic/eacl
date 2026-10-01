@@ -149,14 +149,15 @@
 
 (defn- stream-next
   "[value stream'] or [nil stream'] on exhaustion. Qualified false rows
-   advance physical bounds and consume the same command/value budgets."
+   advance physical bounds and consume the same command/value budgets. A
+   faulting row is a Kleene unknown carried as the stream's evidence: it is
+   possibly active, and only a consumed decision that depends on it fails."
   [ctx {:keys [mk buf idx bound done?] :as s}]
   (cond
     (< idx (count buf))
     (let [value (nth buf idx) eid (edge/endpoint value)
           result (if (and (:qualification ctx) (vector? value))
-                   (evidence/throw-if-fault!
-                    (qualification/qualify (:qualification ctx) (:relation-eid (mk bound 1)) value))
+                   (qualification/qualify (:qualification ctx) (:relation-eid (mk bound 1)) value)
                    true)
           next-stream (cond-> (assoc s :idx (inc idx) :bound eid)
                         (:qualification ctx) (assoc :evidence result))]
@@ -192,8 +193,7 @@
                                 (dec candidate) 1 false)))]
     (if (= candidate (edge/endpoint value))
       (if (:qualification ctx)
-        (evidence/throw-if-fault!
-         (qualification/qualify (:qualification ctx) relation-eid value))
+        (qualification/qualify (:qualification ctx) relation-eid value)
         true)
       false)))
 
@@ -204,8 +204,7 @@
                                 (dec candidate) 1 false)))]
     (if (= candidate (edge/endpoint value))
       (if (:qualification ctx)
-        (evidence/throw-if-fault!
-         (qualification/qualify (:qualification ctx) relation-eid value))
+        (qualification/qualify (:qualification ctx) relation-eid value)
         true)
       false)))
 
@@ -218,11 +217,13 @@
 (defn- path-active? [ctx state]
   (or (nil? (:qualification ctx)) (not (evidence/no? (get state :evidence true)))))
 
-(defn- path-hit? [ctx state other]
+(defn- path-hit?
+  "Whether the joined path is possibly active: not definitely false. A
+   faulting conjunct counts as possibly active unless the other is false."
+  [ctx state other]
   (if (:qualification ctx)
-    (not (evidence/no? (evidence/throw-if-fault!
-                       (evidence/combine :arrow (get state :evidence true)
-                                         (if (nil? other) false other)))))
+    (not (evidence/no? (evidence/combine :arrow (get state :evidence true)
+                                         (if (nil? other) false other))))
     (boolean other)))
 
 (defn- isect2?
@@ -322,7 +323,7 @@
                           :subject-eid subject-eid
                           :resource-eid resource-eid})]
       (if (:qualification env)
-        (not (evidence/no? (evidence/throw-if-fault! result)))
+        (not (evidence/no? result))
         (boolean result)))
     true))
 
@@ -339,7 +340,7 @@
                        :subject-type (:subject-type env)
                        :subject-eid subject-eid :resource-eid resource-eid
                        :evidence-witness {:rule rule :evidence path-evidence}}))]
-        (when-not (evidence/no? (evidence/throw-if-fault! result))
+        (when-not (evidence/no? result)
           {:value value :coords coords :evidence result})))
     (when (candidate-accepted? env node subject-eid resource-eid)
       {:value value :coords coords})))
@@ -355,7 +356,7 @@
                        :subject-type (:subject-type env)
                        :subject-eid subject-eid :resource-eid resource-eid
                        :evidence-witness {:rule rule :intermediate intermediate :evidence path-evidence}}))]
-        (when-not (evidence/no? (evidence/throw-if-fault! result))
+        (when-not (evidence/no? result)
           {:value value :coords coords :evidence result})))
     (accepted-emission env node rule subject-eid resource-eid value coords true)))
 
@@ -375,22 +376,22 @@
   (if (:qualification env)
     ;; The qualified local predicate proves the actual node. Running the
     ;; structural cover's point traversal first would duplicate that work.
+    ;; A faulting node value is possibly active: it is not thrown here, and
+    ;; only a consumed decision that depends on it fails.
     (let [accepted
-          (evidence/throw-if-fault!
-           ((:candidate-accept? env)
-            (cond-> {:node node :direction (:traversal env) :subject-type (:subject-type env)
-                     :subject-eid subject-eid :resource-eid resource-eid}
-              (own-derivation-required? env) (assoc :wildcards? false))))]
+          ((:candidate-accept? env)
+           (cond-> {:node node :direction (:traversal env) :subject-type (:subject-type env)
+                    :subject-eid subject-eid :resource-eid resource-eid}
+             (own-derivation-required? env) (assoc :wildcards? false)))]
       (if (and (own-derivation-required? env)
                (not (:legacy-qualified? env))
                (not (evidence/no? accepted)))
-        (if (evidence/no? (evidence/throw-if-fault!
-                           (route/derives-from-node?
-                            (assoc route-opts
-                                   :start-node node
-                                   :subject-eid subject-eid
-                                   :resource-eid resource-eid
-                                   :wildcards? false))))
+        (if (evidence/no? (route/derives-from-node?
+                           (assoc route-opts
+                                  :start-node node
+                                  :subject-eid subject-eid
+                                  :resource-eid resource-eid
+                                  :wildcards? false)))
           false
           accepted)
         accepted))
@@ -1268,7 +1269,6 @@
         scope (delay (qualification/exact-reuse-identity request))
         memo (volatile! {})]
     (fn [{:keys [node subject-type subject-eid resource-eid evidence-witness] :as request}]
-      (when evidence-witness (evidence/throw-if-fault! (:evidence evidence-witness)))
       (if (and evidence-witness (evidence/has? (:evidence evidence-witness)))
         (:evidence evidence-witness)
         (let [wildcards? (not (false? (:wildcards? request)))
@@ -1281,16 +1281,15 @@
                                 {:type :eacl.operator/invalid-lookup :eacl/error :eacl.operator/invalid-lookup
                                  :reason :node-evidence-limit})))
               (let [result
-                    (evidence/throw-if-fault!
-                     (route/derives-from-node?
-                      (cond-> (assoc route-options :start-node node :subject-type subject-type
-                                     :subject-eid subject-eid :resource-eid resource-eid
-                                     :wildcards? wildcards?)
-                        evidence-witness
-                        (assoc :known-witness
-                               (assoc evidence-witness
-                                      :point [node subject-type subject-eid resource-eid]
-                                      :scope (force scope))))))]
+                    (route/derives-from-node?
+                     (cond-> (assoc route-options :start-node node :subject-type subject-type
+                                    :subject-eid subject-eid :resource-eid resource-eid
+                                    :wildcards? wildcards?)
+                       evidence-witness
+                       (assoc :known-witness
+                              (assoc evidence-witness
+                                     :point [node subject-type subject-eid resource-eid]
+                                     :scope (force scope)))))]
                 (vswap! memo assoc point result)
                 result))))))))
 
@@ -1328,6 +1327,12 @@
      :route-opts (select-keys options reducer/run-option-keys)}))
 
 (defn- run-page
+  "Consumes emissions until the page and its sentinel are full. A public page
+   fails on a consumed candidate whose complete decision faults in some
+   completion, before applying its result policy, so the policy only selects
+   which decided items are shown. Raw candidates go to a caller that composes
+   them further (an operator predicate or a relationship filter): they keep
+   every possibly active candidate, faults included, and decide nothing."
   [env level next-fn page-size raw-candidates?]
   (loop [level level
          emissions []]
@@ -1343,13 +1348,17 @@
       (let [[emission level'] (next-fn env level)]
         (if (nil? emission)
           {:emissions emissions :has-more? false :exhausted? true}
-          (do (vswap! (:counters (:ctx env)) update :emissions inc)
-              (recur level'
-                     (if (and (:qualification env)
-                              (= :definite (:result-policy env))
-                              (not (evidence/has? (get emission :evidence true))))
-                       emissions
-                       (conj emissions emission)))))))))
+          (let [value (get emission :evidence true)]
+            (vswap! (:counters (:ctx env)) update :emissions inc)
+            (when (and (:qualification env) (not raw-candidates?))
+              (evidence/throw-if-fault! value))
+            (recur level'
+                   (if (and (:qualification env)
+                            (not raw-candidates?)
+                            (= :definite (:result-policy env))
+                            (not (evidence/has? value)))
+                     emissions
+                     (conj emissions emission)))))))))
 
 (defn forward-page
   "One least-path page of root entities for the subject.

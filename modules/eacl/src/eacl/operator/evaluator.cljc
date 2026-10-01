@@ -2,10 +2,13 @@
   "Stack-safe exact point evaluation for acyclic operator plans.
 
   The machine evaluates the sealed predicate DAG with request-local completed
-  memoization. Union and intersection retain scalar short-circuit demand;
-  exclusion evaluates its right operand only after exact left success. Arrow
-  scans stay on the selected immutable adapter basis and stop at the first
-  exact witness."
+  memoization, composing with strong-Kleene connectives. Union stops at the
+  first definite grant and intersection at the first definite denial; a
+  fault never stops either, because a later operand can absorb it.
+  Exclusion skips its right operand only after a definite left denial. Arrow
+  scans stay on the selected immutable adapter basis, join a faulting via
+  edge with its target like any other via, and stop at the first definite
+  witness."
   (:require [eacl.authorization.evidence :as evidence]
             [eacl.authorization.qualification :as qualification]
             [eacl.backend.v8 :as backend]
@@ -102,9 +105,11 @@
     (limit! :memo-entries maximum (inc (count memo))))
   [(assoc memo key value) (disj active key) value])
 
-(defn- decisive? [op value]
-  (or (evidence/fault? value)
-      (if (= :union op) (evidence/has? value) (evidence/no? value))))
+(defn- decisive?
+  "A definite absorber: `true` for a union, `false` for an intersection or
+  an exclusion's left operand. A fault is never decisive."
+  [op value]
+  (if (= :union op) (evidence/has? value) (evidence/no? value)))
 
 (defn- direct-match?
   "Membership of the subject in one direct relation: its own tuple, or the
@@ -122,9 +127,11 @@
       (let [own
             (direct-match! subject-type subject-eid relation-id
                            resource-type resource-eid)
+            ;; A definite own grant decides alone; otherwise the decision is
+            ;; own ∪ wildcard, so a wildcard grant absorbs a faulting own tuple.
             decision
             (if (or (nil? wildcard-eid) (= wildcard-eid subject-eid)
-                    (evidence/has? own) (evidence/fault? own))
+                    (evidence/has? own))
               own
               (do
                 (request-counters/add-probes!)
@@ -503,11 +510,6 @@
                               ;; The seed already contributed this exact binding.
                               ;; Visit only remaining target obligations.
                               [(conj stack next-frame) memo active no-value]
-
-                              (evidence/fault? via)
-                              (let [[memo active value]
-                                    (complete-value memo active key via maximum-memo-entries)]
-                                [stack memo active value])
 
                               (evidence/no? via)
                               [(conj stack (assoc next-frame :accumulated

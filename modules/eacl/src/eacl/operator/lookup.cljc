@@ -74,7 +74,9 @@
 
 (defn- complete-arrow-witness
   [options predicate permission node-id subject-type subject-eid resource-eid witness]
-  (let [value (evidence/throw-if-fault! (:evidence witness))]
+  ;; A faulting binding is only a lower bound of the arrow's union: the exact
+  ;; evaluation seeded with it decides whether another binding absorbs it.
+  (let [value (:evidence witness)]
     (if (evidence/has? value)
       value
       (let [rule (:rule witness)
@@ -115,8 +117,6 @@
                     "Least-path requested an unmapped operator cover node." {:node node}))
         (if qualification
           (let [point [direction subject-type subject-eid resource-eid]
-                _ (when evidence-witness
-                    (evidence/throw-if-fault! (:evidence evidence-witness)))
                 previous (get-in @memo [:points point] {})
                 proof-node (when evidence-witness
                              (case (get-in evidence-witness [:rule :rule])
@@ -129,9 +129,10 @@
                                (:arrow-relation :arrow-permission) nil
                                (invalid! :unsupported-generator-witness
                                          "Qualified generator witness is not an exact node result." {})))
+                ;; Exact node values, faulting ones included: the cover only
+                ;; needs to know whether a node is possibly active.
                 known (if proof-node
-                        (assoc previous proof-node
-                               (evidence/throw-if-fault! (:evidence evidence-witness)))
+                        (assoc previous proof-node (:evidence evidence-witness))
                         previous)
                 result
                 (cond
@@ -154,7 +155,7 @@
                       :witness-scope (qualification/exact-reuse-identity qualification)
                       :limits vector-limits :scope-identity scope-identity}
                       cache-lookup (assoc :cache-lookup cache-lookup)))))
-                known (assoc known semantic (evidence/throw-if-fault! result))
+                known (assoc known semantic result)
                 entries (+ (:entries @memo) (- (count known) (count previous)))]
             (when (> entries maximum-local-node-evidence)
               (invalid! :node-evidence-limit "Qualified local node evidence limit exceeded." {}))
@@ -288,15 +289,15 @@
            qualification (assoc :qualification qualification
                                 :witness-scope (qualification/exact-reuse-identity qualification))
            cache-lookup (assoc :cache-lookup cache-lookup)))]
+    ;; Decisions stay values here: a physically evaluated batch may overread
+    ;; candidates its page or count never consumes. A filter edge composes
+    ;; with every possibly active decision before the result policy applies,
+    ;; so a conditional candidate whose filter edge faults fails when
+    ;; consumed, under either policy.
     (mapv (fn [emission witness decision]
-            (when qualification (evidence/throw-if-fault! decision))
-            (let [decision (if (and accept-result-evidence
-                                    (if (= result-policy :detailed)
-                                      (not (evidence/no? decision))
-                                      (evidence/has? decision)))
-                             (evidence/throw-if-fault!
+            (let [decision (if (and accept-result-evidence (not (evidence/no? decision)))
                               (evidence/combine :intersection decision
-                                                (accept-result-evidence (:value emission))))
+                                               (accept-result-evidence (:value emission)))
                              decision)]
               (cond-> (assoc emission
                              :accepted?
@@ -313,6 +314,20 @@
 (defn- add-counters [total delta]
   ;; Both raw producers emit exactly the four counter keys.
   (merge-with + total delta))
+
+(defn- consume!
+  "Consumes evaluated emissions in order until `demand` accepted results
+  (all of them when `demand` is nil). A consumed decision that faults in
+  some completion fails the page or count; overread candidates past the
+  demand never do. Returns `{:consumed entries :grants n}`."
+  [evaluated demand qualified?]
+  (loop [remaining (seq evaluated) consumed [] grants 0]
+    (if (or (nil? remaining) (and demand (= grants demand)))
+      {:consumed consumed :grants grants}
+      (let [entry (first remaining)]
+        (when qualified? (evidence/throw-if-fault! (get entry :evidence true)))
+        (recur (next remaining) (conj consumed entry)
+               (if (:accepted? entry) (inc grants) grants))))))
 
 (defn resume-coordinate
   "Returns the logical continuation coordinate. A physically evaluated
@@ -407,15 +422,8 @@
                :counters counters})
             (let [evaluated (evaluate-emissions options cover-plan emissions)
                   remaining-demand (- result-demand (count accepted))
-                  consumed
-                  (loop [remaining evaluated consumed [] grants 0]
-                    (if-let [value (first remaining)]
-                      (let [grants (+ grants (if (:accepted? value) 1 0))
-                            consumed (conj consumed value)]
-                        (if (= grants remaining-demand)
-                          consumed
-                          (recur (rest remaining) consumed grants)))
-                      consumed))
+                  {:keys [consumed]}
+                  (consume! evaluated remaining-demand (:qualification options))
                   grants (filterv :accepted? consumed)
                   accepted (into accepted grants)
                   consumed-count (count consumed)
@@ -524,9 +532,11 @@
         (if (empty? emissions)
           (count-response accumulated count-limit false counters categories)
           (let [evaluated (evaluate-emissions options cover-plan emissions)
-                grants (reduce (fn [n entry]
-                                 (if (:accepted? entry) (inc n) n))
-                               0 evaluated)
+                ;; An exact count consumes every candidate; a bounded one stops
+                ;; at the lookahead grant that proves truncation.
+                {:keys [grants]}
+                (consume! evaluated (when target (- target accumulated))
+                          (:qualification options))
                 next-count (+ accumulated grants)
                 categories (when categories
                              (count-categories categories evaluated
