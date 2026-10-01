@@ -21,6 +21,7 @@
           :warmups 1
           :samples 2
           :nano-time (advancing-reader 1000)
+          :cpu-time (advancing-reader 500)
           :allocated-bytes (advancing-reader 64)
           :environment
           {:os "TestOS" :architecture "test-arch" :java-version "26.0.2"}
@@ -41,6 +42,9 @@
            (get-in report [:arms :baseline :latency-us :raw])))
     (is (= [64 64]
            (get-in report [:arms :candidate :allocated-bytes :raw])))
+    (is (= [0.5 0.5]
+           (get-in report [:arms :baseline :cpu-us :raw]))
+        "thread CPU time is summarized beside wall time")
     (is (true? (get-in report [:comparisons 0 :passed?])))
     (is (= :applicable (get-in report [:absolute-ceilings :status])))
     (is (true? (get-in report [:absolute-ceilings :passed?])))))
@@ -52,12 +56,15 @@
           :warmups 0
           :samples 1
           :nano-time (advancing-reader 1000)
+          :cpu-time (constantly nil)
           :allocated-bytes (constantly nil)
           :environment
           {:os "OtherOS" :architecture "other" :java-version "25"}
           :absolute-ceilings
           {["TestOS" "test-arch" "26"]
            {:a {:latency-p50-us 1.0}}}})]
+    (is (nil? (get-in report [:arms :a :cpu-us]))
+        "no CPU summary where the clock is unavailable")
     (is (= :not-applicable
            (get-in report [:absolute-ceilings :status])))
     (is (= [:os :architecture :java-major]
