@@ -212,6 +212,11 @@ Run the complete retained corpus:
 EACL_NREPL_PORT=<dev-port> bin/formal counterexample-replay
 ```
 
+Regressions in `eacl-datalevin` load only where that module is on the
+classpath. CI does not install it until its Datalevin fork is published, so
+CI's strict replay exempts them while they cannot load. Replay them from a
+Datalevin nREPL (`clojure -M:dev:datalevin-test:nrepl`).
+
 Run all registered deliberately wrong implementations:
 
 ```sh

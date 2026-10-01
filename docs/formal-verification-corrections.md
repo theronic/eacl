@@ -230,6 +230,26 @@ no verified-release claim existed.
   portable CLJS, mutation, and reduced cached/cacheless Datomic controls cover
   the policy and public continuation sequence.
 
+### EACL-FORMAL-085 — Datalevin Relation streams dropped rows after the first batch
+
+- **Affected:** Datalevin schema replacement that removes a Caveat or the
+  unqualified alternative from a Relation with more than 1,024 stored rows.
+- **Impact:** fail-open schema guard. `write-schema!` could admit the change
+  while stored Relationships still used the removed alternative. Afterwards
+  `can?` denied those Relationships, `read-relationships` on their resources
+  failed with `:eacl.qualifier/invalid`, and restoring the alternative failed
+  the same way.
+- **Root cause:** `qualified-relation-datoms` started each batch after the
+  first with a seek carrying the previous batch's last value and owner.
+  Datalevin applies a seek's entity component to every datom it returns, not
+  only to the first value, so the stream dropped every later row whose owner
+  eid was smaller than the boundary owner.
+- **Correction:** later batches position by owner only inside the boundary
+  row's value group, then continue from the adjacent value with no entity
+  component. Datalevin module tests compare the stream with the unpaged AVE
+  index across three batch boundary shapes and reject the schema replacement
+  in the minimized layout. Datomic, DataScript and Datahike were unaffected.
+
 The authoritative minimized fixtures and closing evidence are under
 `formal/counterexamples/`. Run them with
 `EACL_NREPL_PORT=<dev-port> bin/formal counterexample-replay`.

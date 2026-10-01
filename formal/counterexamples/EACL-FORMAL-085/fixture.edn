@@ -1,0 +1,35 @@
+{:operation :write-schema
+ :backend :datalevin
+ :native-batch-size 1025
+ :stream-probe
+ {:schema {:t/v {:db/valueType :db.type/tuple
+                 :db/tupleTypes :eacl.relationships.storage/tuple-types
+                 :db/cardinality :db.cardinality/many
+                 :db/index true}}
+  :transaction [:for [k 1 1100] [:db/add (- 3000 k) :t/v [:a 1 :b k (+ 5000 k)]]]
+  :request [:eacl.datalevin.db/qualified-relation-datoms :t/v [:a 1 :b]]}
+ :schema-replacement
+ {:schema "caveat enabled(flag bool) { flag }\ndefinition user {}\ndefinition doc {\n relation viewer: user | user with enabled\n permission view = viewer\n}"
+  :objects-in-eid-order
+  [[:doc :small-resources 1025] [:doc :hidden-resource 1] [:doc :big-resource 1]
+   [:user :small-subjects 1025] [:user :hidden-subject 1] [:user :big-subject 1]]
+  :relationships
+  [{:subject :big-subject :relation :viewer :resource :each-small-resource}
+   {:subject :each-small-subject :relation :viewer :resource :big-resource}
+   {:subject :hidden-subject :relation :viewer :resource :hidden-resource
+    :caveat "enabled" :caveat-context {"flag" true}}]
+  :physical-order
+  {:forward {:rows 2051 :first-batch-owner :big-subject
+             :hidden-row-position 1025 :hidden-row-owner :hidden-subject}
+   :reverse {:rows 2051 :first-batch-owner :big-resource
+             :hidden-row-position 1025 :hidden-row-owner :hidden-resource}}
+  :request {:write-schema "relation viewer: user"}}
+ :before
+ {:stream-probe {:rows 1025 :missing 75}
+  :schema-replacement
+  {:write-schema :admitted
+   :relation-caveats nil
+   :after-admission
+   {:can? false
+    :read-relationships-on-hidden-resource [:eacl.qualifier/invalid :caveat-not-allowed]
+    :restore-relation-viewer-user-or-enabled [:eacl.qualifier/invalid :caveat-not-allowed]}}}}

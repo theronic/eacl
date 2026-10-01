@@ -153,6 +153,43 @@
                 scan)
                include-qualifier?)))))))
 
+(defn- adjacent-value
+  "The nearest five-component AVE value strictly beyond `value` in
+  `direction`, with no datom between them: qualifier eids are positive and
+  the plain qualifier slot (nil) precedes them, and endpoint eids are
+  integers. Nil when no such value can exist."
+  [value direction maximum-eid]
+  (let [endpoint (nth value 3)
+        qualifier (nth value 4)
+        prefix (subvec value 0 3)]
+    (case direction
+      :asc (if (nil? qualifier)
+             (conj prefix endpoint 0)
+             (conj prefix endpoint (inc qualifier)))
+      :desc (cond
+              (some? qualifier) (conj prefix endpoint (dec qualifier))
+              (pos? endpoint) (conj prefix (dec endpoint) maximum-eid)
+              :else nil))))
+
+(defn- resumed-ave-datoms
+  "AVE datoms from one row onward, in index order.
+
+  Datalevin applies an entity seek component to every datom it returns
+  (ascending `e >= entity`, descending `e <= entity`), not only to the first
+  value. It therefore positions only inside the boundary row's own value
+  group; the rest of the scan continues from the adjacent value with no
+  entity component."
+  [db attr value entity direction limit maximum-eid]
+  (let [seek (if (= :desc direction) ds/rseek-datoms ds/seek-datoms)
+        group (into []
+                    (take-while #(and (= attr (:a %)) (= value (:v %))))
+                    (seek db :ave attr value entity limit))
+        remaining (- limit (count group))
+        next-value (adjacent-value value direction maximum-eid)]
+    (if (and (pos? remaining) next-value)
+      (into group (seek db :ave attr next-value nil remaining))
+      group)))
+
 (defn avet-endpoint-prefix
   "Endpoint datoms across entities for an exact three-component value prefix,
   using a complete five-component AVET seek bound."
@@ -189,13 +226,18 @@
 
 (defn qualified-relation-datoms
   "Complete qualified Relation stream in bounded native batches. Callers must
-   consume the stream inside the selected snapshot's ownership scope."
+   consume the stream inside the selected snapshot's ownership scope.
+
+   Each batch resumes at the previous batch's last row through
+   `resumed-ave-datoms`: a seek carrying that row's owner would also drop
+   every later row whose owner eid is smaller."
   [db attr prefix]
   (letfn [(step [boundary]
             (lazy-seq
-             (let [rows (ds/seek-datoms db :ave attr
-                                        (if boundary (:v boundary) (into prefix [0 nil]))
-                                        (:e boundary) 1025)
+             (let [rows (if boundary
+                          (resumed-ave-datoms db attr (:v boundary) (:e boundary)
+                                              :asc 1025 max-eid)
+                          (ds/seek-datoms db :ave attr (into prefix [0 nil]) nil 1025))
                    rows (if (and boundary (= [(:e boundary) (:v boundary)]
                                              [(:e (first rows)) (:v (first rows))]))
                           (rest rows) rows)

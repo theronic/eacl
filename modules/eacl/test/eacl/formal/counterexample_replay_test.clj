@@ -1,6 +1,7 @@
 (ns eacl.formal.counterexample-replay-test
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
+            [clojure.string :as str]
             [clojure.test :as test :refer [deftest is testing]]
             [eacl.test-support.repo :as repo]))
 
@@ -138,7 +139,21 @@
     :EACL-FORMAL-066
     eacl.engine.stable-reducer-test/frozen-baseline-denotation-differential-test
     :EACL-FORMAL-067
-    eacl.datomic.recursive-cache-test/recursive-page-order-is-stable-across-scan-wave-boundaries-test})
+    eacl.datomic.recursive-cache-test/recursive-page-order-is-stable-across-scan-wave-boundaries-test
+    :EACL-FORMAL-085
+    eacl.datalevin.qualified-write-test/removing-a-caveat-sees-relationships-past-the-first-native-batch})
+
+(def ^:private modules-outside-ci
+  "Namespace prefixes of modules that CI cannot install. eacl-datalevin needs a
+  Datalevin fork that is not yet published (see .github/workflows/test.yml),
+  so its regressions replay in a Datalevin nREPL, where strict replay requires
+  them like any other."
+  ["eacl.datalevin."])
+
+(defn- replayed-outside-ci?
+  [test-symbol]
+  (and (some #(str/starts-with? (namespace test-symbol) %) modules-outside-ci)
+       (not (repo/evidence-namespace-available? test-symbol))))
 
 (defn- read-edn
   [path]
@@ -275,14 +290,16 @@
         "each isolated classpath must expose some closing regressions")
     ;; Module-isolated nREPLs legitimately skip entries outside their
     ;; classpath; the one job meant to be the complete replay gate sets
-    ;; this property so silent skips fail it instead of shrinking it.
+    ;; this property so silent skips fail it instead of shrinking it. Only
+    ;; regressions of a module CI cannot install may be absent there.
     (when (= "true" (System/getProperty "eacl.replay.strict"))
-      (is (= (count regression-vars) (count available))
-          (str "strict replay requires every recorded regression to "
-               "resolve; missing: "
-               (vec
-                (remove (set (map second available))
-                        (map second regression-vars))))))
+      (let [required (remove replayed-outside-ci? (vals regression-vars))]
+        (is (= (count required) (count available))
+            (str "strict replay requires every recorded regression to "
+                 "resolve; missing: "
+                 (vec
+                  (remove (set (map second available))
+                          required))))))
     (doseq [[bug-id test-symbol test-var] available]
       (testing (name bug-id)
         (is (var? test-var) (str "missing replay " test-symbol))

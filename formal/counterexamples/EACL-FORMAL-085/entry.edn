@@ -1,0 +1,17 @@
+{:id :EACL-FORMAL-085
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace "datalevin-probe/1100-distinct-values-descending-owners"
+ :minimized-fixture "fixture.edn"
+ :impact :fail-open
+ :affected-versions ["v8.0.0"]
+ :affected-backends [:datalevin]
+ :root-cause
+ "Datalevin's qualified-relation-datoms read one Relation's AVE rows in batches of 1,025 and started each later batch with (seek-datoms db :ave attr v e 1025) at the previous batch's last datom. Datalevin applies a seek's entity component to every datom it returns (ascending: e >= entity), not only to the first value, so each later batch dropped every row whose owner eid was smaller than the boundary row's owner. relation-allowance/stored-caveats reads both endpoint streams of a changed Relation through it, so on a Relation with more than 1,024 stored rows a schema replacement that removed a Caveat (or the unqualified alternative) could miss stored Relationships that still used it, and write-schema! admitted the change."
+ :fix
+ "Each later batch resumes with resumed-ave-datoms: a seek with the boundary row's value and owner, kept only while the value equals the boundary value, then a seek from adjacent-value (the next possible five-component value: qualifier 0 after the plain slot, otherwise the next qualifier) with no entity component. The stream now equals the unpaged AVE index for the prefix."
+ :closing-evidence
+ ["eacl.datalevin.qualified-write-test/removing-a-caveat-sees-relationships-past-the-first-native-batch"
+  "eacl.datalevin.qualified-write-test/qualified-relation-stream-resumes-each-batch-inside-its-boundary-value"]
+ :notes
+ "Measured on main a698b3bd: the probe streamed 1,025 of 1,100 rows, and seeded random layouts of about 2,750 rows lost 20 to 50 percent. After an admitted replacement, can? on the hidden Relationship returned false, read-relationships on its resource failed with :eacl.qualifier/invalid :caveat-not-allowed, and restoring the Caveat to the Relation failed the same way, so write-schema! could not repair the schema. Datomic, DataScript and Datahike read these streams with one unbounded seek that has no entity component and are unaffected. CI does not install eacl-datalevin until its Datalevin fork is published, so the regression replays in a Datalevin nREPL; strict replay elsewhere exempts it."}
