@@ -1,7 +1,7 @@
 (ns eacl.caveats.relation-removal-contract
   "Removing a Relation identity that still holds Relationships fails with
    `:eacl.schema/relation-in-use` and the full count, whatever qualifiers those
-   Relationships carry. Speculative `:retain-inert` planning reports the
+   Relationships carry and whether their subject is concrete or the wildcard. Speculative `:retain-inert` planning reports the
    retained Relationships whatever qualifier the first indexed row carries."
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [is testing]]
             [eacl.core :as eacl]))
@@ -11,7 +11,7 @@
 (def with-viewer
   (str caveat-source
        "definition user {}\ndefinition doc {\n"
-       " relation viewer: user | user with enabled\n"
+       " relation viewer: user | user with enabled | user:* | user:* with enabled\n"
        " relation owner: user\n"
        " permission view = viewer + owner\n}"))
 
@@ -53,12 +53,16 @@
         subject (eacl/spice-object :user "removal/u")
         documents (mapv #(eacl/spice-object :doc (str "removal/d" %)) (range 4))
         share #(eacl/->Relationship subject :viewer (nth documents %))
+        wildcard #(eacl/->Relationship (eacl/spice-object :user "*") :viewer (nth documents %))
         ;; Endpoint indexes order one subject's rows by resource, so the first
-        ;; row every scan meets is the qualified one created first.
+        ;; row every scan meets is the qualified one created first. The
+        ;; wildcard subject's rows, qualified or not, count like any other.
         shares [(assoc (share 0) :valid-until-ms 253402300799999)
                 (assoc (share 1) :valid-until-ms 1)
                 (assoc (share 2) :caveat "enabled" :caveat-context {"flag" true})
-                (share 3)]]
+                (share 3)
+                (assoc (wildcard 0) :valid-until-ms 1)
+                (assoc (wildcard 1) :caveat "enabled" :caveat-context {"flag" true})]]
     (tx! (mapv #(hash-map :eacl/id (:id %)) (into [subject] documents)))
     (doseq [[retained relationship]
             (map vector (range 1 (inc (count shares))) shares)]
@@ -80,8 +84,9 @@
                    :present? true}]
                  (retained-orphan-diagnostics client))))))
     (eacl/write-relationships!
-     client (mapv #(hash-map :operation :delete :relationship (share %))
-                  (range (count shares))))
+     client (mapv #(hash-map :operation :delete
+                             :relationship (eacl/->Relationship (:subject %) (:relation %) (:resource %)))
+                  shares))
     (eacl/write-schema! client {:schema without-viewer})
     (is (= #{:owner} (relation-names client))
         "an unused Relation identity is removed")))
