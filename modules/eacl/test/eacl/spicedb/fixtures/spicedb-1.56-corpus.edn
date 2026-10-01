@@ -8,7 +8,7 @@
  :spicedb {:version "v1.56.0" :image "ghcr.io/authzed/spicedb:v1.56.0" :command "serve-testing"
            :endpoint "POST /v1/schema/write"}
  :generator "eacl-rust tools/spicedb-corpus: hand-written cases and deterministic mutations"
- :counts {:entries 4326 :accept 1729 :reject 2597}
+ :counts {:entries 4359 :accept 1746 :reject 2613}
  :spicedb-defects
  [{:id "wildcard-cache/same-definition"
    :schema "definition user {}\ndefinition group {\n relation member: user:*\n}\ndefinition team {\n relation member: user\n}\ndefinition doc {\n relation ggg: group#member\n relation ttt: team#member\n}"
@@ -5301,6 +5301,138 @@
     :spicedb :reject
     :schema "caveat cav(a map<list<string>>) { a.x[\"0\"] == \"y\" }\ndefinition user {}\n"
     :message "parse error in `schema`, line 1, column 35: invalid expression for caveat `cav`: ERROR: cav:1:38: found no matching overload for '_[_]' applied to '(list(string), string)'"}
+  {:id "names-grouped/paren-short-name"
+    :spicedb :reject
+    :schema "definition user {}\ndefinition doc {\n relation viewer: user\n permission view = (ab)\n}"
+    :message "parse error in `schema`, line 4, column 2: error in permission view: validation error: userset_rewrite.union.child[0].computed_userset.relation: does not match regex pattern `^[a-z][a-z0-9_]{1,62}[a-z0-9]$`"}
+  {:id "names-grouped/paren-short-name-nested"
+    :spicedb :reject
+    :schema "definition user {}\ndefinition doc {\n relation viewer: user\n permission view = viewer + (ab - viewer)\n}"
+    :message "parse error in `schema`, line 4, column 2: error in permission view: validation error: userset_rewrite.union.child[1].userset_rewrite.exclusion.child[0].computed_userset.relation: does not match regex pattern `^[a-z][a-z0-9_]{1,62}[a-z0-9]$..."}
+  {:id "names-grouped/paren-short-arrow-base"
+    :spicedb :reject
+    :schema "definition user {}\ndefinition doc {\n relation viewer: user\n permission view = (ab->viewer)\n}"
+    :message "parse error in `schema`, line 4, column 2: error in permission view: validation error: userset_rewrite.union.child[0].tuple_to_userset.tupleset.relation: does not match regex pattern `^[a-z][a-z0-9_]{1,62}[a-z0-9]$`"}
+  {:id "names-grouped/paren-valid-names"
+    :spicedb :accept
+    :schema "definition user {}\ndefinition doc {\n relation viewer: user\n relation editor: user\n permission view = (viewer + (editor))\n}"
+    :canonical "definition doc {\n\trelation viewer: user\n\trelation editor: user\n\tpermission view = viewer + editor\n}\n\ndefinition user {}"}
+  {:id "names-grouped/caveat-33-parameters"
+    :spicedb :accept
+    :schema "caveat cav(p0 int, p1 int, p2 int, p3 int, p4 int, p5 int, p6 int, p7 int, p8 int, p9 int, p10 int, p11 int, p12 int, p13 int, p14 int, p15 int, p16 int, p17 int, p18 int, p19 int, p20 int, p21 int, p22 int, p23 int, p24 int, p25 int, p26 int, p27 int, p28 int, p29 int, p30 int, p31 int, p32 int) { p0 == 1 && p1 == 1 && p2 == 1 && p3 == 1 && p4 == 1 && p5 == 1 && p6 == 1 && p7 == 1 && p8 == 1 && p9 == 1 && p10 == 1 && p11 == 1 && p12 == 1 && p13 == 1 && p14 == 1 && p15 == 1 && p16 == 1 && p17 == 1 && p18 == 1 && p19 == 1 && p20 == 1 && p21 == 1 && p22 == 1 && p23 == 1 && p24 == 1 && p25 == 1 && p26 == 1 && p27 == 1 && p28 == 1 && p29 == 1 && p30 == 1 && p31 == 1 && p32 == 1 }\ndefinition user {}\n"
+    :canonical "caveat cav(p0 int, p1 int, p10 int, p11 int, p12 int, p13 int, p14 int, p15 int, p16 int, p17 int, p18 int, p19 int, p2 int, p20 int, p21 int, p22 int, p23 int, p24 int, p25 int, p26 int, p27 int, p28 int, p29 int, p3 int, p30 int, p31 int, p32 int, p4 int, p5 int, p6 int, p7 int, p8 int, p9 int) {\n\tp0 == 1 && p1 == 1 && p2 == 1 && p3 == 1 && p4 == 1 && p5 == 1 && p6 == 1 && p7 == 1 &&\n\tp8 == 1 && p9 == 1 && p10 == 1 && p11 == 1 && p12 == 1 && p13 == 1 && p14 == 1 &&\n\tp15 == 1 && p16 == 1 && p17 == 1 && p18 == 1 && p19 == 1 && p20 == 1 && p21 == 1 &&\n\tp22 == 1 && p23 == 1 && p24 == 1 && p25 == 1 && p26 == 1 && p27 == 1 && p28 == 1 &&\n\tp29 == 1 && p30 == 1 && p31 == 1 && p32 == 1\n}\n\ndefinition user {}"}
+  {:id "names-grouped/caveat-32-parameters"
+    :spicedb :accept
+    :schema "caveat cav(p0 int, p1 int, p2 int, p3 int, p4 int, p5 int, p6 int, p7 int, p8 int, p9 int, p10 int, p11 int, p12 int, p13 int, p14 int, p15 int, p16 int, p17 int, p18 int, p19 int, p20 int, p21 int, p22 int, p23 int, p24 int, p25 int, p26 int, p27 int, p28 int, p29 int, p30 int, p31 int) { p0 == 1 && p1 == 1 && p2 == 1 && p3 == 1 && p4 == 1 && p5 == 1 && p6 == 1 && p7 == 1 && p8 == 1 && p9 == 1 && p10 == 1 && p11 == 1 && p12 == 1 && p13 == 1 && p14 == 1 && p15 == 1 && p16 == 1 && p17 == 1 && p18 == 1 && p19 == 1 && p20 == 1 && p21 == 1 && p22 == 1 && p23 == 1 && p24 == 1 && p25 == 1 && p26 == 1 && p27 == 1 && p28 == 1 && p29 == 1 && p30 == 1 && p31 == 1 }\ndefinition user {}\n"
+    :canonical "caveat cav(p0 int, p1 int, p10 int, p11 int, p12 int, p13 int, p14 int, p15 int, p16 int, p17 int, p18 int, p19 int, p2 int, p20 int, p21 int, p22 int, p23 int, p24 int, p25 int, p26 int, p27 int, p28 int, p29 int, p3 int, p30 int, p31 int, p4 int, p5 int, p6 int, p7 int, p8 int, p9 int) {\n\tp0 == 1 && p1 == 1 && p2 == 1 && p3 == 1 && p4 == 1 && p5 == 1 && p6 == 1 && p7 == 1 &&\n\tp8 == 1 && p9 == 1 && p10 == 1 && p11 == 1 && p12 == 1 && p13 == 1 && p14 == 1 &&\n\tp15 == 1 && p16 == 1 && p17 == 1 && p18 == 1 && p19 == 1 && p20 == 1 && p21 == 1 &&\n\tp22 == 1 && p23 == 1 && p24 == 1 && p25 == 1 && p26 == 1 && p27 == 1 && p28 == 1 &&\n\tp29 == 1 && p30 == 1 && p31 == 1\n}\n\ndefinition user {}"}
+  {:id "partials-expansion/redefined-while-waiting"
+    :spicedb :accept
+    :schema "use partial\npartial xxx {\n relation viewer: user\n}\npartial ppp {\n ...xxx\n ...mmm\n}\npartial xxx {\n relation editor: user\n}\npartial mmm {\n relation owner: user\n}\ndefinition user {}\ndefinition doc {\n ...ppp\n permission view = editor\n}"
+    :canonical "definition doc {\n\trelation editor: user\n\trelation owner: user\n\tpermission view = editor\n}\n\ndefinition user {}"}
+  {:id "partials-expansion/redefined-while-waiting-old-member"
+    :spicedb :reject
+    :schema "use partial\npartial xxx {\n relation viewer: user\n}\npartial ppp {\n ...xxx\n ...mmm\n}\npartial xxx {\n relation editor: user\n}\npartial mmm {\n relation owner: user\n}\ndefinition user {}\ndefinition doc {\n ...ppp\n permission view = viewer\n}"
+    :message "relation/permission `viewer` not found under definition `doc`"}
+  {:id "partials-expansion/waiting-no-redefinition"
+    :spicedb :accept
+    :schema "use partial\npartial xxx {\n relation viewer: user\n}\npartial ppp {\n ...xxx\n ...mmm\n}\npartial mmm {\n relation owner: user\n}\ndefinition user {}\ndefinition doc {\n ...ppp\n permission view = viewer + owner\n}"
+    :canonical "definition doc {\n\trelation viewer: user\n\trelation owner: user\n\tpermission view = viewer + owner\n}\n\ndefinition user {}"}
+  {:id "partials-expansion/doubling-unused"
+    :spicedb :accept
+    :schema "use partial\npartial aaa {\n relation viewer: user\n}\npartial bbb {\n ...aaa\n ...aaa\n}\npartial ccc {\n ...bbb\n ...bbb\n}\ndefinition user {}"
+    :canonical "definition user {}"}
+  {:id "partials-expansion/doubling-used"
+    :spicedb :reject
+    :schema "use partial\npartial aaa {\n relation viewer: user\n}\npartial bbb {\n ...aaa\n ...aaa\n}\ndefinition user {}\ndefinition doc {\n ...bbb\n}"
+    :message "found duplicate relation/permission name `viewer` under definition `doc`"}
+  {:id "partials-expansion/empty-doubling-used"
+    :spicedb :accept
+    :schema "use partial\npartial aaa {}\npartial bbb {\n ...aaa\n ...aaa\n}\npartial ccc {\n ...bbb\n ...bbb\n}\ndefinition user {}\ndefinition doc {\n ...ccc\n relation viewer: user\n}"
+    :canonical "definition doc {\n\trelation viewer: user\n}\n\ndefinition user {}"}
+  {:id "partials-expansion/alias-long-chain"
+    :spicedb :accept
+    :schema "definition user {}\ndefinition doc {\n relation viewer: user\n permission p_0 = viewer\n permission p_1 = p_0\n permission p_2 = p_1\n permission p_3 = p_2\n permission p_4 = p_3\n permission p_5 = p_4\n permission p_6 = p_5\n permission p_7 = p_6\n permission p_8 = p_7\n permission p_9 = p_8\n permission p_10 = p_9\n permission p_11 = p_10\n permission p_12 = p_11\n permission p_13 = p_12\n permission p_14 = p_13\n permission p_15 = p_14\n permission p_16 = p_15\n permission p_17 = p_16\n permission p_18 = p_17\n permission p_19 = p_18\n permission p_20 = p_19\n permission p_21 = p_20\n permission p_22 = p_21\n permission p_23 = p_22\n permission p_24 = p_23\n permission p_25 = p_24\n permission p_26 = p_25\n permission p_27 = p_26\n permission p_28 = p_27\n permission p_29 = p_28\n permission p_30 = p_29\n permission p_31 = p_30\n permission p_32 = p_31\n permission p_33 = p_32\n permission p_34 = p_33\n permission p_35 = p_34\n permission p_36 = p_35\n permission p_37 = p_36\n permission p_38 = p_37\n permission p_39 = p_38\n permission p_40 = p_39\n permission p_41 = p_40\n permission p_42 = p_41\n permission p_43 = p_42\n permission p_44 = p_43\n permission p_45 = p_44\n permission p_46 = p_45\n permission p_47 = p_46\n permission p_48 = p_47\n permission p_49 = p_48\n permission p_50 = p_49\n permission p_51 = p_50\n permission p_52 = p_51\n permission p_53 = p_52\n permission p_54 = p_53\n permission p_55 = p_54\n permission p_56 = p_55\n permission p_57 = p_56\n permission p_58 = p_57\n permission p_59 = p_58\n}"
+    :canonical "definition doc {\n\trelation viewer: user\n\tpermission p_0 = viewer\n\tpermission p_1 = p_0\n\tpermission p_2 = p_1\n\tpermission p_3 = p_2\n\tpermission p_4 = p_3\n\tpermission p_5 = p_4\n\tpermission p_6 = p_5\n\tpermission p_7 = p_6\n\tpermission p_8 = p_7\n\tpermission p_9 = p_8\n\tpermission p_10 = p_9\n\tpermission p_11 = p_10\n\tpermission p_12 = p_11\n\tpermission p_13 = p_12\n\tpermission p_14 = p_13\n\tpermission p_15 = p_14\n\tpermission p_16 = p_15\n\tpermission p_17 = p_16\n\tpermission p_18 = p_17\n\tpermission p_19 = p_18\n\tpermission p_20 = p_19\n\tpermission p_21 = p_20\n\tpermission p_22 = p_21\n\tpermission p_23 = p_22\n\tpermission p_24 = p_23\n\tpermission p_25 = p_24\n\tpermission p_26 = p_25\n\tpermission p_27 = p_26\n\tpermission p_28 = p_27\n\tpermission p_29 = p_28\n\tpermission p_30 = p_29\n\tpermission p_31 = p_30\n\tpermission p_32 = p_31\n\tpermission p_33 = p_32\n\tpermission p_34 = p_33\n\tpermission p_35 = p_34\n\tpermission p_36 = p_35\n\tpermission p_37 = p_36\n\tpermission p_38 = p_37\n\tpermission p_39 = p_38\n\tpermission p_40 = p_39\n\tpermission p_41 = p_40\n\tpermission p_42 = p_41\n\tpermission p_43 = p_42\n\tpermission p_44 = p_43\n\tpermission p_45 = p_44\n\tpermission p_46 = p_45\n\tpermission p_47 = p_46\n\tpermission p_48 = p_47\n\tpermission p_49 = p_48\n\tpermission p_50 = p_49\n\tpermission p_51 = p_50\n\tpermission p_52 = p_51\n\tpermission p_53 = p_52\n\tpermission p_54 = p_53\n\tpermission p_55 = p_54\n\tpermission p_56 = p_55\n\tpermission p_57 = p_56\n\tpermission p_58 = p_57\n\tpermission p_59 = p_58\n}\n\ndefinition user {}"}
+  {:id "unicode-version/garay-16"
+    :spicedb :reject
+    :schema "use partial\npartial a\ud803\udd50b {}\ndefinition user {}\n"
+    :message "parse error in `schema`, line 2, column 10: Expected one of: [TokenTypeLeftBrace], found: TokenTypeError"}
+  {:id "unicode-version/kirat-rai-16"
+    :spicedb :reject
+    :schema "use partial\npartial a\ud81b\udd43b {}\ndefinition user {}\n"
+    :message "parse error in `schema`, line 2, column 10: Expected one of: [TokenTypeLeftBrace], found: TokenTypeError"}
+  {:id "unicode-version/todhri-16"
+    :spicedb :reject
+    :schema "use partial\npartial a\ud801\uddc0b {}\ndefinition user {}\n"
+    :message "parse error in `schema`, line 2, column 10: Expected one of: [TokenTypeLeftBrace], found: TokenTypeError"}
+  {:id "unicode-version/ol-onal-16"
+    :spicedb :reject
+    :schema "use partial\npartial a\ud839\uddd0b {}\ndefinition user {}\n"
+    :message "parse error in `schema`, line 2, column 10: Expected one of: [TokenTypeLeftBrace], found: TokenTypeError"}
+  {:id "unicode-version/kawi-15"
+    :spicedb :accept
+    :schema "use partial\npartial a\ud807\udf04b {}\ndefinition user {}\n"
+    :canonical "definition user {}"}
+  {:id "unicode-version/nag-mundari-15"
+    :spicedb :accept
+    :schema "use partial\npartial a\ud839\udcd0b {}\ndefinition user {}\n"
+    :canonical "definition user {}"}
+  {:id "unicode-version/vithkuqi-14"
+    :spicedb :accept
+    :schema "use partial\npartial a\ud801\udd70b {}\ndefinition user {}\n"
+    :canonical "definition user {}"}
+  {:id "unicode-version/garay-16-annotation"
+    :spicedb :reject
+    :schema "use typechecking\ndefinition user {}\ndefinition doc {\n relation viewer: user\n permission view: a\ud803\udd50b = viewer\n}"
+    :message "parse error in `schema`, line 5, column 20: Expected one of: [TokenTypeEquals], found: TokenTypeError"}
+  {:id "unicode-version/kawi-15-annotation"
+    :spicedb :accept
+    :schema "definition user {}\ndefinition doc {\n relation viewer: user\n permission view: a\ud807\udf04b = viewer\n}"
+    :canonical "definition doc {\n\trelation viewer: user\n\tpermission view = viewer\n}\n\ndefinition user {}"}
+  {:id "caveat-comments/block-with-open-brace"
+    :spicedb :accept
+    :schema "caveat cav(a int) { a > 1 /* { */ }\ndefinition user {}\n"
+    :canonical "caveat cav(a int) {\n\ta > 1\n}\n\ndefinition user {}"}
+  {:id "caveat-comments/string-block-text"
+    :spicedb :accept
+    :schema "caveat cav(a string) { a == \"/* not */\" }\ndefinition user {}\n"
+    :canonical "caveat cav(a string) {\n\ta == \"/* not */\"\n}\n\ndefinition user {}"}
+  {:id "caveat-comments/string-line-text"
+    :spicedb :accept
+    :schema "caveat cav(a string) { a == \"// not\" }\ndefinition user {}\n"
+    :canonical "caveat cav(a string) {\n\ta == \"// not\"\n}\n\ndefinition user {}"}
+  {:id "caveat-comments/only-line-comment"
+    :spicedb :reject
+    :schema "caveat cav(a int) {\n // nothing\n}\ndefinition user {}\n"
+    :message "parse error in `schema`, line 3, column 1: Unexpected token at root level: TokenTypeRightBrace"}
+  {:id "caveat-comments/only-block-comment"
+    :spicedb :reject
+    :schema "caveat cav(a int) { /* nothing */ }\ndefinition user {}\n"
+    :message "parse error in `schema`, line 1, column 35: Unexpected token at root level: TokenTypeRightBrace"}
+  {:id "caveat-comments/two-trailing-blocks"
+    :spicedb :accept
+    :schema "caveat cav(a int) { a > 1 /* x */ /* y */ }\ndefinition user {}\n"
+    :canonical "caveat cav(a int) {\n\ta > 1\n}\n\ndefinition user {}"}
+  {:id "caveat-comments/block-then-line"
+    :spicedb :reject
+    :schema "caveat cav(a int) { a > 1 /* x */ // y\n}\ndefinition user {}\n"
+    :message "parse error in `schema`, line 1, column 21: invalid expression for caveat `cav`: ERROR: cav:1:28: Syntax error: extraneous input '*' expecting {'[', '{', '(', '.', '-', '!', 'true', 'false', 'null', NUM_FLOAT, NUM_INT, NUM_UINT, STRING, BYT..."}
+  {:id "caveat-comments/line-in-parens"
+    :spicedb :accept
+    :schema "caveat cav(a int) { (a // x\n > 1) }\ndefinition user {}\n"
+    :canonical "caveat cav(a int) {\n\ta > 1\n}\n\ndefinition user {}"}
+  {:id "caveat-comments/block-in-parens"
+    :spicedb :reject
+    :schema "caveat cav(a int) { (a /* x */ > 1) }\ndefinition user {}\n"
+    :message "parse error in `schema`, line 1, column 21: invalid expression for caveat `cav`: ERROR: cav:1:25: Syntax error: extraneous input '*' expecting {'[', '{', '(', '.', '-', '!', 'true', 'false', 'null', NUM_FLOAT, NUM_INT, NUM_UINT, STRING, BYT..."}
+  {:id "caveat-comments/unterminated-block"
+    :spicedb :reject
+    :schema "caveat cav(a int) { a > 1 /* x }\ndefinition user {}\n"
+    :message "parse error in `schema`, line 1, column 27: Expected one of: [TokenTypeRightBrace], found: TokenTypeError"}
+  {:id "caveat-comments/hash-comment"
+    :spicedb :reject
+    :schema "caveat cav(a int) { a > 1 # x\n}\ndefinition user {}\n"
+    :message "parse error in `schema`, line 1, column 21: invalid expression for caveat `cav`: ERROR: cav:1:27: Syntax error: token recognition error at: '#'"}
   {:id "gen/basic/nl-insert-1"
     :spicedb :reject
     :schema "definition\nuser {}\ndefinition doc {\n\trelation viewer: user\n\trelation editor: user\n\tpermission view = viewer + editor\n}\n"

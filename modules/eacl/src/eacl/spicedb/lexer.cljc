@@ -11,7 +11,9 @@
     the previous significant token is an identifier, a keyword, `)`, `}` or
     `*`. Otherwise it is whitespace. Comments are not significant, so a `/* */`
     comment that spans lines never terminates a statement.
-  - Words are maximal runs of `_`, Unicode letters and Unicode decimal digits.
+  - Words are maximal runs of `_`, Unicode letters and Unicode decimal digits,
+    as SpiceDB v1.56.0's Go tables (Unicode 15.0.0) classify them
+    (`eacl.spicedb.unicode`), whatever the host's Unicode version.
     `definition caveat relation permission nil with` are keywords. Before the
     first `definition` or `caveat`, `use <flag>` makes further words keywords:
     `expiration` and `and` (flag `expiration`), `self`, `typechecking`,
@@ -21,7 +23,8 @@
 
   `lex` returns a vector of significant tokens `{:kind :text :start :end}`
   (`:start`/`:end` are string indices). It ends with an `:eof` token, or with an
-  `:error` token carrying `:reason` when lexing fails; SpiceDB stops there too.")
+  `:error` token carrying `:reason` when lexing fails; SpiceDB stops there too."
+  (:require [eacl.spicedb.unicode :as unicode]))
 
 (def keywords
   "Words that are always keywords."
@@ -45,16 +48,12 @@
 (defn- code-point-width [cp]
   (if (> cp 0xFFFF) 2 1))
 
-#?(:cljs (def ^:private unicode-word-pattern (js/RegExp. "^[\\p{L}\\p{Nd}]$" "u")))
-
 (defn word-char?
   "SpiceDB's `isAlphaNumeric`: `_`, a Unicode letter (category L) or a Unicode
-   decimal digit (category Nd)."
+   decimal digit (category Nd), in SpiceDB v1.56.0's Unicode 15.0.0."
   [cp]
   (or (<= 97 cp 122) (<= 65 cp 90) (<= 48 cp 57) (= cp 95)
-      (and (> cp 127)
-           #?(:clj (or (Character/isLetter (int cp)) (Character/isDigit (int cp)))
-              :cljs (.test unicode-word-pattern (js/String.fromCodePoint cp))))))
+      (and (> cp 127) (unicode/word? cp))))
 
 (defn- starts-with-at? [s i prefix]
   (let [end (+ i (count prefix))]

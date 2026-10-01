@@ -17,7 +17,7 @@ The rules below were derived from SpiceDB's source at tag `v1.56.0`
 (`pkg/schemadsl`, `pkg/schema`, `internal/namespace`, `pkg/caveats` and
 `proto/internal/core/v1/core.proto`) and confirmed against
 `ghcr.io/authzed/spicedb:v1.56.0 serve-testing`. The compatibility corpus,
-`modules/eacl/test/eacl/spicedb/fixtures/spicedb-1.56-corpus.edn`, holds 4,326
+`modules/eacl/test/eacl/spicedb/fixtures/spicedb-1.56-corpus.edn`, holds 4,359
 schemas with SpiceDB's verdict, and `eacl.spicedb.compatibility-corpus-test`
 checks EACL against each of them on the JVM and in ClojureScript. For every
 schema both accept, it also checks that EACL reads each relation and permission
@@ -49,6 +49,29 @@ a permission deeper than 64 levels) is rejected with
 `:eacl.schema/expression-limit`, and the parser stops at 256 nested
 parentheses with `:eacl.schema/parse-error {:reason :nesting-depth}`.
 
+Validation is linear in the schema with its partials expanded, and the limits
+that bound it come first:
+
+- EACL's source limits (each relation's subject-type count, each permission's
+  source nodes, depth and fan-in, in the resolver's order) are checked before
+  SpiceDB's reference checks, so a permission that exceeds them reports
+  `:eacl.schema/expression-limit` rather than one issue per leaf.
+- Partials expand by copying: `partial b { ...a ...a }` doubles `a`, and a
+  few lines of such partials stand for billions of members (SpiceDB itself
+  copies them all). Translating partials and expanding definitions visit at
+  most a quarter of `:maximum-schema-source-bytes` statements (262,144 by
+  default), more than a schema of that size holds written out without
+  partials; beyond that the schema is `:eacl.schema/expression-limit
+  {:dimension :partial-expansion}`. Unused partials are never expanded.
+- Under `use typechecking`, each annotation walks everything its permission
+  reaches, as SpiceDB's check does; the walks visit at most
+  `:maximum-schema-source-bytes` relations and permissions in total, beyond
+  which the schema is `:eacl.schema/expression-limit {:dimension
+  :typechecking}`.
+
+Both expansion errors carry `:maximum`, `:actual-at-least` and
+`:limit :maximum-schema-source-bytes`.
+
 ## Errors
 
 | Error | Raised for |
@@ -63,6 +86,7 @@ parentheses with `:eacl.schema/parse-error {:reason :nesting-depth}`.
 | `:eacl.schema/incomplete-type-annotation` | With `use typechecking`, a reachable subject type missing from an annotation |
 | `:eacl.schema/permission-alias-cycle` | Permissions that only alias each other in a cycle (`a = b`, `b = a`, or `p = p`) |
 | `:eacl.caveat/invalid` | An invalid caveat: unknown type, wrong type arity, duplicate or unreferenceable parameter, CEL syntax or type error, non-`bool` result, unused parameter |
+| `:eacl.schema/expression-limit` | A resource limit (see above), including `:dimension :partial-expansion` and `:dimension :typechecking` |
 
 ## Lexing
 
@@ -71,7 +95,7 @@ parentheses with `:eacl.schema/parse-error {:reason :nesting-depth}`.
 | whitespace | U+0020 and U+0009 only. Form feed, vertical tab, NBSP, U+0085, U+2028, a BOM and every other character are *unrecognized characters* outside comments and strings. |
 | newline | `\n` or `\r`; `\r\n` is two newlines |
 | comments | `//` to the end of the line; `/* ... */`, not nested. An unclosed `/*` is an error. |
-| word | A maximal run of `_`, Unicode letters and Unicode decimal digits; digits may lead (`1abc` is one word). `definition caveat relation permission nil with` are keywords; every other word is an identifier. There are no number tokens. |
+| word | A maximal run of `_`, Unicode letters and Unicode decimal digits; digits may lead (`1abc` is one word). Letters and digits are those of Unicode 15.0.0, SpiceDB v1.56.0's Go tables: a letter added in Unicode 16.0 is an unrecognized character, whatever the host's Unicode version (`eacl.spicedb.unicode`). `definition caveat relation permission nil with` are keywords; every other word is an identifier. There are no number tokens. |
 | string | `"..."` or `'...'` on one line, `"""..."""` across lines. A `'''` string closes only at `"""`. There are no escapes: `"a\"b"` ends after the backslash. |
 | punctuation | `{ } ( ) [ ] + - & \| / = : ; # * , . ? ! % < >`, and `->`, `...`, `\|\|`, `&&`, `==`, `!=`, `<=`, `>=` |
 
@@ -144,8 +168,10 @@ caveat-body = every token up to the matching "}"; the CEL expression is the text
   known. `WriteSchema` rejects every `import`.
 - A partial reference names one identifier (`...ns/name` is rejected).
   Partials expand recursively; an undefined or circular partial is rejected,
-  and of two partials with one name the later wins. Partial names are not
-  otherwise checked.
+  and of two partials with one name the later wins. Partials are translated
+  in source order; one that references a partial not yet translated waits for
+  it and is translated again once it is, seeing any partial redefined
+  meanwhile. Partial names are not otherwise checked.
 - Type annotations parse with or without `use typechecking`. Without the flag
   they are discarded; with it, every type reachable from the permission
   (through relations, subject relations, wildcards and arrows) must be listed.
@@ -168,7 +194,9 @@ caveats share one namespace.
 ## Validation
 
 - Relation and permission names are unique within a definition, after
-  partial expansion.
+  partial expansion. Of several repeated names EACL reports the first, in
+  order of first occurrence; of several reference problems, all of them,
+  sorted.
 - A referenced name (`view = viewer`) must be a relation or permission of the
   same definition.
 - The left side of an arrow must be a relation of the definition; not a
@@ -196,10 +224,10 @@ not. EACL stores exactly this text as the caveat's expression source.
 
 ## The corpus
 
-The corpus has 4,326 schemas, 1,729 accepted and 2,597 rejected by SpiceDB:
-1,322 written by hand in sections that follow the rules above (`lexer`,
-`comments`, `terminators`, `names`, `expressions`, `arrows`, `use`,
-`partials`, `typechecking`, `cycles`, `caveat-*`, `cel*`, `validation`, and
+The corpus has 4,359 schemas, 1,746 accepted and 2,613 rejected by SpiceDB:
+1,355 written by hand in sections that follow the rules above (`lexer`,
+`unicode-version`, `comments`, `terminators`, `names*`, `expressions`, `arrows`, `use`,
+`partials*`, `typechecking`, `cycles`, `caveat-*`, `cel*`, `validation`, and
 `eacl-rs` for the eacl-rust port's findings), and 3,004 generated (`gen/`):
 deterministic token mutations of valid schemas (line breaks inserted, removed
 or replaced, `\r\n` and `\r` line endings, `;` inserted, tokens deleted,

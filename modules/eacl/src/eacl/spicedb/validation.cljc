@@ -8,6 +8,18 @@
   throws on the first rule a schema breaks, so a schema that reaches EACL's
   own restrictions is a valid SpiceDB schema.
 
+  Every step is linear in the expanded schema, and EACL's source limits run
+  before SpiceDB's reference checks, which they bound. Partials expand by
+  copying, so a few lines can stand for an exponential number of members
+  (`partial b { ...a ...a }`, `partial c { ...b ...b }` and so on):
+  translating partials and expanding definitions visit at most
+  `partial-expansion-budget` statements, and `use typechecking` annotations
+  at most `typechecking-budget` relations and permissions; beyond either, the
+  schema is `:eacl.schema/expression-limit` (`:dimension :partial-expansion`
+  or `:typechecking`). A partial that waits for another resumes where it
+  stopped, unless a partial was redefined meanwhile: then it starts over, as
+  SpiceDB's translator always does.
+
   On success it returns `{:tree t :caveats c}`: `t` is the parse tree in the
   form EACL's schema extraction reads (partials expanded and removed, `use`
   flags and type annotations removed, caveat names and references as single
@@ -17,6 +29,8 @@
   (:require [clojure.string :as str]
             [eacl.caveats.plan :as plan]
             [eacl.caveats.values :as values]
+            [eacl.schema.expression-limits :as expression-limits]
+            [eacl.schema.expression-policy :as expression-policy]
             [eacl.spicedb.cel :as cel]
             [eacl.spicedb.lexer :as lexer]))
 
@@ -126,9 +140,11 @@
     (case (tag node)
       :simple-arrow-expr
       (doseq [base (rest node)
-              :let [ident (second base)]
-              :when (= :identifier (tag ident))]
-        (check-name! source :relation (second ident) ident))
+              :let [inner (second base)]]
+        (if (= :identifier (tag inner))
+          (check-name! source :relation (second inner) inner)
+          ;; Names inside parentheses are validated too.
+          (check-expression-names! source inner)))
 
       :arrow-func-expr
       (let [[_ base _ target] node]
@@ -158,53 +174,143 @@
 
     nil))
 
-(defn- expand-members
-  "Translates a definition or partial body: validates each relation and
-   permission, and splices compiled partials. Returns [members nil], or
-   [nil missing-partial-name] when `error-on-missing?` is false."
-  [source compiled body error-on-missing?]
-  (loop [[member & more] (rest body) out []]
-    (cond
-      (nil? member) [out nil]
+(defn partial-expansion-budget
+  "The statements translating partials and expanding definitions may visit: a
+   quarter of :maximum-schema-source-bytes, more than a schema of that size
+   holds written out without partials."
+  [maximum-schema-source-bytes]
+  (quot maximum-schema-source-bytes 4))
 
-      (= :partial-reference (tag member))
-      (let [reference (second member)
-            path (second reference)]
-        (if-let [members (get compiled path)]
-          (recur more (into out members))
-          (if error-on-missing?
-            (fail! :eacl.schema/invalid-partial
-                   (str "Could not find a partial named " (pr-str path) ".")
-                   (merge {:reason :undefined :partial path} (position source reference)))
-            [nil path])))
+(defn typechecking-budget
+  "The relations and permissions `use typechecking` may visit, summed over
+   every annotated permission: :maximum-schema-source-bytes. Each annotation
+   walks everything its permission reaches, as SpiceDB's does, so many
+   annotations over one long chain cost their product."
+  [maximum-schema-source-bytes]
+  maximum-schema-source-bytes)
 
-      :else
-      (do (check-member-names! source member)
-          (recur more (conj out member))))))
+(defn- budget [maximum]
+  {:maximum maximum :used (volatile! 0)})
+
+(defn- visit!
+  "Counts one statement of partial expansion, or `n` visits of `dimension`."
+  ([b] (visit! b 1 :partial-expansion))
+  ([{:keys [maximum used]} n dimension]
+   (let [total (vswap! used + n)]
+     (when (> total maximum)
+       (fail! :eacl.schema/expression-limit
+              (case dimension
+                :partial-expansion "Expanding partials exceeds the schema's size limit."
+                :typechecking "Checking type annotations exceeds the schema's size limit.")
+              {:dimension dimension
+               :maximum maximum
+               :actual-at-least total
+               :limit :maximum-schema-source-bytes})))))
+
+(defn- translate-partial
+  "Translates a partial's statements to segments: `[:member m]`, or
+   `[:partial segments]` for a referenced partial as it was compiled then.
+   Resumes `paused` when no partial was redefined since it paused (otherwise
+   it starts over and sees the redefinitions). Returns `[:done segments]` or
+   `[:waiting name paused]` for the first referenced partial not compiled yet."
+  [source compiled statements paused redefinitions budget]
+  (let [[start segments] (if (and paused (= redefinitions (:redefinitions paused)))
+                           [(:next paused) (:segments paused)]
+                           [0 []])]
+    (loop [i start segments segments]
+      (if (>= i (count statements))
+        [:done segments]
+        (let [statement (nth statements i)]
+          (visit! budget)
+          (if (= :partial-reference (tag statement))
+            (let [path (second (second statement))]
+              (if-let [body (get compiled path)]
+                (recur (inc i) (conj segments [:partial body]))
+                [:waiting path {:segments segments :next i :redefinitions redefinitions}]))
+            (do (check-member-names! source statement)
+                (recur (inc i) (conj segments [:member statement])))))))))
 
 (defn- compile-partials
-  "SpiceDB's collectPartials: resolves partials in source order, retrying a
-   partial when the partial it waits for compiles. A later partial with the
-   same name replaces an earlier one."
-  [source partials]
-  (let [compiled (volatile! {})
-        waiting (volatile! {})]
-    (letfn [(translate! [node]
-              (let [path (path-text (second node))
-                    [members missing] (expand-members source @compiled (nth node 2) false)]
-                (if missing
-                  (vswap! waiting update missing (fnil conj []) node)
-                  (do (vswap! compiled assoc path members)
-                      (let [ready (get @waiting path)]
-                        (doseq [w ready] (translate! w))
-                        (vswap! waiting dissoc path))))))]
-      (doseq [node partials] (translate! node))
-      (when (seq @waiting)
-        (fail! :eacl.schema/invalid-partial
-               (str "Could not resolve partials " (pr-str (vec (sort (keys @waiting))))
-                    "; this may indicate a circular reference.")
-               {:reason :unresolved :partials (vec (sort (keys @waiting)))}))
-      @compiled)))
+  "SpiceDB's collectPartials: resolves partials in source order. A partial
+   whose reference is not compiled yet waits for it, and is translated again
+   (before anything that waits on it in turn is released) once that partial
+   compiles. A later partial with the same name replaces an earlier one.
+   Returns {name segments}."
+  [source partials budget]
+  (let [partials (vec partials)
+        statements (mapv #(vec (rest (nth % 2))) partials)
+        compiled (volatile! {})
+        ;; Waiting partials by the name they wait for, as indexes into `partials`.
+        waiting (volatile! {})
+        paused (volatile! {})
+        redefinitions (volatile! 0)]
+    (dotimes [first-index (count partials)]
+      ;; An explicit stack of [compiled name, partials it released, next index];
+      ;; `pending` is the partial to translate next, or nil (boxed, so it can be).
+      (loop [pending (identity first-index) frames []]
+        (let [frames
+              (if (nil? pending)
+                frames
+                (let [node (nth partials pending)
+                      resumed (get @paused pending)
+                      _ (vswap! paused dissoc pending)
+                      [outcome value state]
+                      (translate-partial source @compiled (nth statements pending) resumed
+                                         @redefinitions budget)]
+                  (if (= :waiting outcome)
+                    (do (vswap! paused assoc pending state)
+                        (vswap! waiting update value (fnil conj []) pending)
+                        frames)
+                    (let [path (path-text (second node))]
+                      (when (contains? @compiled path)
+                        (vswap! redefinitions inc))
+                      (vswap! compiled assoc path value)
+                      (conj frames [path (get @waiting path []) 0])))))]
+          (when-let [[path ready i] (peek frames)]
+            (if (< i (count ready))
+              (recur (nth ready i) (conj (pop frames) [path ready (inc i)]))
+              (do (vswap! waiting dissoc path)
+                  (recur nil (pop frames))))))))
+    (when (seq @waiting)
+      (fail! :eacl.schema/invalid-partial
+             (str "Could not resolve partials " (pr-str (vec (sort (keys @waiting))))
+                  "; this may indicate a circular reference.")
+             {:reason :unresolved :partials (vec (sort (keys @waiting)))}))
+    @compiled))
+
+(defn- flatten-partial
+  "Appends a compiled partial's members to `out`, depth first."
+  [out segments budget]
+  (loop [out out stack [[segments 0]]]
+    (if-let [[current i] (peek stack)]
+      (if (< i (count current))
+        (let [[kind value] (nth current i)
+              stack (conj (pop stack) [current (inc i)])]
+          (visit! budget)
+          (if (= :member kind)
+            (recur (conj out value) stack)
+            (recur out (conj stack [value 0]))))
+        (recur out (pop stack)))
+      out)))
+
+(defn- expand-definition
+  "A definition's members: its relations and permissions, with compiled
+   partials spliced in."
+  [source compiled body budget]
+  (reduce (fn [out statement]
+            (visit! budget)
+            (if (= :partial-reference (tag statement))
+              (let [reference (second statement)
+                    path (second reference)]
+                (if-let [segments (get compiled path)]
+                  (flatten-partial out segments budget)
+                  (fail! :eacl.schema/invalid-partial
+                         (str "Could not find a partial named " (pr-str path) ".")
+                         (merge {:reason :undefined :partial path} (position source reference)))))
+              (do (check-member-names! source statement)
+                  (conj out statement))))
+          []
+          (rest body)))
 
 ;; ---------------------------------------------------------------- caveats
 
@@ -394,25 +500,66 @@
    :permissions (into {} (for [m members :when (= :permission (tag m))]
                            [(member-name m) m]))})
 
-(defn- references-wildcard
-  "SpiceDB's referencesWildcardType: the first wildcard reachable from a
-   relation through its subject types, following subject relations (a
-   permission has no subject types). Checked per definition and relation; see
-   the corpus' :spicedb-defects for SpiceDB's relation-name cache."
-  [definitions definition relation]
-  (loop [pending [[definition relation]] seen #{}]
-    (if-let [[d r] (first pending)]
-      (if (contains? seen [d r])
-        (recur (rest pending) seen)
-        (let [refs (get-in definitions [d :relations r])]
-          (if-let [wildcard (some #(when (:wildcard? %) %) refs)]
-            {:definition d :relation r :wildcard (:subject-type wildcard)}
-            (recur (concat (rest pending)
-                           (for [{:keys [subject-type subject-relation]} refs
-                                 :when subject-relation]
-                             [subject-type subject-relation]))
-                   (conj seen [d r])))))
-      nil)))
+(def ^:private empty-queue
+  #?(:clj clojure.lang.PersistentQueue/EMPTY :cljs cljs.core/PersistentQueue.EMPTY))
+
+(defn- wildcard-index
+  "SpiceDB's referencesWildcardType for every relation of the schema: the
+   first wildcard reachable from a relation through its subject types,
+   following subject relations (a permission has no subject types). First is
+   breadth-first in subject-type order: the nearest wildcard, ties broken by
+   subject-type order at each step. Computed per definition and relation (see
+   the corpus' :spicedb-defects for SpiceDB's relation-name cache), for every
+   relation at once in time linear in the schema. Returns
+   `{[definition relation] {:definition d :relation r :wildcard t}}`."
+  [definitions]
+  (let [nodes (vec (for [[d {:keys [relations]}] definitions
+                         [r refs] relations]
+                     [d r refs]))
+        n (count nodes)
+        ids (into {} (map-indexed (fn [i [d r]] [[d r] i])) nodes)
+        own (mapv (fn [[_ _ refs]] (some #(when (:wildcard? %) (:subject-type %)) refs)) nodes)
+        ;; Successors in subject-type order.
+        successors (mapv (fn [[_ _ refs]]
+                           (vec (keep (fn [{:keys [subject-type subject-relation]}]
+                                        (when subject-relation
+                                          (get ids [subject-type subject-relation])))
+                                      refs)))
+                         nodes)
+        predecessors (reduce-kv (fn [acc i targets]
+                                  (reduce #(update %1 %2 conj i) acc targets))
+                                (vec (repeat n []))
+                                successors)
+        sources (vec (keep-indexed (fn [i w] (when w i)) own))
+        ;; Distances to the nearest wildcard, breadth-first backwards from the wildcards.
+        [distance order]
+        (loop [queue (into empty-queue sources)
+               distance (reduce #(assoc %1 %2 0) (vec (repeat n nil)) sources)
+               order (transient [])]
+          (if-let [i (peek queue)]
+            (let [further (inc (nth distance i))
+                  [queue distance]
+                  (reduce (fn [[queue distance] p]
+                            (if (nil? (nth distance p))
+                              [(conj queue p) (assoc distance p further)]
+                              [queue distance]))
+                          [(pop queue) distance]
+                          (nth predecessors i))]
+              (recur queue distance (conj! order i)))
+            [distance (persistent! order)]))
+        ;; Nearer relations first: each takes its own wildcard, or that of its
+        ;; first successor one step nearer.
+        found (reduce (fn [found i]
+                        (assoc found i
+                               (if-let [wildcard (nth own i)]
+                                 (let [[d r] (nth nodes i)]
+                                   {:definition d :relation r :wildcard wildcard})
+                                 (let [d (nth distance i)]
+                                   (some #(when (= (dec d) (nth distance %)) (get found %))
+                                         (nth successors i))))))
+                      {}
+                      order)]
+    (into {} (map (fn [[i w]] [(subvec (nth nodes i) 0 2) w])) found)))
 
 (defn expression-ir
   "SpiceDB's rewrite for a parsed permission expression. Parentheses vanish,
@@ -523,7 +670,7 @@
   "SpiceDB's rewrite checks: a computed userset names a relation or
    permission of the definition, and an arrow's left side is a relation of
    the definition that reaches no wildcard. The arrow's target is not checked."
-  [definitions {:keys [name relations permissions]}]
+  [wildcards {:keys [name relations permissions]}]
   (for [[permission-name member] permissions
         {:keys [kind path] :as leaf} (leaf-paths (last member) [:root])
         :let [problem
@@ -548,7 +695,7 @@
                             :message "Arrow base relation does not exist on the resource type."})
 
                     :else
-                    (when-let [w (references-wildcard definitions name tupleset)]
+                    (when-let [w (get wildcards [name tupleset])]
                       (issue :wildcard-arrow-base name permission-name path
                              {:name (keyword tupleset)
                               :wildcard-type (keyword (:wildcard w))
@@ -558,13 +705,18 @@
         :when problem]
     problem))
 
+(defn- first-repeat
+  "The first item, in order of first occurrence, that occurs more than once."
+  [items]
+  (let [counts (frequencies items)]
+    (some #(when (> (get counts %) 1) %) items)))
+
 (defn- check-declaration!
   "A definition's own errors, checked before the next declaration is read:
    a repeated relation or permission name, and a repeated subject type in one
    relation (compared by source, `user#...` as `user`)."
   [{:keys [name members relations]}]
-  (when-let [duplicate (some (fn [[n c]] (when (> c 1) n))
-                             (frequencies (keep member-name members)))]
+  (when-let [duplicate (first-repeat (keep member-name members))]
     (let [kinds (set (keep #(when (= duplicate (member-name %)) (tag %)) members))]
       (cond
         (= #{:relation} kinds)
@@ -583,8 +735,7 @@
           :when (relation-node? m)
           :let [relation-name (member-name m)
                 refs (get relations relation-name)]]
-    (when-let [duplicate (some (fn [[source c]] (when (> c 1) source))
-                               (frequencies (map :source refs)))]
+    (when-let [duplicate (first-repeat (map :source refs))]
       (fail! :eacl.schema/duplicate-relation-branch
              (str "Duplicate subject type `" duplicate "` on relation `" relation-name
                   "` of definition `" name "`.")
@@ -606,7 +757,7 @@
   "SpiceDB's subject-type checks: a subject type is a definition, and a
    subject relation names a relation or permission of it that, on another
    definition, reaches no wildcard."
-  [definitions {:keys [name relations]}]
+  [definitions wildcards {:keys [name relations]}]
   (for [[relation-name refs] relations
         {:keys [subject-type subject-relation wildcard?]} refs
         :let [target (get definitions subject-type)
@@ -630,7 +781,7 @@
                 (= subject-type name) nil
 
                 :else
-                (when-let [w (references-wildcard definitions subject-type subject-relation)]
+                (when-let [w (get wildcards [subject-type subject-relation])]
                   (issue :transitive-wildcard name nil path
                          (assoc data :name (keyword subject-relation)
                                 :wildcard-type (keyword (:wildcard w))
@@ -641,61 +792,131 @@
         :when problem]
     problem))
 
+(defn- source-ast
+  "The unresolved source AST `eacl.spicedb.parser/permission-expression->source-ast`
+   builds, for EACL's source limits: n-ary unions and intersections,
+   left-folded binary exclusions, parentheses as nothing, and `nil`, `self`
+   and `.all()` as leaves."
+  [node]
+  (let [n-ary (fn [op children]
+                (let [children (mapv source-ast children)]
+                  (if (= 1 (count children)) (first children) {:op op :children children})))]
+    (case (tag node)
+      :permission-expr (source-ast (second node))
+      :exclusion-expr (reduce (fn [left right] {:op :exclusion :left left :right right})
+                              (map source-ast (rest node)))
+      :intersect-expr (n-ary :intersection (rest node))
+      :union-expr (n-ary :union (rest node))
+      :arrow-expr (source-ast (second node))
+      :simple-arrow-expr (let [[base target] (rest node)]
+                           (if target {:op :arrow} (source-ast base)))
+      :arrow-func-expr {:op :arrow}
+      :base-expr (let [inner (second node)]
+                   (if (= :paren-expr (tag inner))
+                     (source-ast (second inner))
+                     {:op :identifier})))))
+
+(defn- check-source-limits!
+  "EACL's source limits ahead of SpiceDB's reference checks, in the
+   resolver's order: each relation's subject-type count (definitions and
+   relations by name), then each permission's source nodes, depth and direct
+   fan-in (definitions and permissions by name). They bound the expressions
+   every later step walks."
+  [models limits]
+  (let [models (sort-by :name models)]
+    (doseq [{:keys [relations]} models
+            [_ refs] (sort-by key relations)]
+      (expression-limits/check-dimension! :type-partition-count :maximum-type-partitions
+                                          (count (distinct (map :subject-type refs)))
+                                          limits))
+    (doseq [{:keys [permissions]} models
+            [_ member] (sort-by key permissions)]
+      (expression-limits/check-source! (source-ast (last member)) limits))))
+
 (defn- check-references!
   "Every reference issue of the schema, sorted as the resolver sorts them."
   [definitions models]
-  (let [issues (->> models
-                    (mapcat #(concat (relation-issues definitions %)
-                                     (expression-issues definitions %)))
+  (let [wildcards (wildcard-index definitions)
+        issues (->> models
+                    (mapcat #(concat (relation-issues definitions wildcards %)
+                                     (expression-issues wildcards %)))
                     distinct
                     (sort-by issue-sort-key)
                     vec)]
     (when (seq issues) (resolution-failed! issues))))
 
+(defn- type-graph
+  "The graph SpiceDB's GetRecursiveTerminalTypesForRelation walks, compiled
+   once: a node per relation, permission or arrow target, with its subject
+   types (a relation's plain and wildcard types) and the nodes it leads to (a
+   relation's subject relations; a permission's computed usersets, and its
+   arrows' targets on every subject type of their relation). Returns
+   `{:ids {[definition relation] id} :edges [[id ...] ...] :types [[t ...] ...]}`."
+  [definitions]
+  (let [graph (volatile! {:ids {} :edges [] :types []})
+        node! (fn [d r]
+                (or (get-in @graph [:ids [d r]])
+                    (let [id (count (:edges @graph))]
+                      (vswap! graph #(-> %
+                                         (assoc-in [:ids [d r]] id)
+                                         (update :edges conj [])
+                                         (update :types conj [])))
+                      id)))
+        edge! (fn [from d r]
+                (let [to (node! d r)]
+                  (vswap! graph update-in [:edges from] conj to)))]
+    (doseq [[name {:keys [relations permissions]}] definitions]
+      (doseq [[relation refs] relations
+              :let [from (node! name relation)]
+              {:keys [subject-type subject-relation wildcard?]} refs]
+        (if (and subject-relation (not wildcard?))
+          (edge! from subject-type subject-relation)
+          (vswap! graph update-in [:types from] conj subject-type)))
+      (doseq [[permission member] permissions
+              :let [from (node! name permission)]
+              {:keys [kind tupleset target] :as leaf} (expression-leaves (last member))]
+        (case kind
+          :computed (edge! from name (:name leaf))
+          :arrow (doseq [subject-type (sort (distinct (map :subject-type (get relations tupleset))))]
+                   (edge! from subject-type target)))))
+    @graph))
+
 (defn- terminal-types
-  "SpiceDB's GetRecursiveTerminalTypesForRelation, including its shared
-   visited set."
-  [definitions definition relation]
-  (let [seen (volatile! #{})]
-    (letfn [(for-relation [d r]
-              (when-not (contains? @seen [d r])
-                (vswap! seen conj [d r])
-                (let [model (get definitions d)]
-                  (cond
-                    (contains? (:relations model) r)
-                    (into #{}
-                          (mapcat (fn [{:keys [subject-type subject-relation wildcard?]}]
-                                    (if (and subject-relation (not wildcard?))
-                                      (for-relation subject-type subject-relation)
-                                      [subject-type])))
-                          (get-in model [:relations r]))
-                    (contains? (:permissions model) r)
-                    (for-expression d (last (get-in model [:permissions r])))
-                    :else nil))))
-            (for-expression [d node]
-              (into #{}
-                    (mapcat (fn [{:keys [kind name tupleset target]}]
-                              (case kind
-                                :computed (for-relation d name)
-                                :arrow (mapcat #(for-relation % target)
-                                               (sort (distinct (map :subject-type
-                                                                    (get-in definitions [d :relations tupleset])))))))
-                            (expression-leaves node))))]
-      (for-relation definition relation))))
+  "SpiceDB's GetRecursiveTerminalTypesForRelation from node `start`: every
+   subject type reachable through relations, subject relations and arrows (its
+   shared visited set loses none of them), and the number of nodes visited."
+  [{:keys [edges types]} start]
+  (loop [stack [start] seen (transient #{}) visited 0 out (transient #{})]
+    (if-let [id (peek stack)]
+      (let [stack (pop stack)]
+        (if (contains? seen id)
+          (recur stack seen visited out)
+          (recur (into stack (nth edges id))
+                 (conj! seen id)
+                 (inc visited)
+                 (reduce conj! out (nth types id)))))
+      [(persistent! out) visited])))
 
 (defn- validate-annotations!
-  [definitions {:keys [name permissions]}]
-  (doseq [[permission-name member] (sort-by key permissions)
-          :let [annotation (child member :type-annotation)]
-          :when annotation
-          :let [allowed (set (map second (rest annotation)))
-                missing (sort (remove allowed (terminal-types definitions name permission-name)))]
-          :when (seq missing)]
-    (fail! :eacl.schema/incomplete-type-annotation
-           (str "Incomplete type annotation on `" name "#" permission-name "`: `" (first missing)
-                "` is reachable but not in " (pr-str (vec (sort allowed))) ".")
-           {:resource-type name :permission permission-name
-            :reachable (vec missing) :annotation (vec (sort allowed))})))
+  "SpiceDB's `use typechecking` check: every subject type an annotated
+   permission reaches is in its annotation (definitions in source order,
+   permissions by name)."
+  [definitions models budget]
+  (let [graph (type-graph definitions)]
+    (doseq [{:keys [name permissions]} models
+            [permission-name member] (sort-by key permissions)
+            :let [annotation (child member :type-annotation)]
+            :when annotation
+            :let [[types visited] (terminal-types graph (get-in graph [:ids [name permission-name]]))
+                  _ (visit! budget visited :typechecking)
+                  allowed (set (map second (rest annotation)))
+                  missing (sort (remove allowed types))]
+            :when (seq missing)]
+      (fail! :eacl.schema/incomplete-type-annotation
+             (str "Incomplete type annotation on `" name "#" permission-name "`: `" (first missing)
+                  "` is reachable but not in " (pr-str (vec (sort allowed))) ".")
+             {:resource-type name :permission permission-name
+              :reachable (vec missing) :annotation (vec (sort allowed))}))))
 
 (defn- alias-target
   "The name a permission aliases: its rewrite is exactly one computed userset."
@@ -704,21 +925,34 @@
     (when (= :computed (:op ir)) (:name ir))))
 
 (defn- validate-alias-cycles!
-  "SpiceDB's computePermissionAliases."
+  "SpiceDB's computePermissionAliases: an alias resolves once its target is
+   resolved or no alias; what never resolves is a cycle or leads into one.
+   Each alias chain is followed once."
   [{:keys [name permissions]}]
   (let [aliases (into {} (keep (fn [[p member]]
                                  (when-let [target (alias-target member)]
                                    (when (contains? permissions target) [p target]))))
-                      permissions)]
-    (loop [unresolved aliases]
-      (when (seq unresolved)
-        (let [resolved (into {} (remove (fn [[_ target]] (contains? unresolved target)) unresolved))]
-          (if (empty? resolved)
-            (fail! :eacl.schema/permission-alias-cycle
-                   (str "Under definition `" name "`, there exists a cycle in permissions: "
-                        (str/join ", " (sort (keys unresolved))) ".")
-                   {:resource-type name :permissions (vec (sort (keys unresolved)))})
-            (recur (apply dissoc unresolved (keys resolved)))))))))
+                      permissions)
+        states (reduce
+                (fn [states start]
+                  (if (contains? states start)
+                    states
+                    (loop [at start chain [] visiting #{}]
+                      (let [settle (fn [state] (into states (map (fn [p] [p state])) chain))
+                            state (get states at)]
+                        (cond
+                          (= :resolved state) (settle :resolved)
+                          (or (= :cyclic state) (contains? visiting at)) (settle :cyclic)
+                          (not (contains? aliases at)) (settle :resolved)
+                          :else (recur (get aliases at) (conj chain at) (conj visiting at)))))))
+                {}
+                (keys aliases))
+        cyclic (sort (keep (fn [[p state]] (when (= :cyclic state) p)) states))]
+    (when (seq cyclic)
+      (fail! :eacl.schema/permission-alias-cycle
+             (str "Under definition `" name "`, there exists a cycle in permissions: "
+                  (str/join ", " cyclic) ".")
+             {:resource-type name :permissions (vec cyclic)}))))
 
 ;; ---------------------------------------------------------------- EACL tree
 
@@ -755,13 +989,13 @@
 
 ;; ---------------------------------------------------------------- entry point
 
-(defn validate
-  "Validates a parse tree against SpiceDB's rules. See the namespace docstring."
-  [source tree]
+(defn- declarations
+  "Partials, every declaration in source order, and caveat references."
+  [source tree budget]
   (let [items (rest tree)
         flags (set (map second (filter #(= :use-flag (tag %)) items)))
         partials (filter #(= :partial (tag %)) items)
-        compiled (compile-partials source partials)
+        compiled (compile-partials source partials budget)
         names (volatile! {})
         claim-name!
         (fn [kind name node]
@@ -792,7 +1026,7 @@
              :definition
              (let [name-node (second item)
                    name (path-text name-node)
-                   [members] (expand-members source compiled (nth item 2) true)
+                   members (expand-definition source compiled (nth item 2) budget)
                    _ (check-name! source :definition name name-node)
                    model (definition-model name members)]
                ;; A declaration's own errors precede its name check, and both
@@ -800,16 +1034,12 @@
                (check-declaration! model)
                (claim-name! :definition name item)
                [:definition (assoc model :node item)]))))
-        models (keep (fn [[kind model]] (when (= :definition kind) model)) translated)
-        definitions (into {} (map (juxt :name identity)) models)
+        models (vec (keep (fn [[kind model]] (when (= :definition kind) model)) translated))
         caveats (vec (keep (fn [[kind d]] (when (= :caveat kind) d)) translated))
         caveat-names (set (map :name caveats))]
     (doseq [model models] (check-caveat-references! caveat-names model))
-    (check-references! definitions models)
-    (when (contains? flags "typechecking")
-      (doseq [model models] (validate-annotations! definitions model)))
-    (doseq [model models] (validate-alias-cycles! model))
     {:flags flags
+     :models models
      :caveats caveats
      :tree
      (into [:schema]
@@ -824,3 +1054,23 @@
                                       (into [:definition-body] (map eacl-member) members)]
                                      (meta node))))))
            translated)}))
+
+(defn validate
+  "Validates a parse tree against SpiceDB's rules. See the namespace docstring.
+   `limits` are the client's normalized expression limits: the source limits
+   checked before the reference checks, and :maximum-schema-source-bytes for
+   the expansion and typechecking budgets (EACL's default when absent)."
+  ([source tree]
+   (validate source tree {}))
+  ([source tree limits]
+   (let [source-bytes (or (:maximum-schema-source-bytes limits)
+                          (:maximum-schema-source-bytes expression-policy/schema-limits))
+         expansion (budget (partial-expansion-budget source-bytes))
+         {:keys [flags models] :as declared} (declarations source tree expansion)
+         definitions (into {} (map (juxt :name identity)) models)]
+     (check-source-limits! models limits)
+     (check-references! definitions models)
+     (when (contains? flags "typechecking")
+       (validate-annotations! definitions models (budget (typechecking-budget source-bytes))))
+     (doseq [model models] (validate-alias-cycles! model))
+     (dissoc declared :models))))

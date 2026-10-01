@@ -1672,7 +1672,7 @@ adapter guides:
 EACL reads the schema language of SpiceDB v1.56.0. Every schema SpiceDB
 accepts is accepted by EACL, or rejected with `:eacl.schema/unsupported-feature`
 naming a feature EACL cannot serve; every schema SpiceDB rejects is rejected.
-A corpus of 4,326 schemas with SpiceDB's verdicts checks this on every test
+A corpus of 4,359 schemas with SpiceDB's verdicts checks this on every test
 run ([SpiceDB schema compatibility](docs/spicedb-schema-compatibility.md)).
 Use `eacl/write-schema!` to define your schema.
 

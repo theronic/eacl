@@ -269,34 +269,40 @@
 
   Declarations are read once, in source order: each one is built and checked
   against the earlier ones before the next is read, so the first failing
-  declaration determines the error, whatever its kind or position."
-  [parse-tree]
-  (if (node-of? :schema parse-tree)
-    (let [{:keys [tree flags] :as validated}
-          (validation/validate (:eacl.spicedb/source (meta parse-tree)) parse-tree)
-          unsupported (unsupported-caveat-issues (:caveats validated))
-          _ (when (seq unsupported)
-              (throw (ex-info (:message (first unsupported))
-                              {:type :eacl.schema/unsupported-feature
-                               :eacl/error :eacl.schema/unsupported-feature
-                               :issues unsupported
-                               :issue-count (count unsupported)})))
-          {:keys [definitions caveats]}
-          (reduce (fn [schema node]
-                    (cond
-                      (node-of? :definition node) (update schema :definitions add-definition node)
-                      (node-of? :caveat-definition node) (update schema :caveats add-caveat node)
-                      :else schema))
-                  {:definitions {} :caveats (sorted-map)}
-                  (rest tree))]
-      (cond-> {:definitions definitions
-               :parse-tree tree
-               :use-flags flags}
-        (seq caveats) (assoc :caveats (vec (vals caveats)))))
-    (throw (ex-info "Unexpected schema parse tree; refusing to interpret as an empty schema."
-                    {:type :eacl.schema/parse-error
-                     :eacl/error :eacl.schema/parse-error
-                     :parse-tree parse-tree}))))
+  declaration determines the error, whatever its kind or position.
+
+  `limits` (normalized expression limits) are the source limits checked
+  before SpiceDB's reference checks and the size that bounds partial
+  expansion and typechecking; see `eacl.spicedb.validation/validate`."
+  ([parse-tree]
+   (transform-schema parse-tree {}))
+  ([parse-tree limits]
+   (if (node-of? :schema parse-tree)
+     (let [{:keys [tree flags] :as validated}
+           (validation/validate (:eacl.spicedb/source (meta parse-tree)) parse-tree limits)
+           unsupported (unsupported-caveat-issues (:caveats validated))
+           _ (when (seq unsupported)
+               (throw (ex-info (:message (first unsupported))
+                               {:type :eacl.schema/unsupported-feature
+                                :eacl/error :eacl.schema/unsupported-feature
+                                :issues unsupported
+                                :issue-count (count unsupported)})))
+           {:keys [definitions caveats]}
+           (reduce (fn [schema node]
+                     (cond
+                       (node-of? :definition node) (update schema :definitions add-definition node)
+                       (node-of? :caveat-definition node) (update schema :caveats add-caveat node)
+                       :else schema))
+                   {:definitions {} :caveats (sorted-map)}
+                   (rest tree))]
+       (cond-> {:definitions definitions
+                :parse-tree tree
+                :use-flags flags}
+         (seq caveats) (assoc :caveats (vec (vals caveats)))))
+     (throw (ex-info "Unexpected schema parse tree; refusing to interpret as an empty schema."
+                     {:type :eacl.schema/parse-error
+                      :eacl/error :eacl.schema/parse-error
+                      :parse-tree parse-tree})))))
 
 (defn- caveat-refs [names]
   (mapv #(vector :eacl.caveat/name %) names))

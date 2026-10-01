@@ -84,6 +84,36 @@
         (is (empty? (ds/datoms (ds/db conn) :eavt qid)))
         (is (not (contains? (cache-trace/outcome #(eacl/write-schema! client {:schema replacement})) :fault)))))))
 
+(deftest a-v8-0-0-caveat-source-is-rewritten-once
+  ;; EACL v8.0.0 stored a Caveat's whole body; EACL now stores the CEL
+  ;; expression SpiceDB reads from it. The first write of the unchanged schema
+  ;; rewrites the stored source in place, and the next one is a no-op.
+  (let [conn (schema/create-conn)
+        client (api/make-client conn {:clock (constantly 50)
+                                      :caveat-evaluator (fixtures/portable-evaluator (atom 0))})
+        text "caveat enabled(flag bool) {\n  flag\n}\ndefinition user {}\ndefinition doc {\n relation member: user | user with enabled\n permission view = member\n}"
+        subject (eacl/spice-object :user "upgrade/u")
+        resource (eacl/spice-object :doc "upgrade/doc")
+        caveat-eid #(ds/entid (ds/db conn) [:eacl.caveat/name "enabled"])
+        source #(:eacl.caveat/expression-source (ds/entity (ds/db conn) (caveat-eid)))
+        permissionship #(:permissionship (eacl/check-permission
+                                          client {:subject subject :permission :view :resource resource
+                                                  :caveat-context {"flag" true} :cache? false}))]
+    (binding [orchestration/*qualified-authorization-enabled?* true]
+      (eacl/write-schema! client text)
+      (is (= "flag\n" (source)))
+      (ds/transact! conn [{:eacl/id "upgrade/u"} {:eacl/id "upgrade/doc"}])
+      (eacl/create-relationship! client (assoc (eacl/->Relationship subject :member resource)
+                                               :caveat "enabled"))
+      (let [eid (caveat-eid)]
+        (ds/transact! conn [[:db/add eid :eacl.caveat/expression-source "\n  flag\n"]])
+        (is (= :has-permission (permissionship)) "a v8.0.0 source evaluates")
+        (is (false? (:eacl.schema/no-op? (eacl/write-schema! client text))))
+        (is (= "flag\n" (source)))
+        (is (= eid (caveat-eid)) "the Caveat keeps its identity")
+        (is (= :has-permission (permissionship)))
+        (is (true? (:eacl.schema/no-op? (eacl/write-schema! client text))))))))
+
 (deftest qualified-native-cas-contention-replans-from-a-new-basis
   (let [conn (schema/create-conn)
         client (api/make-client conn {})]

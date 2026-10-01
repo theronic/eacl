@@ -325,7 +325,7 @@
   ([parse-tree limits]
    (resolve-parse-tree parse-tree limits {}))
   ([parse-tree limits admission]
-   (let [transformed (parser/transform-schema parse-tree)
+   (let [transformed (parser/transform-schema parse-tree limits)
          ;; Expression storage represents wildcard branches; only the legacy
          ;; flat projection (parser/->eacl-schema) keeps rejecting them.
          _ (parser/validate-eacl-restrictions
