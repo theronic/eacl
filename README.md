@@ -857,6 +857,8 @@ All list APIs use the v8 Relay pagination contract:
 - Backward: pass `:last` and optionally `:before`.
 - Responses include `:page-info` with `:start-cursor`, `:end-cursor`, `:has-next-page?`, and `:has-previous-page?`.
 - Lookup cursors paginate in the sealed plan's stable first-discovery order; a page size change is rejected as an incompatible cursor rather than silently re-windowed.
+- Lookups check the page keys before they decode a cursor. An invalid combination, such as `:first` with `:before`, fails with `:eacl.pagination/invalid-page-request`, and the error data contains the cursor strings you passed, never their decrypted contents.
+- Cursors are accepted only in the exact spelling EACL issued; any changed character makes a cursor invalid.
 
 ### Aggregate authorization
 
@@ -1565,7 +1567,10 @@ so another request can ask to see that write.
 | `at-least-as-fresh` | Read a version that includes an earlier write. |
 | `at-exact-snapshot` | Read the exact historical version named by a token. |
 
-Treat tokens as opaque strings. A token applies only to its original database
+Treat tokens as opaque strings. EACL accepts a token only in the exact spelling
+it issued, so you can compare, cache, or log tokens by their string; any other
+string, even one that decodes to the same contents, fails with
+`:eacl/invalid-zed-token`. A token applies only to its original database
 and lifecycle. For tokens returned by a browser, the server should normally
 choose `at-least-as-fresh`; letting a caller select old authorization state
 requires a separate application policy.

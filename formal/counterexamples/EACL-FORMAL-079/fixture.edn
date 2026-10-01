@@ -1,0 +1,8 @@
+{:boundary :eacl.secure-format/canonicalize
+ :record "(defrecord PortableRecord [a])"
+ :inputs ["{(->PortableRecord 1) :record, {:a 1} :map}"
+          "#{(->PortableRecord 1) {:a 1}}"]
+ :observed
+ {:canonicalize "{{:a 1} :map}"
+  :encode-canonical "{{:a 1} :record, {:a 1} :map}"
+  :decode-of-encoding {:eacl/error :eacl.format/invalid :reason :malformed}}}

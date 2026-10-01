@@ -176,11 +176,16 @@
         :else (recur (next chars) depth false false)))))
 
 (defn decode-bounded
-  "Checks byte and raw nesting limits before invoking the portable reader."
+  "Checks byte and raw nesting limits before invoking the portable reader.
+  The reader accepts only the canonical spelling; any other spelling is
+  `:noncanonical-payload`."
   [payload options]
   (bounded-source! payload options)
   (try (secure/decode-canonical payload options)
-       (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) _ (error! :malformed-payload))))
+       (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+         (error! (if (= :noncanonical (:reason (ex-data error)))
+                   :noncanonical-payload
+                   :malformed-payload)))))
 
 (defn- decode-payload [tag payload]
   (let [v (decode-bounded payload encoding-options)]

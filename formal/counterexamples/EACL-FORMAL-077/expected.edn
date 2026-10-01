@@ -1,0 +1,6 @@
+{:malformed-pages
+ {:error :eacl.pagination/invalid-page-request
+  :data "the :after and :before strings the caller passed"}
+ :unknown-anchor {:error :eacl.pagination/invalid-page-size}
+ :invariant
+ "Page keys are validated on the caller's query before any cursor is decoded, so error data never contains a decoded cursor edge."}

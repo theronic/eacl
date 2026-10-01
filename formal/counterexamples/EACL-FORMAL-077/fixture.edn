@@ -1,0 +1,15 @@
+{:schema "definition user {}\ndefinition doc {\n  relation viewer: user\n  permission view = viewer\n}\n"
+ :relationships [[:doc "d1" :viewer :user "a"] [:doc "d2" :viewer :user "a"]]
+ :first-page {:subject [:user "a"] :permission :view :resource/type :doc :first 1}
+ :malformed-pages
+ [{:first 1 :before :end-cursor-of-first-page}
+  {:last 1 :after :end-cursor-of-first-page}
+  {:first 1 :after :end-cursor-of-first-page :before :end-cursor-of-first-page}]
+ :unknown-anchor {:subject [:user "missing"] :permission :view
+                  :resource/type :doc :first 0}
+ :observed
+ {:error :eacl.pagination/invalid-page-request
+  :data {:before {:kind :least-path-edge :anchor :progress :coords [0 4]
+                  :fingerprint "<plan fingerprint>" :order-abi 3
+                  :traversal :forward :version 3}}
+  :unknown-anchor :empty-page}}

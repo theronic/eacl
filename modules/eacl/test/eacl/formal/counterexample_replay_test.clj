@@ -155,6 +155,14 @@
     eacl.core-test/missing-public-read-keys-fail-before-dispatch-test
     :EACL-FORMAL-075
     eacl.core-test/nested-relationship-mutations-fail-before-protocol-dispatch-test
+    :EACL-FORMAL-076
+    eacl.datascript.contract-test/zed-tokens-accept-only-their-issued-spelling-test
+    :EACL-FORMAL-077
+    eacl.datascript.contract-test/page-request-errors-echo-the-callers-cursor-strings-test
+    :EACL-FORMAL-078
+    eacl.secure-format-test/validation-work-is-bounded-by-maximum-entries-test
+    :EACL-FORMAL-079
+    eacl.secure-format-test/records-project-to-maps-and-colliding-members-are-rejected-test
     :EACL-FORMAL-090
     eacl.caveats.plan-test/member-literals-are-admitted-like-string-literals
     :EACL-FORMAL-091

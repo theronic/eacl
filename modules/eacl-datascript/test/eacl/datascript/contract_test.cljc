@@ -1,5 +1,6 @@
 (ns eacl.datascript.contract-test
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is testing]]
+            [clojure.string :as str]
             [datascript.core :as ds]
             [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
@@ -2729,3 +2730,88 @@
      #(datascript/make-client conn %)
      #(ds/transact! conn (mapv (fn [{:keys [id]}] {:eacl/id id}) contract/smoke-objects))
      datascript/export-authenticated-cache-snapshot datascript/restore-authenticated-cache-snapshot!)))
+
+(deftest zed-tokens-accept-only-their-issued-spelling-test
+  ;; A Zed token is the Base64URL of a canonical envelope. Text appended
+  ;; inside the envelope, Base64 padding, or a change to the unused low bits
+  ;; of the last character once produced a different string that still
+  ;; authenticated as the original token.
+  (let [client (seeded-client)
+        token (:zed/token
+               (eacl/create-relationship!
+                client (contract/->user "user-2") :owner
+                (contract/->account "account-1")))
+        check (fn [candidate]
+                (try
+                  (eacl/can? client
+                             (contract/->user "user-2") :admin
+                             (contract/->account "account-1")
+                             (consistency/at-least-as-fresh candidate))
+                  (catch #?(:clj clojure.lang.ExceptionInfo
+                            :cljs cljs.core.ExceptionInfo) error
+                    (:type (ex-data error)))))
+        alphabet "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+        prefix causal-token/token-prefix
+        body (subs token (count prefix))
+        envelope (secure/bytes->utf8 (secure/b64url-decode body))
+        respell (fn [text]
+                  (str prefix (secure/b64url-encode (secure/utf8-bytes text))))
+        last-index (dec (count body))
+        last-value (str/index-of alphabet (subs body last-index))
+        unused-bit-variant
+        (when-not (zero? (mod (count body) 4))
+          (str prefix (subs body 0 last-index)
+               (subs alphabet (bit-xor last-value 1) (inc (bit-xor last-value 1)))))]
+    (is (true? (check token)))
+    (doseq [variant (cond-> [(respell (str envelope "] TAMPERED ((( "))
+                             (respell (str envelope " "))
+                             (str token "=")
+                             (str token "==")]
+                      unused-bit-variant (conj unused-bit-variant))]
+      (is (not= token variant))
+      (is (= :eacl/invalid-zed-token (check variant)) variant))))
+
+(deftest page-request-errors-echo-the-callers-cursor-strings-test
+  ;; Malformed page keys are rejected before any cursor is decoded, so the
+  ;; error data holds the caller's opaque strings, never a decrypted edge.
+  (let [client (seeded-client)
+        error-data (fn [lookup query]
+                     (try
+                       (lookup client query)
+                       nil
+                       (catch #?(:clj clojure.lang.ExceptionInfo
+                                 :cljs cljs.core.ExceptionInfo) error
+                         (ex-data error))))
+        unauthenticated "eacl_c7_not-a-cursor"]
+    (doseq [[lookup base]
+            [[eacl/lookup-resources {:subject (contract/->user "user-1")
+                                     :permission :view
+                                     :resource/type :server}]
+             [eacl/lookup-subjects {:resource (contract/->server "server-1")
+                                    :permission :view
+                                    :subject/type :user}]]]
+      (let [cursor (get-in (lookup client (assoc base :first 1))
+                           [:page-info :end-cursor])]
+        (is (string? cursor))
+        (doseq [[page-keys echoed]
+                [[{:first 1 :before cursor} {:before cursor}]
+                 [{:last 1 :after cursor} {:after cursor}]
+                 [{:first 1 :after cursor :before cursor}
+                  {:after cursor :before cursor}]
+                 [{:first 1 :before unauthenticated} {:before unauthenticated}]]]
+          (let [data (error-data lookup (merge base page-keys))]
+            (is (= :eacl.pagination/invalid-page-request (:type data))
+                (pr-str (keys page-keys)))
+            (is (= echoed (select-keys data [:after :before])))))))
+    (testing "page keys are validated even when the anchor is unknown"
+      (doseq [[lookup query]
+              [[eacl/lookup-resources {:subject (contract/->user "missing-user")
+                                       :permission :view
+                                       :resource/type :server
+                                       :first 0}]
+               [eacl/lookup-subjects {:resource (contract/->server "missing-server")
+                                      :permission :view
+                                      :subject/type :user
+                                      :first 0}]]]
+        (is (= :eacl.pagination/invalid-page-size
+               (:type (error-data lookup query))))))))

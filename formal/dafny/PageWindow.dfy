@@ -121,6 +121,77 @@ module PageWindow {
   {
   }
 
+  predicate SamePresence<T>(left: Presence<T>, right: Presence<T>) {
+    left.Absent? == right.Absent? && left.PresentNil? == right.PresentNil?
+  }
+
+  // Normalization reads whether each boundary is absent, nil, or present, and
+  // never the boundary itself. A page request may therefore be validated on
+  // the caller's opaque cursor strings before they are authenticated and
+  // decoded; the later check of the decoded edges reaches the same decision,
+  // and an error never needs a decoded edge (EACL-FORMAL-077).
+  lemma BoundaryValuesDoNotAffectNormalization(
+    left: RawPageRequest,
+    right: RawPageRequest,
+    defaultSize: nat,
+    maximumSize: nat
+  )
+    requires left.first == right.first && left.last == right.last
+    requires SamePresence(left.after, right.after)
+    requires SamePresence(left.before, right.before)
+    ensures NormalizePageRequest(
+              left,
+              defaultSize,
+              maximumSize
+            ).InvalidPageRequest? ==
+            NormalizePageRequest(
+              right,
+              defaultSize,
+              maximumSize
+            ).InvalidPageRequest?
+    ensures NormalizePageRequest(
+              left,
+              defaultSize,
+              maximumSize
+            ).InvalidPageRequest? ==>
+              NormalizePageRequest(
+                left,
+                defaultSize,
+                maximumSize
+              ).error ==
+              NormalizePageRequest(
+                right,
+                defaultSize,
+                maximumSize
+              ).error
+    ensures NormalizePageRequest(
+              left,
+              defaultSize,
+              maximumSize
+            ).ValidPageRequest? ==>
+              NormalizePageRequest(
+                left,
+                defaultSize,
+                maximumSize
+              ).direction ==
+              NormalizePageRequest(
+                right,
+                defaultSize,
+                maximumSize
+              ).direction &&
+              NormalizePageRequest(
+                left,
+                defaultSize,
+                maximumSize
+              ).size ==
+              NormalizePageRequest(
+                right,
+                defaultSize,
+                maximumSize
+              ).size
+  {
+  }
+
   function Minimum(left: nat, right: nat): nat {
     if left < right then left else right
   }

@@ -1,0 +1,15 @@
+{:id :EACL-FORMAL-078
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace "eacl-rust BUGS.md EACL-RS-103"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions
+ ["v8.0.0 commit a698b3bdf15e61be9bfd1324d7d7c67dc82176be"]
+ :affected-backends [:shared]
+ :root-cause
+ "validate-value counted a collection's entries by reducing every child first and compared the total with maximum-entries only afterwards. A huge collection was walked completely before it was rejected, and an unbounded lazy sequence was never rejected, so encode-canonical, canonicalize, capture-portable, and every digest built on them did not return."
+ :fix
+ "validate-value threads one running entry count through the whole value and checks it before each value is examined, so validation visits at most maximum-entries + 1 values and fails with :too-many-entries."
+ :closing-evidence
+ ["eacl.secure-format-test/validation-work-is-bounded-by-maximum-entries-test (CLJ and CLJS)"]}

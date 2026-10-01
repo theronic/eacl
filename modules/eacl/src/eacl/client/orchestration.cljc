@@ -2168,12 +2168,26 @@
              limits (counters (count (:data internal-page))) nil)]
       internal-page)))
 
+(defn- validate-lookup-request!
+  "Validates a public lookup query, page keys included, before snapshot
+  selection or cursor work. Page keys are checked on the caller's query, so a
+  malformed page request reports the caller's opaque cursor strings. Once a
+  cursor is authenticated its decoded edge is internal state and must never
+  reach error data. Page normalization reads only whether each boundary is
+  present, so the engine's later check of the decoded query agrees."
+  [opts operation query]
+  (authorization-filters/validate-lookup! operation query)
+  (binding [subproblem/*decision-kernel*
+            (or (:decision-kernel opts) subproblem/*decision-kernel*)]
+    (engine/normalize-page-request query))
+  query)
+
 (defn lookup-resources
   [api source
    {:as opts :keys [spice-object->internal]}
    {:as query :keys [subject]}]
   (when-not authorization-filters/*validated-request?*
-    (authorization-filters/validate-lookup! :lookup-resources query))
+    (validate-lookup-request! opts :lookup-resources query))
   (wildcard/require-concrete! :lookup-resources :subject subject)
   (let [opts (ensure-execution-contract opts :lookup-resources query)]
     (with-selected-context
@@ -2361,7 +2375,7 @@
    {:as opts :keys [spice-object->internal]}
    query]
   (when-not authorization-filters/*validated-request?*
-    (authorization-filters/validate-lookup! :lookup-subjects query))
+    (validate-lookup-request! opts :lookup-subjects query))
   (wildcard/require-concrete! :lookup-subjects :resource (:resource query))
   (wildcard/require-concrete! :lookup-subjects :resource
                               (:resource (:subject/relationship query)))
@@ -4261,7 +4275,7 @@
           (fn [snapshot] (eacl/-read-relationships snapshot request))))))
   (-lookup-resources [this request]
     (eacl/validate-reader-request! :lookup-resources request)
-    (authorization-filters/validate-lookup! :lookup-resources request)
+    (validate-lookup-request! (runtime-options runtime) :lookup-resources request)
     (with-page-lookahead
       this runtime :lookup-resources request
       #(binding [authorization-filters/*validated-request?* true]
@@ -4270,7 +4284,7 @@
           (fn [snapshot] (eacl/-lookup-resources snapshot request))))))
   (-lookup-subjects [this request]
     (eacl/validate-reader-request! :lookup-subjects request)
-    (authorization-filters/validate-lookup! :lookup-subjects request)
+    (validate-lookup-request! (runtime-options runtime) :lookup-subjects request)
     (with-page-lookahead
       this runtime :lookup-subjects request
       #(binding [authorization-filters/*validated-request?* true]

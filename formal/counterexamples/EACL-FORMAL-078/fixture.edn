@@ -1,0 +1,5 @@
+{:boundary :eacl.secure-format/validate-value
+ :limits {:maximum-entries 16}
+ :inputs ["(range)" "{:values (range)}" "[[:prefix] [(range)]]"]
+ :entry-points [:encode-canonical :canonicalize :capture-portable]
+ :observed {:realized-before-rejection :unbounded}}

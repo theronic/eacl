@@ -1280,3 +1280,237 @@
       (is (= (reference-unambiguous-keyword? value)
              (string? (digest-outcome #(secure/encode-canonical value))))
           (pr-str [(namespace value) (name value)])))))
+
+;; One accepted spelling per value and per authenticated string.
+
+(def ^:private b64url-alphabet
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
+
+(defn- rejected?
+  [f]
+  (try
+    (f)
+    false
+    (catch #?(:clj Exception :cljs :default) _
+      true)))
+
+(defn- accepted-variants
+  "The variants that `decode` accepts. Each would be a second accepted
+  spelling of something EACL issued once."
+  [decode variants]
+  (vec (remove #(rejected? (fn [] (decode %))) variants)))
+
+(defn- single-bit-variants
+  "Every string obtained by flipping one of the six bits of one Base64URL
+  character of `token`. Characters outside the alphabet, such as cursor
+  segment separators, are kept."
+  [token]
+  (for [index (range (count token))
+        :let [value (str/index-of b64url-alphabet
+                                  (subs token index (inc index)))]
+        :when value
+        bit [1 2 4 8 16 32]
+        :let [flipped (bit-xor value bit)]]
+    (str (subs token 0 index)
+         (subs b64url-alphabet flipped (inc flipped))
+         (subs token (inc index)))))
+
+(defn- unused-bit-variants
+  "Spellings of `encoded` that differ only in the unused low bits of its last
+  character. A lenient decoder maps every one of them to the same bytes."
+  [encoded]
+  (let [unused (case (mod (count encoded) 4) 2 4 3 2 0)
+        last-index (dec (count encoded))]
+    (when (pos? unused)
+      (let [value (str/index-of b64url-alphabet (subs encoded last-index))]
+        (for [bits (range 1 (bit-shift-left 1 unused))
+              :let [changed (bit-xor value bits)]]
+          (str (subs encoded 0 last-index)
+               (subs b64url-alphabet changed (inc changed))))))))
+
+(deftest decode-canonical-admits-only-the-canonical-spelling-test
+  (testing "input after the first complete form is never ignored"
+    (doseq [wire ["{:allowed 1}] [{:forged 2}"
+                  "{:allowed 1}] )))((("
+                  "{:allowed 1}]"
+                  "1]"
+                  "{:allowed 1} "
+                  " {:allowed 1}"
+                  "{:allowed 1},"]]
+      (is (= :noncanonical
+             (:reason (error-data #(secure/decode-canonical wire))))
+          wire)))
+  (testing "another spelling of a canonical value is rejected"
+    (doseq [wire ["{:b 1, :a 2}" "{:a 2 :b 1}" "{:a 2,  :b 1}" "{:a 2,\n:b 1}"
+                  "#{2 1}" "[1  2]" "(1 2)" "+1" "-0" "\"\\u0041\"" "nil "
+                  "\"a\" "]]
+      (is (= :noncanonical
+             (:reason (error-data #(secure/decode-canonical wire))))
+          wire))
+    (doseq [wire ["1N" "010" "0x10"]]
+      (is (contains? #{:noncanonical :malformed}
+                     (:reason (error-data #(secure/decode-canonical wire))))
+          wire)))
+  (testing "reader syntax that hides input is outside the wire language"
+    (doseq [wire ["^:hidden {:a 1}"
+                  "^{:hidden \"x; # y\"} {:a 1}"
+                  ;; A character literal outside a string once desynchronised
+                  ;; the hidden-input scanner, which then missed the discard,
+                  ;; comment, or namespaced map that followed it.
+                  "^{:k \\\"} {:a #_ 2 1}"
+                  "^{:k \\\"} {:a 1} ;c\n"
+                  "^{:k \\\"} #:a{:b 1}"
+                  "[\\a]"]]
+      (is (= :malformed
+             (:reason (error-data #(secure/decode-canonical wire))))
+          wire)))
+  (testing "a canonical encoding decodes to its value and re-encodes to the same bytes"
+    (doseq [value [nil true false 0 -1
+                   secure/maximum-safe-integer secure/minimum-safe-integer
+                   "" "quote:\" slash:\\ \n\u0001 hé😀" "#uuid \"x\""
+                   :k :ns/k [] {} #{} [1 [2 [3]]]
+                   {:b #{3 2 1} :a [1 true nil] "s" {:n -7}}
+                   #{[:a 1] [:a 2] {:x "y"}}
+                   #uuid "854e138f-b8a4-42ee-a8f9-49c01ac19fc1"
+                   {:lifecycle #uuid "854e138f-b8a4-42ee-a8f9-49c01ac19fc1"}]]
+      (let [wire (secure/encode-canonical value)]
+        (is (= (secure/canonicalize value) (secure/decode-canonical wire)) wire)
+        (is (= wire (secure/encode-canonical (secure/decode-canonical wire)))
+            wire)))))
+
+(deftest base64url-decoding-admits-only-the-canonical-spelling-test
+  (doseq [n (range 40)]
+    (let [bytes (vec (take n (cycle [0 1 63 64 127 128 191 254 255])))
+          encoded (secure/b64url-encode bytes)]
+      (is (= bytes (secure/b64url-decode encoded)) encoded)
+      (doseq [variant (concat [(str encoded "=") (str encoded "==")
+                               (str encoded " ") (str " " encoded)
+                               (str encoded "\n")]
+                              (unused-bit-variants encoded))]
+        (is (= :malformed-base64
+               (:reason (error-data #(secure/b64url-decode variant))))
+            (pr-str variant)))))
+  (doseq [encoded ["A" "AAAAA" "A+" "A/" "AA.A" "AA=A" "\u00c0A"]]
+    (is (= :malformed-base64
+           (:reason (error-data #(secure/b64url-decode encoded))))
+        encoded)))
+
+(deftest authenticated-envelopes-accept-only-their-issued-spelling-test
+  (let [prefix "test_spelling_"
+        format-options (merge options {:domain "test/spelling"
+                                       :prefix prefix
+                                       :payload-keys #{:v :answer}})
+        payload {:v 1 :answer true}
+        token (secure/encode-authenticated format-options payload)
+        body (subs token (count prefix))
+        envelope (secure/bytes->utf8 (secure/b64url-decode body))
+        tag (second (re-find #":tag \"([^\"]+)\"" envelope))
+        respell (fn [text]
+                  (str prefix (secure/b64url-encode (secure/utf8-bytes text))))
+        decode #(secure/decode-authenticated format-options %)]
+    (is (= payload (decode token)))
+    (testing "text appended inside the envelope is not ignored"
+      (doseq [suffix ["] TAMPERED ((( " "]" " " "," "] [{:forged 2}"]]
+        (is (rejected? #(decode (respell (str envelope suffix)))) suffix)))
+    (testing "an equal envelope spelled differently is rejected"
+      (doseq [text [(str " " envelope)
+                    (str/replace envelope ", " ",  ")
+                    (str/replace envelope ", " " ")
+                    (str/replace envelope ":v 2}" ":v 2N}")
+                    (str "^:hidden " envelope)
+                    ;; The same four fields in another order.
+                    (str "{:v 2, "
+                         (subs envelope 1 (str/index-of envelope ", :v 2}"))
+                         "}")]]
+        (is (rejected? #(decode (respell text))) text)))
+    (testing "the token and its tag each have one Base64URL spelling"
+      (let [variants (concat [(str token "=") (str token "==")]
+                             (map #(str prefix %) (unused-bit-variants body))
+                             (map #(respell (str/replace envelope tag %))
+                                  (unused-bit-variants tag)))]
+        (is (seq variants))
+        (is (= [] (accepted-variants decode variants)))))
+    (testing "every single-bit change to the token or its envelope bytes is rejected"
+      (let [envelope-bytes (secure/b64url-decode body)
+            variants (concat
+                      (single-bit-variants token)
+                      (for [index (range (count envelope-bytes))
+                            bit [1 2 4 8 16 32 64 128]]
+                        (str prefix
+                             (secure/b64url-encode
+                              (update envelope-bytes index bit-xor bit)))))]
+        (is (< 1000 (count variants)))
+        (is (= [] (accepted-variants decode variants)))))))
+
+(deftest encrypted-cursors-accept-only-their-issued-spelling-test
+  (let [value {:v 12 :edge {:kind :stable-edge :ordinal 7}}
+        token (cursor/cursor->token value options)
+        decode #(cursor/token->cursor % options)
+        segments (str/split (subs token (count cursor/cursor-prefix)) #"\." -1)
+        with-segment (fn [index segment]
+                       (str cursor/cursor-prefix
+                            (str/join "." (assoc segments index segment))))]
+    (is (= 4 (count segments)))
+    (is (= value (decode token)))
+    (testing "every segment has one Base64URL spelling"
+      (let [variants (concat
+                      [(str token "=") (str token "==")]
+                      (for [index (range (count segments))
+                            :let [segment (nth segments index)]
+                            variant (concat (unused-bit-variants segment)
+                                            [(str segment "=")
+                                             (str segment "==")])]
+                        (with-segment index variant)))]
+        (is (seq variants))
+        (is (= [] (accepted-variants decode variants)))))
+    (testing "every single-bit change is rejected"
+      (let [variants (single-bit-variants token)]
+        (is (< 600 (count variants)))
+        (is (= [] (accepted-variants decode variants)))))))
+
+(defn- counted-naturals
+  "An unbounded lazy sequence that counts realized elements and fails once a
+  walk passes `ceiling`, so an unbounded validation fails instead of hanging."
+  [realized ceiling]
+  (map (fn [n]
+         (when (> (swap! realized inc) ceiling)
+           (throw (ex-info "Validation walked past its entry bound."
+                           {:ceiling ceiling})))
+         n)
+       (range)))
+
+(deftest validation-work-is-bounded-by-maximum-entries-test
+  (doseq [[label validate]
+          [["encode-canonical" #(secure/encode-canonical % {:maximum-entries 16})]
+           ["canonicalize" #(secure/canonicalize % {:maximum-entries 16})]
+           ["capture-portable" #(secure/capture-portable % {:maximum-entries 16})]]
+          [shape wrap]
+          [["sequence" identity]
+           ["map value" (fn [values] {:values values})]
+           ["nested sequence" (fn [values] [[:prefix] [values]])]]]
+    (let [realized (atom 0)
+          data (error-data #(validate (wrap (counted-naturals realized 10000))))]
+      (is (= :too-many-entries (:reason data)) (str label ", " shape))
+      ;; One chunk of a chunked lazy sequence may be realized ahead.
+      (is (<= @realized 64) (str label ", " shape ": " @realized " realized")))))
+
+(defrecord PortableRecord [a])
+
+(deftest records-project-to-maps-and-colliding-members-are-rejected-test
+  (testing "a record is encoded as its field map"
+    (is (= (secure/encode-canonical {:a 1})
+           (secure/encode-canonical (->PortableRecord 1))))
+    (is (= {:a 1} (secure/canonicalize (->PortableRecord 1))))
+    (is (not (record? (secure/canonicalize (->PortableRecord 1))))))
+  (testing "members that project to one portable value are rejected, not merged"
+    (is (= 2 (count {(->PortableRecord 1) :record {:a 1} :map})))
+    (doseq [value [{(->PortableRecord 1) :record {:a 1} :map}
+                   {[(->PortableRecord 1)] :record [{:a 1}] :map}
+                   #{(->PortableRecord 1) {:a 1}}
+                   [#{(->PortableRecord 1) {:a 1}}]]
+            [label f] [["encode-canonical" secure/encode-canonical]
+                       ["canonicalize" secure/canonicalize]
+                       ["capture-portable" #(secure/capture-portable % {})]]]
+      (is (contains? #{:duplicate-key :duplicate-member}
+                     (:reason (error-data #(f value))))
+          (str label " " (pr-str value))))))

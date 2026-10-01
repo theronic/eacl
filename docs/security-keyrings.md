@@ -193,8 +193,11 @@ the database or permission rules.
 
 An expired cursor returns `:eacl.pagination/expired-cursor`. Invalid
 authentication and unavailable keys also produce errors for caller-supplied
-cursors and Zed tokens. Your application decides whether to begin a new query;
-EACL does not silently replace the requested view.
+cursors and Zed tokens. EACL accepts each cursor and token only in the exact
+spelling it issued: a changed character, appended text, or Base64 padding is
+rejected even when the decoded contents would authenticate. Your application
+decides whether to begin a new query; EACL does not silently replace the
+requested view.
 
 Authenticated cache snapshots are optional. Unknown keys, retired keys,
 malformed data, or invalid authentication cause a cache miss and leave the

@@ -288,9 +288,16 @@
          (invalid! :noncanonical-encoding {}))
        value)
      (catch #?(:clj Exception :cljs :default) error
-       (if (= :eacl.schema/invalid-permission-expression
-              (:type (ex-data error)))
+       (cond
+         (= :eacl.schema/invalid-permission-expression
+            (:type (ex-data error)))
          (throw error)
+
+         ;; The codec rejects every other spelling before the check above.
+         (= :noncanonical (:reason (ex-data error)))
+         (invalid! :noncanonical-encoding {})
+
+         :else
          (invalid! :malformed-codec
            {:format-error (:reason (ex-data error))}))))))
 

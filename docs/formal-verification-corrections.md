@@ -401,6 +401,80 @@ no verified-release claim existed.
   one containing malformed updates; an executed mutant and protocol-level
   regression bind the rule to production.
 
+### EACL-FORMAL-076 — issued tokens and cursors had several accepted spellings
+
+- **Affected:** `eacl.secure-format/decode-canonical` and `b64url-decode` on CLJ
+  and CLJS, and through them Zed tokens, cache-entry envelopes, `eacl_c7_`
+  cursors, standalone `eacl_sd2.` page tokens, and stored canonical values, on
+  every backend.
+- **Impact:** an issued token or cursor could be respelled and still
+  authenticate, because authentication covers decoded values. The payload could
+  not be forged, but token and cursor strings were not unique. In the canonical
+  EDN layer, text appended inside a Zed token's envelope after an early `]` was
+  never read; commas, extra whitespace, another member order, list syntax,
+  `1N`, `+1`, `010`, `0x10`, string escapes, and metadata were also accepted,
+  and a character literal outside a string desynchronised the hidden-input
+  scanner, which then admitted a following discard, comment, or namespaced map.
+  In the Base64URL layer, `=` padding and nonzero unused bits in the last
+  character were accepted, and in JavaScript also whitespace. Cursors, which
+  the eacl-rust report recorded as unaffected, were malleable in their tag
+  segment.
+- **Correction:** each layer accepts only the canonical spelling. The EDN input
+  must equal the canonical rendering of the decoded value, or decoding fails
+  with `:noncanonical`, and the hidden-input scanner rejects metadata and
+  character literals outside strings. `b64url-decode` accepts only the
+  unpadded spelling `b64url-encode` emits and fails with `:malformed-base64`
+  otherwise.
+- **Migration:** none. EACL emits only canonical text and this change leaves
+  the renderer's output unchanged, so every value v8.0.0 stored and every token
+  or cursor it issued still decodes.
+
+### EACL-FORMAL-077 — page-request errors echoed the decrypted cursor
+
+- **Affected:** public `lookup-resources` and `lookup-subjects` on every
+  backend.
+- **Impact:** a request combining a valid cursor with a malformed page shape,
+  such as `{:first 1 :before cursor}`, failed with
+  `:eacl.pagination/invalid-page-request` whose data held the decrypted cursor
+  edge: internal coordinates, plan fingerprints and, on operator routes, cover
+  fingerprints and semantic scope. A lookup whose anchor does not resolve also
+  returned an empty page before its page keys were checked, so `{:first 0}`
+  was accepted for it.
+- **Correction:** both lookups validate the page keys of the caller's query,
+  with the same generated page decision, before snapshot selection and cursor
+  decoding. Error data echoes the caller's cursor strings.
+  `PageWindow.BoundaryValuesDoNotAffectNormalization` proves that the decision
+  depends only on boundary presence, so the engine's later check of the decoded
+  query agrees.
+- **Migration:** a request with both a malformed page shape and an invalid
+  cursor now reports the page shape first. A malformed page request for an
+  unknown anchor now fails instead of returning an empty page.
+
+### EACL-FORMAL-078 — `maximum-entries` did not bound validation work
+
+- **Affected:** `encode-canonical`, `canonicalize`, `capture-portable`, and the
+  digests built on them, on CLJ and CLJS.
+- **Impact:** availability. A collection larger than `:maximum-entries` was
+  walked completely before it was rejected, and an unbounded lazy sequence in
+  an application-supplied value never returned.
+- **Correction:** validation carries one running entry count through the whole
+  value and checks it before each value is examined, so it visits at most
+  `:maximum-entries` + 1 values.
+- **Migration:** a value that violates several bounds may now report
+  `:too-many-entries` where it previously reported the later violation.
+
+### EACL-FORMAL-079 — canonicalization merged members that render alike
+
+- **Affected:** `canonicalize` and `encode-canonical` on CLJ and CLJS.
+- **Impact:** a map or set holding a record and a map with the same fields
+  lost one member in `canonicalize`, while `encode-canonical` rendered both and
+  produced text that does not decode.
+- **Correction:** such a collection fails with `:duplicate-key` or
+  `:duplicate-member`. A record on its own still encodes as its field map;
+  that projection is intended, and identity boundaries that need the
+  distinction already reject records.
+- **Migration:** none for portable values.
+
 The authoritative minimized fixtures and closing evidence are under
 `formal/counterexamples/`. Run them with
 `EACL_NREPL_PORT=<dev-port> bin/formal counterexample-replay`.

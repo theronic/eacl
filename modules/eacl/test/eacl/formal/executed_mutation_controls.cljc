@@ -2337,7 +2337,10 @@ definition document {
 (defn uuid-comparator-collision-killed? []
   (let [input {#uuid "854e138f-b8a4-42ee-a8f9-49c01ac19fc1" :uuid
                "854e138f-b8a4-42ee-a8f9-49c01ac19fc1" :string}
-        gate #(= 2 (count (secure/canonicalize input)))
+        ;; Canonicalization rejects keys that its comparator merges, so a
+        ;; collapsing comparator fails loudly rather than dropping one.
+        gate #(= 2 (try (count (secure/canonicalize input))
+                        (catch #?(:clj Exception :cljs :default) _ 0)))
         invoked (atom false)]
     (and (gate)
          (false? (with-redefs [secure/canonical-comparator (fn [_ _] (reset! invoked true) 0)]
@@ -2382,9 +2385,15 @@ definition document {
                :cljs (js/parseInt hex 16)))))))
 
 (defn uuid-noncanonical-alias-killed? []
+  ;; Byte-canonical decoding would also reject this alias after reading it.
+  ;; The gate therefore requires the strict UUID reader itself to refuse the
+  ;; text (`:malformed`), before any comparison with the canonical rendering
+  ;; (`:noncanonical`) is reached.
   (let [wire "#uuid \"854E138F-b8a4-42ee-a8f9-49c01ac19fc1\""
-        gate #(try (secure/decode-canonical wire) false
-                   (catch #?(:clj Exception :cljs :default) _ true))
+        gate #(= :malformed
+                 (try (secure/decode-canonical wire) nil
+                      (catch #?(:clj Exception :cljs :default) error
+                        (:reason (ex-data error)))))
         original uuid/canonical-text? invoked (atom false)]
     (and (gate)
          (false? (with-redefs [uuid/canonical-text?

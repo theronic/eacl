@@ -76,6 +76,12 @@
       (format-error! :invalid-unicode {})))
 
 (defn- hidden-reader-input?
+  "True when `value` uses reader syntax that canonical text never contains
+  outside a string: comments, metadata, character literals, and dispatch
+  forms other than sets and canonical UUIDs. Comments, metadata, and discards
+  hide input from the decoded value. A character literal such as `\\\"` also
+  looks like a string delimiter to this scanner, so it must be rejected before
+  the scanner and the host reader disagree about where strings are."
   [value]
   (loop [index 0
          in-string? false
@@ -100,7 +106,8 @@
             (= 34 code)
             (recur (inc index) true false)
 
-            (= 59 code)
+            ;; `;` comment, `^` metadata, `\` character literal.
+            (or (= 59 code) (= 94 code) (= 92 code))
             true
 
             (= 35 code)
@@ -165,18 +172,40 @@
 
 (declare portable-render)
 
+(defn- require-distinct-renderings!
+  "Rejects equal adjacent renderings in a sorted collection. They come from
+  distinct members that project to one portable value, such as a record and
+  a map with the same fields. Rendering both would produce text that does not
+  decode, and keeping one would silently drop the other."
+  [reason rendering sorted]
+  (loop [previous nil
+         remaining (seq sorted)]
+    (when remaining
+      (let [current (rendering (first remaining))]
+        (when (= previous current)
+          (format-error! reason {}))
+        (recur current (next remaining))))))
+
 (defn- render-map
   [value]
-  (str
-   "{"
-   (str/join
-    ", "
-    (map
-     (fn [[rendered-key v]]
-       (str rendered-key " " (portable-render v)))
-     (sort-by first
-              (map (fn [[k v]] [(portable-render k) v]) value))))
-   "}"))
+  (let [entries (sort-by first
+                         (map (fn [[k v]] [(portable-render k) v]) value))]
+    (require-distinct-renderings! :duplicate-key first entries)
+    (str
+     "{"
+     (str/join
+      ", "
+      (map
+       (fn [[rendered-key v]]
+         (str rendered-key " " (portable-render v)))
+       entries))
+     "}")))
+
+(defn- render-set
+  [value]
+  (let [members (sort (map portable-render value))]
+    (require-distinct-renderings! :duplicate-member identity members)
+    (str "#{" (str/join " " members) "}")))
 
 (defn- portable-render
   [value]
@@ -193,8 +222,7 @@
        :cljs (str ":" (.-fqn ^Keyword value)))
     (integer? value) (str value)
     (map? value) (render-map value)
-    (set? value)
-    (str "#{" (str/join " " (sort (map portable-render value))) "}")
+    (set? value) (render-set value)
     (sequential? value)
     (str "[" (str/join " " (map portable-render value)) "]")))
 
@@ -262,75 +290,66 @@
        :cljs (compare (.-fqn ^Keyword left) (.-fqn ^Keyword right)))
     (compare (portable-render left) (portable-render right))))
 
-(declare validate-value)
-
-(defn- validate-map
-  [value depth limits]
-  (reduce-kv
-   (fn [entries k v]
-     (+ entries
-        (validate-value k (inc depth) limits)
-        (validate-value v (inc depth) limits)))
-   1
-   value))
-
 (defn- validate-value
-  [value depth {:keys [maximum-depth maximum-entries allow-uuids?] :as limits}]
+  "Validates `value` and returns `seen` plus the number of values it holds.
+
+  Every value, scalar or collection, is one entry. The running total is
+  checked before each value is examined, so validation visits at most
+  `maximum-entries` + 1 values: a huge collection, or an unbounded lazy
+  sequence, fails with `:too-many-entries` instead of being walked first."
+  [value depth seen {:keys [maximum-depth maximum-entries allow-uuids?] :as limits}]
   (when (> depth maximum-depth)
     (format-error! :too-deep {:maximum-depth maximum-depth}))
-  (let [entries
-        (cond
-          (or (nil? value)
-              (boolean? value))
-          1
-
-          (string? value)
-          (if (well-formed-unicode? value)
-            1
-            (format-error! :invalid-unicode {}))
-
-          (and (not (false? allow-uuids?)) (uuid/value? value))
-          1
-
-          (keyword? value)
-          (if (unambiguous-keyword? value)
-            1
-            (format-error! :ambiguous-keyword
-                           {:value (portable-render value)}))
-
-          (integer? value)
-          (if (exact-integer/exact? value)
-            1
-            (format-error! :integer-out-of-range
-                           {:value value
-                            :minimum minimum-safe-integer
-                            :maximum maximum-safe-integer}))
-
-          (map? value)
-          (validate-map value depth
-                        limits)
-
-          (set? value)
-          (reduce
-           (fn [n item]
-             (+ n (validate-value item (inc depth)
-                                  limits)))
-           1 value)
-
-          (or (vector? value) (sequential? value))
-          (reduce
-           (fn [n item]
-             (+ n (validate-value item (inc depth)
-                                  limits)))
-           1 value)
-
-          :else
-          (format-error! :unsupported-value
-                         {:value-type (str (type value))}))]
-    (when (> entries maximum-entries)
+  (let [seen (inc seen)]
+    (when (> seen maximum-entries)
       (format-error! :too-many-entries
                      {:maximum-entries maximum-entries}))
-    entries))
+    (cond
+      (or (nil? value)
+          (boolean? value))
+      seen
+
+      (string? value)
+      (if (well-formed-unicode? value)
+        seen
+        (format-error! :invalid-unicode {}))
+
+      (and (not (false? allow-uuids?)) (uuid/value? value))
+      seen
+
+      (keyword? value)
+      (if (unambiguous-keyword? value)
+        seen
+        (format-error! :ambiguous-keyword
+                       {:value (portable-render value)}))
+
+      (integer? value)
+      (if (exact-integer/exact? value)
+        seen
+        (format-error! :integer-out-of-range
+                       {:value value
+                        :minimum minimum-safe-integer
+                        :maximum maximum-safe-integer}))
+
+      (map? value)
+      (reduce-kv
+       (fn [seen k v]
+         (validate-value v (inc depth)
+                         (validate-value k (inc depth) seen limits)
+                         limits))
+       seen
+       value)
+
+      (or (set? value) (sequential? value))
+      (reduce
+       (fn [seen item]
+         (validate-value item (inc depth) seen limits))
+       seen
+       value)
+
+      :else
+      (format-error! :unsupported-value
+                     {:value-type (str (type value))}))))
 
 (defn canonicalize
   "Validates and canonicalizes portable EDN without changing collection types."
@@ -342,19 +361,27 @@
    (let [limits {:allow-uuids? allow-uuids?
                  :maximum-depth maximum-depth
                  :maximum-entries maximum-entries}]
-     (validate-value value 0 limits)
+     (validate-value value 0 0 limits)
      (letfn [(canonical [item]
                (cond
+                 ;; Records project to plain maps. Distinct members that
+                 ;; project to one value would merge in the sorted copy.
                  (map? item)
-                 (into (sorted-map-by canonical-comparator)
-                       (map (fn [[k v]]
-                              [(canonical k) (canonical v)]))
-                       item)
+                 (let [result (into (sorted-map-by canonical-comparator)
+                                    (map (fn [[k v]]
+                                           [(canonical k) (canonical v)]))
+                                    item)]
+                   (when-not (= (count result) (count item))
+                     (format-error! :duplicate-key {}))
+                   result)
 
                  (set? item)
-                 (into (sorted-set-by canonical-comparator)
-                       (map canonical)
-                       item)
+                 (let [result (into (sorted-set-by canonical-comparator)
+                                    (map canonical)
+                                    item)]
+                   (when-not (= (count result) (count item))
+                     (format-error! :duplicate-member {}))
+                   result)
 
                  (sequential? item)
                  (mapv canonical item)
@@ -368,8 +395,8 @@
   "Validates portable data and owns mutable UUID leaves. Already owned plain
   persistent collections can be shared; this does not promise sorted output."
   [value limits]
-  (validate-value value 0 (merge {:maximum-depth default-maximum-depth
-                                 :maximum-entries default-maximum-entries} limits))
+  (validate-value value 0 0 (merge {:maximum-depth default-maximum-depth
+                                    :maximum-entries default-maximum-entries} limits))
   (letfn [(needs-capture? [item]
             (or (some? (meta item)) (record? item) (sorted? item)
                 (and (sequential? item) (not (vector? item)))
@@ -394,7 +421,7 @@
    ;; copy first repeated every traversal (and repeatedly rendered comparator
    ;; keys) without changing a byte of output. Validate once, then render the
    ;; original value directly.
-   (validate-value value 0
+   (validate-value value 0 0
                    {:allow-uuids? allow-uuids?
                     :maximum-depth (or maximum-depth default-maximum-depth)
                     :maximum-entries
@@ -405,7 +432,14 @@
      encoded)))
 
 (defn decode-canonical
-  "Reads bounded portable EDN and optionally enforces a top-level key allowlist."
+  "Reads bounded portable EDN and optionally enforces a top-level key allowlist.
+
+  Only the canonical spelling decodes: `encoded` must equal the
+  `encode-canonical` text of the value it denotes. Text after the first form,
+  extra whitespace or commas, another member order, and any other reader
+  spelling of an equal value fail with `:noncanonical`. Each accepted value
+  therefore has exactly one accepted string, so bytes that a caller compares,
+  caches, or authenticates are the bytes that were decoded."
   ([encoded]
    (decode-canonical encoded {}))
   ([encoded {:keys [maximum-size allowed-keys] :as limits
@@ -444,6 +478,11 @@
                          :actual-keys
                          (when (map? canonical)
                            (set (keys canonical)))}))
+       ;; The reader stops after the first complete form and accepts many
+       ;; spellings of one value. Comparing against the canonical rendering
+       ;; rejects trailing input and every alternative spelling at once.
+       (when-not (= encoded (portable-render canonical))
+         (format-error! :noncanonical {}))
        canonical)
      (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo) e
        (if (= :eacl.format/invalid (:type (ex-data e)))
@@ -619,8 +658,72 @@
            (str/replace "/" "_")
            (str/replace #"=+$" "")))))
 
-(defn b64url-decode
+(defn- b64url-value
+  "The six-bit value of one Base64URL character code, or -1."
+  [code]
+  (cond
+    (and (<= 65 code) (<= code 90)) (- code 65)
+    (and (<= 97 code) (<= code 122)) (- code 71)
+    (and (<= 48 code) (<= code 57)) (+ code 4)
+    (= 45 code) 62
+    (= 95 code) 63
+    :else -1))
+
+(defn- b64url-alphabet?
+  "True when every character of the string `encoded` is in the Base64URL
+  alphabet. The JVM scan uses primitive locals: it runs on every token,
+  cursor, and cache-entry decode."
   [encoded]
+  #?(:clj
+     (let [^String text encoded
+           length (.length text)]
+       (loop [index 0]
+         (if (== index length)
+           true
+           (let [code (int (.charAt text index))]
+             (if (or (and (>= code 65) (<= code 90))
+                     (and (>= code 97) (<= code 122))
+                     (and (>= code 48) (<= code 57))
+                     (== code 45)
+                     (== code 95))
+               (recur (unchecked-inc index))
+               false)))))
+     :cljs
+     (let [length (.-length encoded)]
+       (loop [index 0]
+         (if (== index length)
+           true
+           (if (neg? (b64url-value (.charCodeAt encoded index)))
+             false
+             (recur (inc index))))))))
+
+(defn- canonical-b64url?
+  "True only for the unpadded Base64URL spelling that `b64url-encode` emits:
+  URL-alphabet characters, a length that ends on a byte boundary, and zero
+  unused low bits in the last character (RFC 4648 sections 3.5 and 5)."
+  [encoded]
+  (and (string? encoded)
+       (let [length (count encoded)
+             remainder (mod length 4)]
+         (and (not= 1 remainder)
+              (b64url-alphabet? encoded)
+              (or (zero? remainder)
+                  (zero? (bit-and
+                          (b64url-value
+                           (string-code-unit-at encoded (dec length)))
+                          (if (= 2 remainder) 0x0F 0x03))))))))
+
+(defn b64url-decode
+  "Decodes the unpadded Base64URL spelling that `b64url-encode` emits.
+
+  Host decoders also accept padding, nonzero unused bits in the last
+  character and, in JavaScript, whitespace, so several strings decode to the
+  same bytes. Those spellings fail with `:malformed-base64`: each byte string
+  has exactly one accepted encoding, and an authenticated string cannot be
+  respelled without failing to decode."
+  [encoded]
+  (when-not (canonical-b64url? encoded)
+    (format-error! :malformed-base64 {}))
   (try
     #?(:clj
        (mapv #(bit-and (int %) 255)
@@ -877,6 +980,13 @@
           (utf8-bytes (encode-canonical envelope options))))))
 
 (defn ^:no-doc decode-authenticated-envelope
+  "Authenticates and decodes a token from `encode-authenticated`.
+
+  The tag covers the canonical `{:v :kid :payload}` text. Both Base64URL
+  layers and the envelope decode only in their canonical spelling, so that
+  text is a function of the received token and the received token is the
+  only string that carries it: a token cannot be respelled and still
+  authenticate."
   [{:keys [domain prefix payload-keys maximum-size] :as options} token]
   (when-not (and (string? token)
                  (<= (count token)

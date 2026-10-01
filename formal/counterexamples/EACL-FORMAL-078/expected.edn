@@ -1,0 +1,4 @@
+{:result {:eacl/error :eacl.format/invalid :reason :too-many-entries}
+ :realized-at-most "maximum-entries + 1 values, plus one chunk of a chunked sequence"
+ :invariant
+ "maximum-entries bounds validation work, not only the size of accepted values."}

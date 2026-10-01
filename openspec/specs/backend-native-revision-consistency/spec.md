@@ -4,7 +4,7 @@
 Define authenticated freshness and exact-snapshot behavior using each backend's native forward-history revision identities without a portable mutation graph.
 ## Requirements
 ### Requirement: Authenticated native revision tokens
-EACL SHALL encode revision tokens with a version, backend identity, configured source lifecycle, native revision or exact locator, issuance time, and expiry, and SHALL authenticate the complete payload before using it for selection.
+EACL SHALL encode revision tokens with a version, backend identity, configured source lifecycle, native revision or exact locator, issuance time, and expiry, and SHALL authenticate the complete payload before using it for selection. EACL SHALL accept a token only in the exact spelling it issued.
 
 #### Scenario: Valid token from the same lifecycle
 - **WHEN** a client supplies an unexpired authenticated token for the configured backend and source lifecycle
@@ -17,6 +17,10 @@ EACL SHALL encode revision tokens with a version, backend identity, configured s
 #### Scenario: Legacy graph-anchor token
 - **WHEN** a client supplies a token in the removed graph-anchor format
 - **THEN** EACL rejects it with a stable token-format or upgrade error
+
+#### Scenario: Respelled token
+- **WHEN** a client supplies an issued token with text appended inside its envelope, Base64 padding added, or the unused bits of a Base64URL character changed
+- **THEN** EACL rejects it with `:eacl/invalid-zed-token` before cache access or authorization evaluation
 
 ### Requirement: Datomic forward-history selection
 Within one unreplaced Datomic database history, EACL SHALL use authenticated

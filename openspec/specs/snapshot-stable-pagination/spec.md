@@ -134,6 +134,26 @@ EACL SHALL distinguish authentication/query-scope failure, configured envelope e
 - **WHEN** checkpoint-free exact replay exceeds its deadline or resource ceiling
 - **THEN** EACL returns the corresponding deadline/resource error rather than cursor expiry
 
+#### Scenario: Issued cursor is respelled
+- **WHEN** a caller appends text or Base64 padding to an issued cursor, or changes the unused bits of one of its Base64URL characters
+- **THEN** EACL returns `:eacl.pagination/invalid-cursor`
+
+### Requirement: Page keys are validated before cursors are decoded
+Lookups SHALL validate the page keys of the caller's query before snapshot selection, anchor resolution, and cursor decoding. A malformed page request SHALL fail with a typed pagination error whose data contains only the caller's input, never a decoded cursor edge.
+
+#### Scenario: Valid cursor in a malformed page request
+- **WHEN** a lookup combines an issued cursor with a malformed page shape, such as `:first` with `:before`
+- **THEN** EACL returns `:eacl.pagination/invalid-page-request`
+- **AND** the error data holds the cursor strings the caller passed
+
+#### Scenario: Unauthenticated cursor in a malformed page request
+- **WHEN** a lookup combines a cursor that would fail authentication with a malformed page shape
+- **THEN** EACL reports the malformed page shape without authenticating the cursor
+
+#### Scenario: Anchor does not resolve
+- **WHEN** a lookup names a subject or resource that does not exist and passes an invalid page size
+- **THEN** EACL returns the page-size error rather than an empty page
+
 ### Requirement: Pagination is differential-tested against an oracle
 The shared suite SHALL compare concatenated cursor pages with a deterministic uncached enumeration on the original exact graph or a graph having an equal complete dependency proof, including recovery after wall-clock delay, checkpoint eviction, forward mutation, and backend catch-up.
 
