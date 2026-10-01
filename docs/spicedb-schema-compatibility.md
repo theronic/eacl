@@ -39,7 +39,7 @@ exactly as SpiceDB's `ReadSchema` prints it.
 | `rel.any(target)` | Supported (same as `rel->target`) |
 | `rel.all(target)` | `:eacl.schema/unsupported-feature` |
 | `nil`, `use self` with `self` | `:eacl.schema/unsupported-feature` |
-| Wildcards `user:*` | `:eacl.schema/unsupported-feature` |
+| Wildcards `user:*`, `user:* with cav` | Supported ([wildcard subjects](../README.md#wildcard-subjects)) |
 | Subject relations `group#member` | `:eacl.schema/unsupported-feature`; `user#...` is the plain type `user` |
 | Prefixed names `org/user` | `:eacl.schema/unsupported-feature` (definitions and subject types; EACL types are simple keywords) |
 | An arrow whose target some subject type lacks, or is a relation on some types and a permission on others | `:eacl.schema/unsupported-feature` |

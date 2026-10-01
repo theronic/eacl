@@ -1858,7 +1858,7 @@ but it is not a byte-for-byte or operational clone:
   ([SpiceDB schema compatibility](docs/spicedb-schema-compatibility.md)).
   Apart from resource limits and the transitive-wildcard difference below,
   EACL rejects a valid SpiceDB schema only with `:eacl.schema/unsupported-feature`:
-  wildcards, subject relations, `nil`, `self`, `.all()`, prefixed names like
+  subject relations, `nil`, `self`, `.all()`, prefixed names like
   `org/user`, arrows whose target is missing on some subject type, recursion
   through an exclusion, and caveats outside EACL's CEL profile. `with
   expiration` is accepted but not enforced, because EACL permits expiring

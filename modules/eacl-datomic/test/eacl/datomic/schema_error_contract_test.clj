@@ -330,8 +330,11 @@
       (testing "unsupported schema features carry a category"
         (let [data (error-data
                     #(eacl/write-schema! client "definition user {}
+                                                 definition group {
+                                                   relation member: user
+                                                 }
                                                  definition document {
-                                                   relation reader: user#member
+                                                   relation reader: group#member
                                                    permission view = reader
                                                  }"))]
           (is (= :eacl.schema/unsupported-feature (:type data)))

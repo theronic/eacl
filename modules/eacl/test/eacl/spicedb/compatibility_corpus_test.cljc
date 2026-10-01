@@ -214,7 +214,29 @@
          (:type (corpus-outcome "eacl-rs/003-glued-nil")))))
 
 (deftest spicedb-errors-precede-unsupported-features-test
-  ;; A wildcard is unsupported, but this schema is invalid SpiceDB first.
+  ;; A subject relation is unsupported, but this schema is invalid SpiceDB first.
+  (let [{:keys [outcome type errors]}
+        (eacl-outcome "definition user {}
+definition group {
+ relation member: user
+}
+definition doc {
+ relation viewer: group#member
+ permission view = viewer + nothing
+}")]
+    (is (= :reject outcome))
+    (is (= :eacl.schema/expression-resolution-failed type))
+    (is (= [:missing-reference] (map :type errors))))
+  (is (= :eacl.schema/unsupported-feature
+         (:type (eacl-outcome "definition user {}
+definition group {
+ relation member: user
+}
+definition doc {
+ relation viewer: group#member
+ permission view = viewer
+}"))))
+  ;; Wildcards are served: SpiceDB's errors still come first.
   (let [{:keys [outcome type errors]}
         (eacl-outcome "definition user {}
 definition doc {
@@ -224,12 +246,13 @@ definition doc {
     (is (= :reject outcome))
     (is (= :eacl.schema/expression-resolution-failed type))
     (is (= [:missing-reference] (map :type errors))))
-  (is (= :eacl.schema/unsupported-feature
-         (:type (eacl-outcome "definition user {}
+  (is (= :accept
+         (:outcome (eacl-outcome "definition user {}
 definition doc {
- relation viewer: user:*
+ relation viewer: user:* | user:* with enabled
  permission view = viewer
-}")))))
+}
+caveat enabled(flag bool) { flag }")))))
 
 (deftest spicedb-defect-reproductions-are-rejected-test
   ;; SpiceDB accepts some of these through a cache keyed by relation name only;
