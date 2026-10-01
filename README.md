@@ -1186,7 +1186,7 @@ EACL parses a documented subset of the SpiceDB schema DSL to define your authori
 `write-schema!` validates your schema and provides informative error messages. An invalid schema throws and nothing is transacted:
 - **Parse validation**: unparseable schema strings and duplicate `definition`/relation declarations throw. `//` and `/* */` comments are supported.
 - **Reference validation**: all relations and permissions must reference valid definitions. Arrow targets must exist on **every** subject type of the source relation.
-- **Orphan protection**: relations with existing relationships cannot be deleted.
+- **Orphan protection**: relations with existing relationships cannot be deleted, whether those relationships are plain, expiring (expired ones included) or Caveated. The error is `:eacl.schema/relation-in-use` with the relation and the `:count` of retained relationships.
 - **Empty-schema guard**: the public `eacl/write-schema!` rejects replacing a non-empty schema with zero definitions. The backend schema namespaces expose a lower-level `{:allow-empty-schema? true}` option for an intentional wipe; direct use must also follow the cache-recovery rules because it bypasses the EACL client.
 - **Unsupported feature detection**: rejects SpiceDB features unsupported by EACL (see [Limitations](#limitations-deficiencies--gotchas))
 - **Declaration errors**: definitions and Caveats are read in source order, and the first invalid or duplicate declaration determines the error.

@@ -4,6 +4,7 @@
             [eacl.caveats.publication-batch-contract :as batch]
             [eacl.caveats.public-write-contract :as public]
             [eacl.caveats.schema-allowance-contract :as allowance]
+            [eacl.caveats.relation-removal-contract :as removal]
             [eacl.caveats.inspection-contract :as inspection]
             [eacl.caveats.deletion-contract :as deletion]
             [eacl.caveats.cache-trace-contract :as cache-trace]
@@ -77,4 +78,13 @@
       (deletion/check! {:client (api/make-client conn {:clock (constantly 200)
                                                        :caveat-evaluator (fixtures/portable-evaluator (atom 0))})
                         :writer #(qualifiers/writer conn)})
+      (finally (d/release conn) (d/delete-database uri)))))
+
+(deftest removing-a-relation-with-qualified-relationships-reports-relation-in-use
+  (let [uri (str "datomic:mem://relation-removal-" (random-uuid))
+        _ (d/create-database uri) conn (d/connect uri)]
+    (try
+      (schema/install! conn)
+      (removal/check! {:client (api/make-client conn {:caveat-evaluator (fixtures/portable-evaluator (atom 0))})
+                       :writer #(qualifiers/writer conn)})
       (finally (d/release conn) (d/delete-database uri)))))

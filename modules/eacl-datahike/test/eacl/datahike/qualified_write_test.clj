@@ -5,6 +5,7 @@
             [eacl.caveats.public-write-contract :as public]
             [eacl.caveats.write-contention-contract :as contention]
             [eacl.caveats.schema-allowance-contract :as allowance]
+            [eacl.caveats.relation-removal-contract :as removal]
             [eacl.caveats.inspection-contract :as inspection]
             [eacl.caveats.deletion-contract :as deletion]
             [eacl.caveats.cache-trace-contract :as cache-trace]
@@ -112,3 +113,11 @@
         client (api/make-client conn {})]
     (contention/check! client #(qualifiers/writer conn))
     (contention/terminal-validation-check! client)))
+
+(deftest removing-a-relation-with-qualified-relationships-reports-relation-in-use
+  (doseq [options [{} {:attribute-refs? true}]]
+    (let [conn (schema/create-conn [] options) config (:config (d/db conn))]
+      (try
+        (removal/check! {:client (api/make-client conn {:caveat-evaluator (fixtures/portable-evaluator (atom 0))})
+                         :writer #(qualifiers/writer conn)})
+        (finally (d/release conn) (d/delete-database config))))))

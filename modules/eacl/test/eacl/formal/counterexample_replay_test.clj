@@ -162,7 +162,9 @@
     :EACL-FORMAL-092
     eacl.schema.expression-resolver-test/declaration-errors-follow-source-order-test
     :EACL-FORMAL-093
-    eacl.caveats.definition-test/caveat-source-is-the-verbatim-body-text})
+    eacl.caveats.definition-test/caveat-source-is-the-verbatim-body-text
+    :EACL-FORMAL-094
+    eacl.datascript.qualified-schema-test/removing-a-relation-with-qualified-relationships-reports-relation-in-use})
 
 (defn- read-edn
   [path]

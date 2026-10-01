@@ -90,3 +90,15 @@ Schema admission SHALL measure each permission's canonical expression payload ex
 #### Scenario: Payload beyond the codec ceiling under default limits
 - **WHEN** a permission's arrows resolve over 256 subject types, so that its canonical payload exceeds 1 MiB or 262,144 codec entries
 - **THEN** validation throws `:eacl.schema/expression-limit` with `:dimension :encoded-byte-size` and `:maximum 131072`, not `:eacl.format/invalid`
+
+### Requirement: A Relation that holds Relationships cannot be removed
+A schema replacement under the default `:error` orphan policy SHALL reject removing a Relation identity that holds any stored Relationship, whether plain, expiring, expired, or Caveated, with `:eacl.schema/relation-in-use` carrying the Relation and the number of retained Relationships, on every backend. Speculative `:retain-inert` planning SHALL report such a Relation whatever qualifier its first indexed Relationship carries.
+
+#### Scenario: Qualified Relationships hold a Relation
+- **WHEN** a Relation holds only expiring, expired, or Caveated Relationships and `write-schema!` removes it
+- **THEN** it throws `:eacl.schema/relation-in-use` with the full count, never `:eacl/unsupported-qualifier`
+- **AND** the stored schema is unchanged
+
+#### Scenario: Speculative removal over a qualified first row
+- **WHEN** `with-schema` removes that Relation with `{:orphan-policy :retain-inert}`
+- **THEN** the speculative snapshot reports `:eacl.speculative/retained-orphan-relationships` for the Relation

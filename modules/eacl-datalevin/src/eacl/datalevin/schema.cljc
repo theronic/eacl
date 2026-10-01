@@ -450,7 +450,9 @@
 
   The maximum of the two endpoint-index cardinalities is exact for healthy
   pairs and remains positive for either one-sided ghost, so corruption cannot
-  make a relation definition appear unused."
+  make a relation definition appear unused. Each direction is the complete
+  batched stream, so qualified rows (expiring or Caveated) count like plain
+  ones and the count is not truncated at the unpaged scan bound."
   [db {:eacl.relation/keys [resource-type relation-name subject-type]}]
   (let [relation-id  (str "eacl.relation:" resource-type ":" relation-name ":" subject-type)
         relation-eid (ds/entid db [:eacl/id relation-id])]
@@ -458,11 +460,11 @@
       0
       (max
        (count
-        (ddb/avet-endpoint-prefix
+        (ddb/qualified-relation-datoms
          db relationship-storage/forward-attribute
          [subject-type relation-eid resource-type]))
        (count
-        (ddb/avet-endpoint-prefix
+        (ddb/qualified-relation-datoms
          db relationship-storage/reverse-attribute
          [resource-type relation-eid subject-type]))))))
 

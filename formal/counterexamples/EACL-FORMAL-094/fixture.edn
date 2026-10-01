@@ -1,0 +1,15 @@
+{:operation :write-schema!
+ :schema "caveat enabled(flag bool) { flag }\ndefinition user {}\ndefinition doc {\n relation viewer: user | user with enabled\n relation owner: user\n permission view = viewer + owner\n}"
+ :replacement "caveat enabled(flag bool) { flag }\ndefinition user {}\ndefinition doc {\n relation owner: user\n permission view = owner\n}"
+ :relationships
+ [{:subject [:user "removal/u"] :relation :viewer :resource [:doc "removal/d0"] :valid-until-ms 253402300799999}
+  {:subject [:user "removal/u"] :relation :viewer :resource [:doc "removal/d1"] :valid-until-ms 1}
+  {:subject [:user "removal/u"] :relation :viewer :resource [:doc "removal/d2"]
+   :caveat "enabled" :caveat-context {"flag" true}}
+  {:subject [:user "removal/u"] :relation :viewer :resource [:doc "removal/d3"]}]
+ :before
+ {:write-schema! {:type :eacl/unsupported-qualifier :qualifier-eid :first-qualified-row}
+  :with-schema-retain-inert
+  {:first-indexed-row-qualified {:type :eacl/unsupported-qualifier}
+   :first-indexed-row-plain :accepted}
+  :plain-rows-only {:type :eacl.schema/relation-in-use :count 2}}}

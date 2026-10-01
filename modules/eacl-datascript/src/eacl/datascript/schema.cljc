@@ -191,6 +191,13 @@
 
 (def compare-schema model/compare-schema)
 
+(defn- relation-endpoint-rows
+  "Every stored endpoint row of one Relation identity in one direction.
+  Qualified rows (expiring or Caveated) count like plain ones: a Relation
+  that holds any Relationship is in use whatever qualifies it."
+  [db attr prefix]
+  (ddb/avet-endpoint-prefix db attr prefix nil :asc true))
+
 (defn count-relationships-using-relation
   "Counts relationships that reference the given relation.
 
@@ -204,11 +211,11 @@
       0
       (max
        (count
-        (ddb/avet-endpoint-prefix
+        (relation-endpoint-rows
          db relationship-storage/forward-attribute
          [subject-type relation-eid resource-type]))
        (count
-        (ddb/avet-endpoint-prefix
+        (relation-endpoint-rows
          db relationship-storage/reverse-attribute
          [resource-type relation-eid subject-type]))))))
 
@@ -221,11 +228,11 @@
     (boolean
      (or
       (first
-       (ddb/avet-endpoint-prefix
+       (relation-endpoint-rows
         db relationship-storage/forward-attribute
         [subject-type relation-eid resource-type]))
       (first
-       (ddb/avet-endpoint-prefix
+       (relation-endpoint-rows
         db relationship-storage/reverse-attribute
         [resource-type relation-eid subject-type]))))))
 

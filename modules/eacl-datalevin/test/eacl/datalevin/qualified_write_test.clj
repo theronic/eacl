@@ -6,6 +6,7 @@
             [eacl.caveats.publication-batch-contract :as batch]
             [eacl.caveats.public-write-contract :as public]
             [eacl.caveats.schema-allowance-contract :as allowance]
+            [eacl.caveats.relation-removal-contract :as removal]
             [eacl.caveats.inspection-contract :as inspection]
             [eacl.caveats.deletion-contract :as deletion]
             [eacl.caveats.cache-trace-contract :as cache-trace]
@@ -170,4 +171,16 @@
                                                        :revision-watermark watermark
                                                        :advance-revision-watermark! #(swap! watermark max %)})
                         :writer #(qualifiers/writer conn)})
+      (finally (d/close conn) (util/delete-files dir)))))
+
+(deftest removing-a-relation-with-qualified-relationships-reports-relation-in-use
+  (let [dir (util/tmp-dir (str "relation-removal-" (random-uuid)))
+        conn (schema/create-conn dir {}) watermark (atom 0)]
+    (try
+      (removal/check! {:client (api/make-client conn {:caveat-evaluator (fixtures/portable-evaluator (atom 0))
+                                                      :source-lifecycle #uuid "3f6c2f0e-5b8d-5d6a-9a43-4c1e2b7d8a90"
+                                                      :security-key "01234567890123456789012345678901"
+                                                      :revision-watermark watermark
+                                                      :advance-revision-watermark! #(swap! watermark max %)})
+                       :writer #(qualifiers/writer conn) :speculative? false})
       (finally (d/close conn) (util/delete-files dir)))))
