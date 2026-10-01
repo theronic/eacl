@@ -1,0 +1,21 @@
+{:operation :write-schema!
+ :schema-shape
+ {:caveat "longfield"
+  :parameters [["m" [:map :string :bool]]]
+  :expression "m.<member> == true"
+  :member {:repeat "a" :utf8-bytes 4100}
+  :string-literal-bound 4096
+  :relation "doc#viewer: user with longfield"
+  :permission "view = viewer"}
+ :relationship
+ {:subject {:type :user :id "u"} :relation :viewer :resource {:type :doc :id "d"}
+  :caveat "longfield" :caveat-context {"m" {"x" true}}}
+ :request {:operation :check-permission :permission :view}
+ :before
+ {:schema-write :accepted
+  :relationship-write :accepted
+  :every-check
+  {:type :eacl.authorization/evaluation-failure
+   :faults [[:eacl.caveat/evaluation :resource-limit]]}
+  :quoted-equivalent "m[\"<member>\"] == true"
+  :quoted-equivalent-compile {:type :eacl.caveat/invalid :reason :resource-limit}}}

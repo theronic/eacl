@@ -120,7 +120,7 @@
 
 (defn- internal-id
   [db value]
-  (when value
+  (when (some? value)
     (ds/entid db value)))
 
 (defn- existing-internal-id
@@ -251,7 +251,6 @@
          db (:resource-id resolved) relationship-storage/reverse-attribute
          (reverse-relationship-tuple resolved)))])
 
-
 (defn find-one-relationship-id
   "Returns the resolved identity for a supported complete pair, or nil."
   [db relationship]
@@ -307,19 +306,19 @@
   (boolean
    (seq
     (endpoint-pair/checked-datoms
-    (ddb/relationship-identity-datoms
-     db subject-id relationship-storage/forward-attribute
-     (endpoint-pair/forward-value
-      subject-type relation-id resource-type resource-id))))))
+     (ddb/relationship-identity-datoms
+      db subject-id relationship-storage/forward-attribute
+      (endpoint-pair/forward-value
+       subject-type relation-id resource-type resource-id))))))
 
 (defn direct-edge
   "Stored compact edge or nil, prior to request qualification."
   [db subject-type subject-id relation-id resource-type resource-id]
   (some-> (first (endpoint-pair/checked-datoms
-                 (ddb/relationship-identity-datoms
-                  db subject-id relationship-storage/forward-attribute
-                  (endpoint-pair/forward-value subject-type relation-id resource-type resource-id))
-                 true))
+                  (ddb/relationship-identity-datoms
+                   db subject-id relationship-storage/forward-attribute
+                   (endpoint-pair/forward-value subject-type relation-id resource-type resource-id))
+                  true))
           edge/from-datom))
 
 (defn- reverse-match?
@@ -327,10 +326,10 @@
   (boolean
    (seq
     (endpoint-pair/checked-datoms
-    (ddb/relationship-identity-datoms
-     db resource-id relationship-storage/reverse-attribute
-     (endpoint-pair/reverse-value
-      resource-type relation-id subject-type subject-id))))))
+     (ddb/relationship-identity-datoms
+      db resource-id relationship-storage/reverse-attribute
+      (endpoint-pair/reverse-value
+       resource-type relation-id subject-type subject-id))))))
 
 (defn validate-relationship-operation!
   [operation]
@@ -412,6 +411,7 @@
                  {:spec-idx    (:idx spec)
                   :subject-id  subject-id
                   :resource-id resource-id
+                  :qualifier-id qualifier-id
                   :relationship
                   (inspection/row
                    (eacl/->Relationship
@@ -425,7 +425,8 @@
                     {:subject-id (or (:subject-id cursor)
                                      (:subject cursor))
                      :resource-id (or (:resource-id cursor)
-                                      (:resource cursor))}
+                                      (:resource cursor))
+                     :qualifier-id (:qualifier-id cursor)}
                      (:resume-inclusive? cursor)
                      (assoc :resume-inclusive? true))))
                (drop-until-beyond-cursor [spec cursor direction rows]
@@ -497,7 +498,11 @@
                         (:resource-type spec)]
                        (or (:resource-id cursor)
                            (:resource cursor))
-                       direction include-qualifier?)
+                       direction include-qualifier?
+                       (when cursor
+                         {:qualifier-eid (:qualifier-id cursor)
+                          :owner-eid (or (:subject-id cursor)
+                                         (:subject cursor))}))
                       (map
                        (fn [{:keys [e v]}]
                          (relationship-row spec e (nth v 3) (nth v 4))))
@@ -512,7 +517,11 @@
                         (:subject-type spec)]
                        (or (:subject-id cursor)
                            (:subject cursor))
-                       direction include-qualifier?)
+                       direction include-qualifier?
+                       (when cursor
+                         {:qualifier-eid (:qualifier-id cursor)
+                          :owner-eid (or (:resource-id cursor)
+                                         (:resource cursor))}))
                       (map
                        (fn [{:keys [e v]}]
                          (relationship-row spec (nth v 3) e (nth v 4))))

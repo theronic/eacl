@@ -37,6 +37,22 @@
         (or endpoint-eid (if (= :desc direction) maximum-eid 0))
         (when (= :desc direction) maximum-eid)))
 
+(defn resume-bound
+  "Full-arity inclusive value bound at one row of an owner-unanchored (AVET)
+  endpoint scan.
+
+  Such a scan is ordered by the opposite endpoint, then the qualifier (nil
+  first), then the owner entity, so one opposite endpoint's rows are not in
+  owner order once any of them is qualified. Resuming from a row therefore
+  seeks to that row's own qualifier, in either direction, and passes the
+  owner as the next seek component; seeking to the start or end of the
+  endpoint's group would read rows on the wrong side of the boundary. Without
+  a resume endpoint this is the whole-prefix `seek-bound`."
+  [prefix endpoint-eid qualifier-eid direction maximum-eid]
+  (if (some? endpoint-eid)
+    (conj prefix endpoint-eid qualifier-eid)
+    (seek-bound prefix nil direction maximum-eid)))
+
 (defn retractions
   "Both physical retractions for one logical relationship."
   ([subject-type subject-eid relation-eid resource-type resource-eid]

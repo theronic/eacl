@@ -1,9 +1,11 @@
 (ns eacl.permission-tree-test
   (:require [clojure.test :refer [deftest is testing]]
+            [eacl.authorization.qualification :as qualification]
             [eacl.backend.v8 :as backend]
             [eacl.core :as eacl]
             [eacl.execution :as execution]
-            [eacl.permission-tree :as permission-tree]))
+            [eacl.permission-tree :as permission-tree]
+            [eacl.relationships.edge :as edge]))
 
 (defn- thrown-data
   [f]
@@ -303,9 +305,9 @@
   (let [realized (atom 0)
         events (atom [])
         values (letfn [(items [value]
-                        (lazy-seq
-                         (swap! realized inc)
-                         (cons value (items (inc value)))))]
+                         (lazy-seq
+                          (swap! realized inc)
+                          (cons value (items (inc value)))))]
                  (items 10))
         adapter
         (fake-adapter
@@ -554,14 +556,22 @@
           [:leaf :subjects 0 :id])))))
 
 (defn- reference-expand
-  "Small independent evaluator used only by correspondence tests."
-  [{:keys [objects relations permissions scans internal->external]}
-   resource permission]
-  (letfn [(descriptor [type internal-id]
-            {:type type
-             :internal-id internal-id
-             :public (eacl/spice-object
-                      type (get internal->external internal-id))})
+  "Small independent evaluator used only by correspondence tests.
+
+  A scan value may be a compact `[eid qualifier-eid]` edge; `annotations`
+  maps a qualifier eid to the metadata its leaf subject or arrow child
+  carries."
+  ([fixture resource permission]
+   (reference-expand fixture resource permission {}))
+  ([{:keys [objects relations permissions scans internal->external]}
+    resource permission annotations]
+  (letfn [(descriptor [type value]
+            (let [internal-id (if (vector? value) (first value) value)]
+              {:type type
+               :internal-id internal-id
+               :via (when (vector? value) (get annotations (second value)))
+               :public (eacl/spice-object
+                        type (get internal->external internal-id))}))
           (relation-subjects [resource relation-name]
             (if (nil? (:internal-id resource))
               []
@@ -585,7 +595,7 @@
                  :expanded-relation name
                  :leaf
                  {:subjects
-                  (mapv :public
+                  (mapv #(merge (:public %) (:via %))
                         (relation-subjects resource name))}}
                 (let [key [[(:type resource) (:internal-id resource)] name]]
                   (when (contains? active key)
@@ -606,7 +616,8 @@
                           {:operation :union
                            :children
                            (mapv
-                            #(expand* % target-name (conj active key))
+                            #(merge (expand* % target-name (conj active key))
+                                    (:via %))
                             (relation-subjects
                              resource source-relation-name))}}))
                      permission-definitions)}}))))
@@ -614,7 +625,7 @@
             {:type (:type resource)
              :internal-id (get objects (:id resource))
              :public (eacl/spice-object (:type resource) (:id resource))})]
-    (expand* (root-descriptor) permission #{})))
+    (expand* (root-descriptor) permission #{}))))
 
 (defn- normalized-unordered-tree
   [tree]
@@ -753,3 +764,226 @@
             adapter
             (eacl/spice-object :document "testdoc")
             :view)))))
+
+;; --- Qualified Relationships (EACL-FORMAL-081) ------------------------------
+;;
+;; A compact scan yields `[eid qualifier-eid]` for a caveated or expiring row.
+;; The tree lists every stored row and annotates the element reached through
+;; a qualified row with the metadata `qualification/inspect` decodes; it never
+;; evaluates a Caveat or reads a clock. `qualification/inspect` is the seam.
+
+(def ^:private qualifier-annotations
+  {501 {:valid-until-ms 5000}
+   502 {:caveat "enabled" :caveat-context {"flag" true}}
+   503 {:caveat "enabled" :valid-until-ms 7000}})
+
+(defn- inspect-fixture
+  [inspected]
+  (fn [request relation-id qualifier-id]
+    (swap! inspected conj [request relation-id qualifier-id])
+    (get qualifier-annotations qualifier-id)))
+
+(defn- expand-qualified
+  ([adapter resource permission]
+   (expand-qualified adapter resource permission (atom [])))
+  ([adapter resource permission inspected]
+   (with-redefs [qualification/inspect (inspect-fixture inspected)]
+     (permission-tree/expand
+      adapter
+      {:limits permission-tree/default-limits
+       :execution-contract nil
+       :qualification ::qualification}
+      resource
+      permission))))
+
+(deftest qualified-leaf-subjects-carry-their-stored-qualifiers-test
+  (let [inspected (atom [])
+        adapter (fake-adapter
+                 {:objects {"d1" 1}
+                  :runtime-guards? true
+                  :internal->external {10 "u10" 11 "u11" 12 "u12"}
+                  :relations {[:document :viewer]
+                              [(relation 100 :document :viewer :user)]}
+                  :scans {[:document 1 100 :user] [10 [11 501] [12 502]]}})]
+    (is (= {:expanded-object (eacl/spice-object :document "d1")
+            :expanded-relation :viewer
+            :leaf {:subjects
+                   [(eacl/spice-object :user "u10")
+                    (assoc (eacl/spice-object :user "u11") :valid-until-ms 5000)
+                    (assoc (eacl/spice-object :user "u12")
+                           :caveat "enabled" :caveat-context {"flag" true})]}}
+           (expand-qualified adapter (eacl/spice-object :document "d1")
+                             :viewer inspected)))
+    (is (= [[::qualification 100 501] [::qualification 100 502]] @inspected)
+        "only qualified rows are decoded, against their own Relation")))
+
+(deftest qualified-arrow-edges-annotate-only-the-arrow-child-test
+  (let [adapter
+        (fake-adapter
+         {:objects {"testdoc" 1}
+          :internal->external
+          {2 "testfolder1" 3 "testfolder2" 10 "fred" 11 "tom" 12 "sarah"}
+          :relations
+          {[:document :folder] [(relation 100 :document :folder :folder)]
+           [:document :viewer] [(relation 101 :document :viewer :user)]
+           [:folder :viewer] [(relation 200 :folder :viewer :user)]}
+          :permissions
+          {[:document :view]
+           [(component 300 :document :view :self :relation :viewer)
+            (component 301 :document :view :folder :permission :view)]
+           [:folder :view]
+           [(component 310 :folder :view :self :relation :viewer)]}
+          :scans
+          {[:document 1 100 :folder] [[2 503] 3]
+           [:document 1 101 :user] [[12 501]]
+           [:folder 2 200 :user] [10 [11 502]]
+           [:folder 3 200 :user] [12]}})
+        folder-view (fn [folder subjects]
+                      {:expanded-object (eacl/spice-object :folder folder)
+                       :expanded-relation :view
+                       :intermediate
+                       {:operation :union
+                        :children
+                        [{:expanded-object (eacl/spice-object :folder folder)
+                          :expanded-relation :viewer
+                          :leaf {:subjects subjects}}]}})]
+    (is (= {:expanded-object (eacl/spice-object :document "testdoc")
+            :expanded-relation :view
+            :intermediate
+            {:operation :union
+             :children
+             [{:expanded-object (eacl/spice-object :document "testdoc")
+               :expanded-relation :viewer
+               :leaf {:subjects [(assoc (eacl/spice-object :user "sarah")
+                                        :valid-until-ms 5000)]}}
+              {:expanded-object (eacl/spice-object :document "testdoc")
+               :expanded-relation :view
+               :intermediate
+               {:operation :union
+                :children
+                [(merge (folder-view "testfolder1"
+                                     [(eacl/spice-object :user "fred")
+                                      (assoc (eacl/spice-object :user "tom")
+                                             :caveat "enabled"
+                                             :caveat-context {"flag" true})])
+                        {:caveat "enabled" :valid-until-ms 7000})
+                 (folder-view "testfolder2"
+                              [(eacl/spice-object :user "sarah")])]}}]}}
+           (expand-qualified adapter (eacl/spice-object :document "testdoc")
+                             :view)))))
+
+(deftest qualified-trees-match-the-annotating-reference-test
+  (doseq [seed (range 32)]
+    (let [plain (generated-fixture seed)
+          ;; Qualify every other stored row with one of the fixture qualifiers.
+          qualified
+          (update plain :scans
+                  (fn [scans]
+                    (into {}
+                          (map (fn [[key values]]
+                                 [key (vec (map-indexed
+                                            (fn [index value]
+                                              (if (even? (+ index seed))
+                                                [value (+ 501 (mod (+ index value) 3))]
+                                                value))
+                                            values))]))
+                          scans)))
+          resource (eacl/spice-object :document "d1")
+          actual (expand-qualified (fake-adapter qualified) resource :view)
+          erase (fn erase [tree]
+                  (let [tree (dissoc tree :caveat :caveat-context :valid-until-ms)]
+                    (if (:leaf tree)
+                      (update-in tree [:leaf :subjects]
+                                 #(mapv (fn [subject]
+                                          (dissoc subject :caveat :caveat-context :valid-until-ms))
+                                        %))
+                      (update-in tree [:intermediate :children] #(mapv erase %)))))]
+      (is (= (reference-expand qualified resource :view qualifier-annotations) actual)
+          (str "annotating reference seed=" seed))
+      (is (= (reference-expand plain resource :view) (erase actual))
+          (str "qualification never changes topology seed=" seed)))))
+
+(defn- qualified-failure
+  [inspect qualification-request]
+  (let [adapter (fake-adapter
+                 {:objects {"d1" 1}
+                  :internal->external {10 "u10"}
+                  :relations {[:document :viewer]
+                              [(relation 100 :document :viewer :user)]}
+                  :scans {[:document 1 100 :user] [[10 424242]]}})]
+    (with-redefs [qualification/inspect inspect]
+      (try
+        (permission-tree/expand
+         adapter
+         {:limits permission-tree/default-limits
+          :execution-contract nil
+          :qualification qualification-request}
+         (eacl/spice-object :document "d1")
+         :viewer)
+        nil
+        (catch #?(:clj clojure.lang.ExceptionInfo
+                  :cljs cljs.core.ExceptionInfo) error
+          error)))))
+
+(deftest qualifier-decode-faults-are-typed-and-redacted-test
+  (doseq [[thrown expected]
+          [[(ex-info "qualifier 424242 is malformed"
+                     {:type :eacl.qualifier/invalid :reason :empty-qualifier
+                      :qualifier-eid 424242})
+            {:type :eacl.qualifier/invalid :eacl/error :eacl.qualifier/invalid
+             :operation :expand-permission-tree :reason :empty-qualifier}]
+           [(ex-info "context for 424242"
+                     {:type :eacl.caveat/invalid :reason "424242"})
+            {:type :eacl.caveat/invalid :eacl/error :eacl.caveat/invalid
+             :operation :expand-permission-tree :reason :unavailable}]
+           [(ex-info "spoofed 424242"
+                     {:type :eacl.execution/deadline-exceeded :internal-id 424242})
+            {:type :eacl.permission-tree/adapter-contract-violation
+             :eacl/error :eacl.permission-tree/adapter-contract-violation
+             :operation :expand-permission-tree :reason :adapter-operation-failed}]
+           [(ex-info "adapter read 424242" {:type :eacl/unsupported-qualifier
+                                            :qualifier-eid 424242})
+            {:type :eacl.permission-tree/adapter-contract-violation
+             :eacl/error :eacl.permission-tree/adapter-contract-violation
+             :operation :expand-permission-tree :reason :adapter-operation-failed}]]]
+    (let [error (qualified-failure (fn [& _] (throw thrown)) ::qualification)]
+      (is (= expected (ex-data error)) (ex-message thrown))
+      (is (nil? #?(:clj (.getCause ^Throwable error) :cljs (.-cause error))))
+      (is (not-any? #{424242 "424242"} (tree-seq coll? seq (ex-data error)))))))
+
+(deftest qualified-rows-require-a-qualification-request-test
+  (is (= {:type :eacl/unsupported-capability
+          :eacl/error :eacl/unsupported-capability
+          :operation :expand-permission-tree
+          :capability :qualified-relationship-inspection}
+         (ex-data (qualified-failure (fn [& _] (throw (ex-info "unreachable" {}))) nil)))))
+
+(deftest a-real-deadline-during-qualifier-decode-is-not-redacted-test
+  (let [clock (atom 0)
+        adapter (fake-adapter
+                 {:objects {"d1" 1}
+                  :internal->external {10 "u10"}
+                  :relations {[:document :viewer]
+                              [(relation 100 :document :viewer :user)]}
+                  :scans {[:document 1 100 :user] [[10 501]]}})
+        contract {:operation :expand-permission-tree
+                  :configured-timeout-ms 1
+                  :deadline-nanos 1000}]
+    (is (= :eacl.execution/deadline-exceeded
+           (:type
+            (thrown-data
+             #(binding [execution/*monotonic-nanos* (fn [] @clock)]
+                (with-redefs [qualification/inspect
+                              (fn [& _]
+                                ;; The decode outlives the request deadline;
+                                ;; its own lookup observes the expiry.
+                                (reset! clock 2000)
+                                (throw (ex-info "lookup deadline"
+                                                {:type :eacl.execution/deadline-exceeded})))]
+                  (permission-tree/expand
+                   adapter
+                   {:limits permission-tree/default-limits
+                    :execution-contract contract
+                    :qualification ::qualification}
+                   (eacl/spice-object :document "d1")
+                   :viewer)))))))))

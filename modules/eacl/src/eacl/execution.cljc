@@ -94,7 +94,7 @@
 
 (defn normalize-evaluation
   [value]
-  (let [value (or value :demand)]
+  (let [value (if (nil? value) :demand value)]
     (when-not (contains? #{:demand :complete-denotation} value)
       (invalid-request!
        ":evaluation must be :demand or :complete-denotation."
@@ -177,7 +177,7 @@
     (invalid-request!
      "Structural safety envelopes are client configuration, not per-request demand controls."
      {:forbidden-keys (vec forbidden)}))
-  (when-let [cancellation-token (:cancellation-token request)]
+  (when-some [cancellation-token (:cancellation-token request)]
     (when-not (cancellation-token? cancellation-token)
       (invalid-request!
        ":cancellation-token must be created by eacl.execution/cancellation-token or implement CooperativeCancellation."
@@ -193,9 +193,10 @@
         cancellation-token (:cancellation-token request)
         timeout-ms
         (normalize-timeout-ms
-         (or (:timeout-ms request)
-             (:execution-timeout-ms client-options)
-             default-execution-timeout-ms))
+         (if (some? (:timeout-ms request))
+           (:timeout-ms request)
+           (or (:execution-timeout-ms client-options)
+               default-execution-timeout-ms)))
         started-nanos (now-nanos)
         deadline-nanos (+ started-nanos (* timeout-ms 1000000))
         aggregate-limits
@@ -230,9 +231,9 @@
         _ (when (contains? request :timeout-ms)
             (normalize-timeout-ms (:timeout-ms request)))
         cancellation-token (:cancellation-token request)
-        _ (when (and cancellation-token
+        _ (when (and (some? cancellation-token)
                      (not (identical? cancellation-token
-                                     (:cancellation-token contract))))
+                                      (:cancellation-token contract))))
             (invalid-request!
              "A composed snapshot operation cannot replace the outer cancellation token."
              {:key :cancellation-token

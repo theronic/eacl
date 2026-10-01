@@ -1,0 +1,9 @@
+{:with-definite-absorber
+ {:union :has-permission
+  :intersection :no-permission
+  :exclusion :no-permission}
+ :without-absorber :eacl.authorization/evaluation-failure
+ :order-independent true
+ :route-independent true
+ :before {:union-with-faulting-first-branch :eacl.authorization/evaluation-failure
+          :union-with-granting-first-branch :has-permission}}

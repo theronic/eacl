@@ -135,6 +135,7 @@ fi
 
 dafny_check_one() {
   "$dafny" verify \
+    --manual-lemma-induction \
     --verification-time-limit 15 \
     "$model_root/StableReducer.dfy" \
     "$model_root/HistoryFreeReducer.dfy" \
@@ -149,6 +150,7 @@ dafny_check_one() {
 
 dafny_check_two() {
   "$dafny" verify \
+    --manual-lemma-induction \
     --verification-time-limit 15 \
     "$model_root/BidirectionalReachability.dfy" \
     "$model_root/BidirectionalArrowIntersection.dfy" \
@@ -169,6 +171,7 @@ dafny_check_two() {
 
 dafny_check_three() {
   "$dafny" verify \
+    --manual-lemma-induction \
     --verification-time-limit 15 \
     "$model_root/BoundedPageBuffer.dfy" \
     "$model_root/RuntimeCheckpointComposition.dfy" \
@@ -185,6 +188,7 @@ dafny_check_three() {
 
 dafny_check_four() {
   "$dafny" verify \
+    --manual-lemma-induction \
     --verification-time-limit 15 \
     "$model_root/EaclForwardGrounding.dfy" \
     "$model_root/BoundedSidecar.dfy" \

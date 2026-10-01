@@ -56,9 +56,9 @@
    :complete-public-engine
    {:claim
     :conditional-composition-of-generated-authority-and-source-specializations-under-documented-tcb
-    ;; The 2026-08-31 ConsistencyDecision.dfy revision retired one obligation;
-    ;; the locked whole-tree run verifies 9384.
-    :minimum-proof-efforts 9384}
+    ;; The locked 2026-09-22 whole-tree run, including the public identity and
+    ;; request-boundary corrections, verifies 9,612 solver proof efforts.
+    :minimum-proof-efforts 9612}
    :cursor-codec-cost-model
    {:source "formal/dafny/CursorCost.dfy"
     :claim :conditional-operation-count-bound
@@ -94,12 +94,40 @@
      "formal/dafny/OperatorRecursiveGeneratedPolicyRefinement.dfy"]
     :claim :conditional-generated-command-and-executable-production-refinement
     :minimum-proof-efforts 35}
+   :memoized-union-membership
+   {:source "formal/dafny/MemoizedMembership.dfy"
+    :claim :conditional-memoized-reachability-with-sound-retained-answers
+    :minimum-proof-efforts 27}
+   :leveled-union-membership
+   {:source "formal/dafny/LeveledMembership.dfy"
+    :claim :conditional-widest-decisive-witness-with-exact-deadline
+    :minimum-proof-efforts 35}
+   :guarded-union-membership
+   {:source "formal/dafny/GuardedMembership.dfy"
+    :claim :linearly-guarded-reachability-is-the-stratified-least-fixed-point
+    :minimum-proof-efforts 21}
+   :certified-point-reuse
+   {:source "formal/dafny/CertifiedPointReuse.dfy"
+    :claim :reused-certified-decision-is-the-fresh-decision
+    :minimum-proof-efforts 14}
    :ordered-merge
    {:source "formal/dafny/OrderedMerge.dfy"
     :minimum-proof-efforts 82}
    :pagination-and-cursor-kernel
    {:source "formal/dafny/PageWindow.dfy"
     :minimum-proof-efforts 40}
+   :public-identity-boundary
+   {:source "formal/dafny/PublicIdentityBoundary.dfy"
+    :claim :proof-only-representation-sensitive-and-domain-separated-public-identity-boundary
+    :minimum-proof-efforts 15}
+   :public-request-boundary
+   {:source "formal/dafny/PublicRequestBoundary.dfy"
+    :claim :proof-only-closed-public-request-endpoint-and-mutation-dispatch-boundary
+    :minimum-proof-efforts 21}
+   :snapshot-option-boundary
+   {:source "formal/dafny/SnapshotOptionBoundary.dfy"
+    :claim :proof-only-trusted-snapshot-runtime-option-boundary
+    :minimum-proof-efforts 3}
    :permission-tree-expansion
    {:source "formal/dafny/PermissionTree.dfy"
     :claim :conditional-shallow-tree-topology-cycle-and-limit-model
@@ -115,6 +143,10 @@
    {:source "formal/dafny/RoutingCertificate.dfy"
     :claim :conditional-exact-path-derivation-and-linear-logical-checker-work
     :minimum-proof-efforts 52}
+   :self-identity-relation
+   {:source "formal/dafny/SelfIdentity.dfy"
+    :claim :self-leaf-is-the-typed-identity-relation-served-by-bounded-scans
+    :minimum-proof-efforts 9}
    :semantic-foundation
    {:source "formal/dafny/Semantics.dfy"
     :minimum-proof-efforts 21}
@@ -132,7 +164,11 @@
    :subproblem-cache
    {:source "formal/dafny/SubproblemCache.dfy"
     :claim :conditional-exact-and-managed-atomic-projection-refinement
-    :minimum-proof-efforts 73}})
+    :minimum-proof-efforts 73}
+   :wildcard-subjects
+   {:source "formal/dafny/WildcardSubjects.dfy"
+    :claim :proof-only-wildcard-membership-touch-cover-and-subject-listing-denotation
+    :minimum-proof-efforts 15}})
 
 (def operation-contracts
   [{:operation :uuid-source-lifecycle
@@ -151,11 +187,13 @@
     :entry-points ["formal/qualified/model.clj"
                    "formal/qualified/model_test.clj"
                    "formal/qualified/mutation_test.clj"]
-    :theorems [:pointwise-residual-and-authoritative-fault-algebra
+    :theorems [:pointwise-strong-kleene-residual-and-fault-algebra
                :finite-positive-least-fixed-point
                :inert-preparation-and-atomic-temporal-publication
                :exclusive-expiry-and-non-monotonic-permission
                :decisive-witness-stability-intervals
+               :any-operand-order-short-circuit-certificate
+               :later-deadline-when-both-operands-decide
                :context-evaluator-proof-and-result-kind-scoped-cache
                :pinned-and-live-continuation-validity]
     :dafny ["formal/dafny/QualifiedEvidence.dfy"
@@ -167,8 +205,7 @@
     :runtime-targets [:clj-java :cljs-javascript]
     :remaining [:production-refinement-and-mutations
                 :performance-and-cross-backend-qualification
-                :semantic-epoch-activation
-                :independent-review]}
+                :semantic-epoch-activation]}
    {:operation :staged-caveat-qualifier-foundation
     :entry-points ['eacl.relationships.qualifier/normalize
                    'eacl.relationships.qualifier/decode
@@ -192,7 +229,8 @@
                :schema-generation-cas-and-retained-caveat-references
                :bound-context-overrides-request-context
                :four-valued-logical-composition
-               :typed-profile-and-bounded-progress]
+               :typed-profile-and-bounded-progress
+               :absorbing-comprehension-folds-and-per-element-work]
     :dafny ["formal/dafny/CaveatOutcomes.dfy"
             "formal/dafny/CaveatProfile.dfy"
             "formal/dafny/CaveatSchema.dfy"
@@ -202,8 +240,7 @@
                           :canonical-context-and-plan-encoding
                           :bounded-cel-value-and-error-conversion]
     :runtime-targets [:clj-java :cljs-javascript]
-    :remaining [:phase-3-serving-activation
-                :independent-review]}
+    :remaining [:phase-3-serving-activation]}
    {:operation :qualifier-cleanup-sweep
     :entry-points ['eacl.relationships.qualifier-integrity/cleanup-sweep!]
     :theorems [:own-cleanup-preserves-remaining-absence
@@ -214,7 +251,7 @@
                           :candidate-fact-assertions
                           :bounded-streaming-proof-capture]
     :runtime-targets [:clj-java :cljs-javascript]
-    :remaining [:independent-review]}
+    :remaining []}
    {:operation :execution-contract
     :entry-points
     ['eacl.execution/normalize 'eacl.engine.v8/lookup-resources]
@@ -236,10 +273,11 @@
     :runtime-targets [:clj-java :cljs-javascript]
     :remaining
     [:mechanized-host-control-source-refinement
-     :trusted-monotonic-clock-platform-contract
-     :independent-review]}
+     :trusted-monotonic-clock-platform-contract]}
    {:operation :expand-permission-tree
-    :entry-points ['eacl.permission-tree/expand]
+    :entry-points ['eacl.core/expand-permission-tree
+                   'eacl.permission-tree/expand
+                   'eacl.backend.v8/object-id->internal]
     :theorems
     [:tree-node-oneof-and-annotation-well-formedness
      :direct-leaf-exactness
@@ -250,24 +288,54 @@
      :successful-limit-preservation
      :failure-carries-no-partial-tree
      :typed-object-identity
+     :application-ids-resolve-exactly-once-at-ingress
+     :resolved-engine-identities-bypass-the-codec
+     :public-cursor-resolution-never-selects-native-identity
      :sum-typed-relation-declaration-exactness
      :every-emitted-child-consumes-depth]
-    :dafny ["formal/dafny/PermissionTree.dfy"]
+    :dafny ["formal/dafny/PermissionTree.dfy"
+            "formal/dafny/PublicIdentityBoundary.dfy"]
     :adapter-obligations
     [:immutable-snapshot
      :complete-and-well-formed-normalized-schema
      :complete-direct-relationship-scans
      :typed-identity-round-trip
+     :public-id-resolution-never-native-passthrough
      :selected-snapshot-rendering
      :selected-snapshot-causal-token]
     :runtime-targets [:clj-java :cljs-javascript]
     :remaining
     [:adapter-query-and-codec-source-refinement
      :deadline-and-host-integer-platform-contracts
-     :causal-token-authentication
-     :independent-review]}
+     :causal-token-authentication]}
+   {:operation :wildcard-subjects
+    :entry-points ['eacl.core/can? 'eacl.core/check-permission
+                   'eacl.core/check-permissions 'eacl.core/lookup-resources
+                   'eacl.core/count-resources 'eacl.core/lookup-subjects
+                   'eacl.core/count-subjects
+                   "formal/fixtures/wildcards/spicedb-results.edn"]
+    :theorems
+    [:untouched-subject-is-the-wildcard
+     :wildcard-decision-ignores-variants
+     :own-derivation-without-relationships-is-empty
+     :positive-permission-splits-into-own-and-wildcard
+     :detailed-touch-listing-denotes-exactly
+     :definite-touch-listing-denotes-exactly
+     :union-listing-denotes-exactly
+     :definite-union-listing-is-sound
+     :complementary-conditionals-witness]
+    :dafny ["formal/dafny/WildcardSubjects.dfy"]
+    :adapter-obligations
+    [:wildcard-relationships-only-on-declared-branches
+     :one-wildcard-subject-entity-per-database
+     :touch-cover-contains-every-subject-with-a-closure-relationship
+     :exact-operator-decision-for-each-touch-cover-subject]
+    :runtime-targets [:clj-java :cljs-javascript]
+    :remaining
+    [:engine-source-refinement
+     :recursion-as-least-fixed-point-rather-than-fuel]}
    {:operation :can?
-    :entry-points ['eacl.core/can?]
+    :entry-points ['eacl.core/can? 'eacl.core/check-permission]
     :theorems
     [:authorization-membership-iff
      :permission-path-materialization-refines-raw-typed-definitions
@@ -284,13 +352,15 @@
      :reverse-least-fixed-point-completeness
      :completed-boolean-render-read-determinism
      :limit-fails-closed
-     :one-recursive-plan-compilation-per-root-generation]
+     :one-recursive-plan-compilation-per-root-generation
+     :self-leaf-is-the-typed-identity-relation]
     :dafny
     ["formal/dafny/AcyclicEngine.dfy"
      "formal/dafny/RecursiveEngine.dfy"
      "formal/dafny/RoutingCertificate.dfy"
      "formal/dafny/SchemaPlanCost.dfy"
-     "formal/dafny/Semantics.dfy"]
+     "formal/dafny/Semantics.dfy"
+     "formal/dafny/SelfIdentity.dfy"]
     :adapter-obligations
     [:immutable-snapshot
      :identity-round-trip
@@ -299,9 +369,23 @@
     :runtime-targets [:clj-java :cljs-javascript]
     :remaining
     [:acyclic-direct-callback-semantic-refinement
-     :acyclic-optimized-clojure-language-refinement-and-independent-review
-     :backend-permission-path-to-indexed-routing-edge-source-refinement
-     :independent-review]}
+     :acyclic-optimized-clojure-language-refinement
+     :backend-permission-path-to-indexed-routing-edge-source-refinement]}
+   {:operation :ordered-batch-permission-check
+    :entry-points ['eacl.core/check-permissions
+                   'eacl.client.orchestration/check-permissions
+                   'eacl.authorization.batch/demand-key
+                   'eacl.cache/canonical-cursor-identity?]
+    :theorems [:host-equality-has-representation-sensitive-counterexamples
+               :canonical-host-equality-is-resolver-congruent
+               :representation-aliases-bypass-public-memoization
+               :equal-public-memo-keys-have-equal-internal-identity]
+    :dafny ["formal/dafny/PublicIdentityBoundary.dfy"]
+    :adapter-obligations [:deterministic-public-to-internal-resolution
+                          :injective-public-to-internal-resolution
+                          :immutable-selected-snapshot]
+    :runtime-targets [:clj-java :cljs-javascript]
+    :remaining [:mechanized-host-control-source-refinement]}
    {:operation :lookup
     :entry-points ['eacl.core/lookup-resources 'eacl.core/lookup-subjects]
     :theorems
@@ -317,14 +401,16 @@
      :relationship-keyset-page-decision-exact
      :limit-fails-closed
      :bounded-page-stream-prefetch
-     :one-recursive-plan-compilation-per-root-generation]
+     :one-recursive-plan-compilation-per-root-generation
+     :self-identity-scan-is-the-bounded-identity-relation-scan]
     :dafny
     ["formal/dafny/AcyclicEngine.dfy"
      "formal/dafny/OrderedMerge.dfy"
      "formal/dafny/PageWindow.dfy"
      "formal/dafny/RecursiveEngine.dfy"
      "formal/dafny/RoutingCertificate.dfy"
-     "formal/dafny/SchemaPlanCost.dfy"]
+     "formal/dafny/SchemaPlanCost.dfy"
+     "formal/dafny/SelfIdentity.dfy"]
     :adapter-obligations
     [:immutable-snapshot
      :identity-round-trip
@@ -333,9 +419,8 @@
      :permission-node-completeness]
     :runtime-targets [:clj-java :cljs-javascript]
     :remaining
-    [:acyclic-optimized-clojure-language-refinement-and-independent-review
-     :backend-permission-path-to-indexed-routing-edge-source-refinement
-     :independent-review]}
+    [:acyclic-optimized-clojure-language-refinement
+     :backend-permission-path-to-indexed-routing-edge-source-refinement]}
    {:operation :count
     :entry-points ['eacl.core/count-resources 'eacl.core/count-subjects]
     :theorems
@@ -355,9 +440,8 @@
      :ordered-complete-scans]
     :runtime-targets [:clj-java :cljs-javascript]
     :remaining
-    [:acyclic-optimized-clojure-language-refinement-and-independent-review
-     :backend-permission-path-to-indexed-routing-edge-source-refinement
-     :independent-review]}
+    [:acyclic-optimized-clojure-language-refinement
+     :backend-permission-path-to-indexed-routing-edge-source-refinement]}
    {:operation :snapshot-consistency-selection
     :entry-points
     ['eacl.consistency/selection-plan
@@ -387,8 +471,7 @@
     :runtime-targets [:clj-java :cljs-javascript]
     :remaining
     [:backend-selection-source-refinement
-     :authenticated-token-decoder-refinement
-     :independent-review]}
+     :authenticated-token-decoder-refinement]}
    {:operation :lookup-cursor-continuation
     :entry-points ['eacl.client.orchestration/cursor-options 'eacl.relay]
     :theorems
@@ -427,8 +510,7 @@
     :runtime-targets [:clj-java :cljs-javascript]
     :remaining
     [:mechanized-host-cursor-proof-strategy-source-refinement
-     :backend-proof-construction-refinement
-     :independent-review]}
+     :backend-proof-construction-refinement]}
    {:operation :frame-keyed-checkpoint-resume
     :entry-points
     ['eacl.engine.v8/checkpoint-key
@@ -458,8 +540,7 @@
     :runtime-targets [:clj-java :cljs-javascript]
     :remaining
     [:mechanized-host-checkpoint-key-source-refinement
-     :backend-proof-construction-refinement
-     :independent-review]}
+     :backend-proof-construction-refinement]}
    {:operation :acyclic-frontier-alias-canonicalization
     :entry-points ['eacl.engine.sealed-plan/derive-execution-frontier]
     :theorems
@@ -474,11 +555,99 @@
     :runtime-targets [:clj-java :cljs-javascript]
     :remaining
     [:mechanized-host-alias-canonicalization-source-refinement
-     :backend-permission-body-materialization-refinement
-     :independent-review]}
+     :backend-permission-body-materialization-refinement]}
+   {:operation :relationship-mutation-identity
+    :entry-points ['eacl.core/write-relationships!
+                   'eacl.core/write-relationship!
+                   'eacl.core/create-relationships!
+                   'eacl.core/create-relationship!
+                   'eacl.core/delete-relationships!
+                   'eacl.core/delete-relationship!
+                   'eacl.core/tx-relationships
+                   'eacl.core/tx-relationship
+                   'eacl.relationships.mutations/normalize-public-updates
+                   'eacl.relationships.mutations/coalesce-updates]
+    :theorems [:host-equality-has-representation-sensitive-counterexamples
+               :resolve-before-coalescing-preserves-distinct-relationships]
+    :dafny ["formal/dafny/PublicIdentityBoundary.dfy"]
+    :adapter-obligations [:deterministic-public-to-internal-resolution
+                          :injective-public-to-internal-resolution
+                          :atomic-resolved-relationship-mutation]
+    :runtime-targets [:clj-java :cljs-javascript]
+    :remaining [:mechanized-host-control-source-refinement]}
+   {:operation :closed-public-request-shapes
+    :entry-points ['eacl.core/check-permission
+                   'eacl.core/check-permissions
+                   'eacl.core/read-schema
+                   'eacl.core/read-relationships
+                   'eacl.core/lookup-resources
+                   'eacl.core/lookup-subjects
+                   'eacl.core/count-resources
+                   'eacl.core/count-subjects
+                   'eacl.core/expand-permission-tree
+                   'eacl.core/write-schema!
+                   'eacl.core/write-relationship!
+                   'eacl.core/write-relationships!
+                   'eacl.core/delete-relationships!
+                   'eacl.core/delete-object!
+                   'eacl.core/with-schema
+                   'eacl.core/tx-relationships
+                   'eacl.authorization.batch/validate-request!
+                   'eacl.authorization.filters/validate-endpoint!
+                   'eacl.relationships.mutations/normalize-public-updates
+                   'eacl.execution/normalize
+                   'eacl.execution/refine]
+    :theorems [:closed-request-rejects-misspelled-consistency
+               :closed-request-rejects-every-unknown-key
+               :open-request-accepts-missing-required-identity
+               :closed-request-rejects-missing-required-identity
+               :reserved-live-page-basis-is-rejected
+               :backend-only-empty-schema-escape-hatch-is-rejected
+               :closed-relationship-write-rejects-misspelled-expiry
+               :open-nested-mutation-accepts-malformed-update
+               :strict-mutation-rejects-malformed-nested-update
+               :invalid-relationship-batches-never-succeed
+               :public-delete-cannot-select-native-identity
+               :ambiguous-delete-identity-is-always-rejected
+               :malformed-public-object-delete-is-always-rejected
+               :closed-execution-control-rejects-explicit-false
+               :open-endpoint-accepted-unsupported-subject-relation
+               :strict-endpoint-rejects-unsupported-subject-relation]
+    :dafny ["formal/dafny/PublicRequestBoundary.dfy"]
+    :adapter-obligations [:public-wrapper-validation-before-dispatch
+                          :client-protocol-defense-in-depth
+                          :typed-fail-closed-request-errors]
+    :runtime-targets [:clj-java :cljs-javascript]
+    :remaining [:mechanized-host-control-source-refinement]}
+   {:operation :trusted-snapshot-capture
+    :entry-points ['eacl.core/snapshot
+                   'eacl.core/-snapshot]
+    :theorems [:empty-public-snapshot-captures-trusted-runtime
+               :closed-protocol-rejects-every-caller-option]
+    :dafny ["formal/dafny/SnapshotOptionBoundary.dfy"]
+    :adapter-obligations [:snapshot-options-not-caller-overridable
+                          :identity-resolution-captured-from-client]
+    :runtime-targets [:clj-java :cljs-javascript]
+    :remaining [:mechanized-host-control-source-refinement]}
+   {:operation :object-deletion-identity
+    :entry-points ['eacl.core/delete-object!
+                   'eacl.core/delete-object-by-eid!]
+    :theorems [:missing-numeric-public-id-never-falls-back-to-native-eid
+               :native-eid-deletion-requires-the-explicit-native-path
+               :public-resolution-failure-is-not-not-found]
+    :dafny ["formal/dafny/PublicIdentityBoundary.dfy"]
+    :adapter-obligations [:typed-public-resolution-outcome
+                          :explicit-native-identity-entry-point
+                          :fail-closed-resolution-errors]
+    :runtime-targets [:clj-java :cljs-javascript]
+    :remaining [:mechanized-host-control-source-refinement]}
    {:operation :relationship-pagination
     :entry-points
-    ['eacl.engine.relationships/execute-page
+    ['eacl.core/read-relationships
+     'eacl.client.orchestration/default-spice-cursor->internal
+     'eacl.backend.v8/object-id->internal
+     'eacl.relay/internalize-prepared-page-query
+     'eacl.engine.relationships/execute-page
      'eacl.engine.relationships/execute-filtered-window
      'eacl.engine.v8/execute-filtered-lookup-window
      'eacl.relay/externalize-relationship-page]
@@ -487,16 +656,25 @@
      :single-permitted-graph
      :matching-relationship-page-scope-reuses-exact-page
      :relationship-page-scope-mismatch-cannot-hit
+     :truthiness-drops-an-admitted-false-identity
+     :presence-preserves-every-admitted-identity
+     :application-ids-resolve-exactly-once-at-ingress
+     :resolved-engine-identities-bypass-the-codec
+     :numeric-public-cursor-has-a-native-alias-counterexample
+     :public-cursor-resolution-never-selects-native-identity
      :arbitrary-window-concatenation-is-exact
      :unbounded-has-next-is-exact
      :deadline-cut-publishes-no-page]
     :dafny
     ["formal/dafny/PageWindow.dfy"
      "formal/dafny/FilteredPagination.dfy"
-     "formal/dafny/TemporalSafety.dfy"]
+     "formal/dafny/TemporalSafety.dfy"
+     "formal/dafny/PublicIdentityBoundary.dfy"]
     :adapter-obligations
     [:immutable-snapshot
      :ordered-complete-scans
+     :value-presence-distinct-from-host-truthiness
+     :public-id-resolution-never-native-passthrough
      :exact-selection
      :source-fingerprint]
     :runtime-targets [:clj-java :cljs-javascript]}
@@ -525,7 +703,7 @@
     :remaining
     [:backend-permission-path-materialization-source-refinement
      :proofless-and-raw-snapshot-generated-authority
-     :independent-host-source-refinement-review
+     :independent-host-source-refinement
      :allocation-retained-heap-and-latency-platform-contracts]}
    {:operation :indexed-traversal-transition
     :entry-points
@@ -581,7 +759,7 @@
      :identity-round-trip
      :compiled-plan-refinement]
     :runtime-targets [:clj-java :cljs-javascript]
-    :remaining [:production-adapter-source-refinement :independent-review]}
+    :remaining [:production-adapter-source-refinement]}
    {:operation :abstract-operator-engine-phase-a
     :entry-points
     ["EaclKernel.__default/DecideOperatorBatch"
@@ -654,6 +832,113 @@
      "formal/dafny/OperatorRecursiveGeneratedPolicyRefinement.dfy"]
     :runtime-targets [:clj-java :cljs-javascript]
     :remaining []}
+   {:operation :delegated-operator-recursion
+    ;; Recursive operator plans whose recursion lies inside union-only
+    ;; operands: the operator nodes run on the acyclic vector evaluator and
+    ;; each operand is decided through its own sealed union plan, by the
+    ;; membership-probe check or, for many resources of one subject, by the
+    ;; memoized search MemoizedMembership.dfy models. Expiring evidence is
+    ;; decided level by level (LeveledMembership.dfy): the widest decisive
+    ;; witness, with its exact deadline; conditional and faulty evidence stay
+    ;; with the membership-probe check, and a conditional operator result is
+    ;; recomputed with point operands. A plan that recurses through linearly
+    ;; guarded operators flattens each member into guarded rules decided by
+    ;; the same search (GuardedMembership.dfy); a subtracted guard that is not
+    ;; plainly absent or present defers to the tabled evaluator, and so does a
+    ;; consulted permission whose false ends at a deadline. Candidates
+    ;; come from the delegated operand's own plan or else from the flattened
+    ;; generator, one synthetic union node per operator permission. A batched
+    ;; evaluation decides a relation leaf from the subject's holdings, read
+    ;; once per request, with the edge a probe returns. Executable refinement:
+    ;; eacl.engine.memoized-membership-refinement-test and
+    ;; eacl.engine.leveled-membership-refinement-test run the production
+    ;; search beside transcriptions over random programs, the latter with
+    ;; expiring and caveated relationships and an independent widest-witness
+    ;; fixed point; eacl.engine.guarded-membership-refinement-test does so for
+    ;; random guarded programs, checking every answer against the tabled
+    ;; evaluator too; eacl.operator.delegation-refinement-test checks the
+    ;; delegation analysis against an oracle, each flattened generator's rows
+    ;; for covering their root, and every engine answer against a stratified
+    ;; least fixed point and the tabled evaluator, over random operator
+    ;; schemas. The membership-*, operator-delegat*, operator-generator-*,
+    ;; operator-holdings-*, operator-guard-*, operator-subtracted-guard-* and
+    ;; operator-nonlinear-* mutation controls are killed by them on both
+    ;; runtimes.
+    :entry-points
+    ["eacl.operator.plan/delegated-permissions"
+     "eacl.operator.plan/delegated-generator"
+     "eacl.operator.plan/guarded-delegation"
+     "eacl.operator.cover-plan/seal-generator"
+     "eacl.operator.recursive/evaluate-cached-many"
+     "eacl.operator.vector-evaluator/check-many-trusted"
+     "eacl.engine.stable-route/check-many-eids"
+     "eacl.engine.stable-route/subject-holdings"]
+    :theorems
+    [:exhausted-search-admits-only-negative-states
+     :found-search-proves-its-root
+     :node-outside-closed-possible-set-is-negative
+     :memoized-searches-equal-reachability-in-any-order
+     :no-witness-between-a-skipped-bound-and-its-level
+     :found-level-is-the-widest-decisive-witness
+     :certificate-is-the-exact-end-of-the-grant
+     :exhausted-without-skips-holds-at-no-level
+     :flattening-preserves-the-denotation
+     :guarded-reachability-is-the-least-fixed-point
+     :guarded-rule-lasts-when-all-its-evidence-lasts]
+    :dafny ["formal/dafny/MemoizedMembership.dfy"
+            "formal/dafny/LeveledMembership.dfy"
+            "formal/dafny/GuardedMembership.dfy"
+            "formal/stable-discovery/MembershipProbeCheck.dfy"]
+    :adapter-obligations
+    [:immutable-snapshot
+     :strictly-ordered-unique-eid-scans]
+    :runtime-targets [:clj-java :cljs-javascript]
+    :remaining
+    [:mechanized-host-search-source-refinement]}
+   {:operation :set-algebra-result-reuse
+    ;; Operand and operator point decisions are reused across the requests of
+    ;; one client, across evaluation times within their certificates, and
+    ;; across an exported and restored cache on the same basis. A qualified
+    ;; decision is keyed by its certified scope, the exact reuse identity
+    ;; without its time or basis (the storage key carries the exact basis),
+    ;; and stored with the interval its evidence certifies. Reuse requires
+    ;; that interval to admit the request's time and observes it on the
+    ;; request's qualification (CertifiedPointReuse.dfy); a restored value must
+    ;; agree with its key's kind and its own evidence. Executable refinement:
+    ;; eacl.datascript.set-algebra-reuse-differential-test compares every
+    ;; cached answer with the same request under :cache? false at the same
+    ;; time, over random operator and guarded schemas, plain, expiring and
+    ;; caveated relationships, an advancing clock and a mid-run export and
+    ;; restore. The reuse-* mutation controls are killed by the controls
+    ;; suite on both runtimes.
+    :entry-points
+    ["eacl.authorization.point-reuse/reuse!"
+     "eacl.authorization.point-reuse/publish!"
+     "eacl.authorization.point-reuse/stored-value-valid?"
+     "eacl.authorization.qualification/certified-denotation-scope"
+     "eacl.subproblem-cache/lookup-denotations!"
+     "eacl.subproblem-cache/publish-denotations!"
+     "eacl.engine.stable-route/check-eids"
+     "eacl.engine.stable-route/check-many-eids"
+     "eacl.operator.recursive/evaluate-cached-many"
+     "eacl.operator.vector-evaluator/check-cached-many-eids"]
+    :theorems
+    [:keys-ignore-only-the-time
+     :reused-decision-is-the-fresh-decision
+     :incomplete-certificate-is-reused-only-at-its-time
+     :no-reuse-at-or-after-the-end
+     :no-reuse-before-the-computation
+     :replaced-entry-has-no-later-reuse
+     :observed-certificate-bounds-the-answer
+     :admitted-entry-is-decided]
+    :dafny ["formal/dafny/CertifiedPointReuse.dfy"
+            "formal/dafny/QualifiedTemporal.dfy"]
+    :adapter-obligations
+    [:immutable-snapshot
+     :deterministic-evaluation-at-one-basis-and-time]
+    :runtime-targets [:clj-java :cljs-javascript]
+    :remaining
+    [:mechanized-host-cache-source-refinement]}
    {:operation :cache-reuse
     :entry-points ['eacl.cache 'eacl.subproblem-cache]
     :theorems
@@ -716,27 +1001,27 @@
      :complete-portable-error-comparison]
     :converter-categories
     '{:schema-ir
-     [object->dafny dafny-object->object permission-node relation-node
-      rule-definition]
-     :relationships [relationship->dafny]
-     :queries
-     [authorization-inputs traversal-limits page-presence indexed-render-mode]
-     :adapter-callbacks
-     [indexed-projection indexed-scan-decision indexed-rule relation-binding
-      indexed-plan-decision indexed-seed-decision indexed-limits
-      indexed-projection-value indexed-command-value indexed-counters-value
-      compile-indexed-plan indexed-init indexed-drive indexed-continue-page
-     indexed-resume]
-     :cache-and-cursors
-     [exact-selection continuation-decision]
-     :results
-     [work-counters sequence-outcome boolean-outcome count-outcome
-      authorization-outcome page-decision keyset-page-decision
-      consistency-plan-decision consistency-selection-decision
-      ordered-merge-decision ordered-merge-chunk indexed-public-result]
-     :typed-errors
-     [limit-kind page-error consistency-error indexed-scan-rejection-reason
-      indexed-plan-rejection-reason indexed-limit-kind indexed-render-error]}
+      [object->dafny dafny-object->object permission-node relation-node
+       rule-definition]
+      :relationships [relationship->dafny]
+      :queries
+      [authorization-inputs traversal-limits page-presence indexed-render-mode]
+      :adapter-callbacks
+      [indexed-projection indexed-scan-decision indexed-rule relation-binding
+       indexed-plan-decision indexed-seed-decision indexed-limits
+       indexed-projection-value indexed-command-value indexed-counters-value
+       compile-indexed-plan indexed-init indexed-drive indexed-continue-page
+       indexed-resume]
+      :cache-and-cursors
+      [exact-selection continuation-decision]
+      :results
+      [work-counters sequence-outcome boolean-outcome count-outcome
+       authorization-outcome page-decision keyset-page-decision
+       consistency-plan-decision consistency-selection-decision
+       ordered-merge-decision ordered-merge-chunk indexed-public-result]
+      :typed-errors
+      [limit-kind page-error consistency-error indexed-scan-rejection-reason
+       indexed-plan-rejection-reason indexed-limit-kind indexed-render-error]}
     :runtime-sources
     {:clj-java "modules/eacl/src/eacl/formal/production_kernel.clj"
      :cljs-javascript
@@ -767,8 +1052,7 @@
    [:mechanized-host-control-source-refinement
     :mechanized-clj-cache-transition-source-refinement
     :mechanized-cljs-production-authority-refinement
-    :mechanized-backend-adapter-conversion-refinement
-    :independent-security-formal-review]
+    :mechanized-backend-adapter-conversion-refinement]
    :residual-assumptions
    [:verification-toolchain
     :generated-code-compilers

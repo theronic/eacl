@@ -1,0 +1,20 @@
+{:id :EACL-FORMAL-094
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace "eacl-rust/EACL-RS-110/remove-relation-with-qualified-relationships"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions
+ ["v8.0.0 commit a698b3bdf15e61be9bfd1324d7d7c67dc82176be"]
+ :affected-backends [:datascript :datalevin]
+ :root-cause
+ "DataScript's count-relationships-using-relation and relationship-present-for-relation?, and Datalevin's count, scanned a Relation's endpoint rows with the endpoint-prefix scan that admits only unqualified rows. The first expiring or Caveated row raised :eacl/unsupported-qualifier, so removing a Relation identity that held any qualified Relationship crashed write-schema! and with-schema instead of reporting :eacl.schema/relation-in-use, and :retain-inert planning failed or succeeded depending on whether the first indexed row was qualified. Datomic and Datahike scan the full tuple range and were unaffected."
+ :fix
+ "Scan both directions with qualified rows admitted (DataScript: the include-qualifier endpoint-prefix scan; Datalevin: the complete batched qualified Relation stream, which also stops truncating the count at the unpaged scan bound). A shared contract runs on all four backends."
+ :closing-evidence
+ ["eacl.datascript.qualified-schema-test/removing-a-relation-with-qualified-relationships-reports-relation-in-use"
+  "eacl.datomic.qualified-write-test/removing-a-relation-with-qualified-relationships-reports-relation-in-use"
+  "eacl.datahike.qualified-write-test/removing-a-relation-with-qualified-relationships-reports-relation-in-use"
+  "eacl.datalevin.qualified-write-test/removing-a-relation-with-qualified-relationships-reports-relation-in-use"]
+ :notes
+ "Found by the eacl-rust port (BUGS.md EACL-RS-110), verified against main a698b3bd on DataScript. The Datalevin regression runs in the separately pinned Datalevin nREPL."}

@@ -1,0 +1,17 @@
+{:minimized-scenario
+ {:schema "definition user {}\ndefinition project {\n  relation viewer: user\n  permission access = manage\n  permission manage = (viewer & viewer) + access\n}\n"
+  :objects ["b"]
+  :relationships []
+  :steps [{:op :lookup-resources
+           :request {:subject {:type :user :id "b"} :permission :manage
+                     :resource/type :project :result-policy :detailed}
+           :page-sizes [3]}]}
+ :with-a-grant
+ {:relationships [[:user "u" :viewer :project "p"]]
+  :requests [[:check-permission :manage "u" "p"] [:check-permission :access "u" "p"]
+             [:lookup-resources :manage "u"] [:count-resources :manage "u"]]}
+ :unfolded-twin
+ "definition user {}\ndefinition project {\n  relation viewer: user\n  permission access = manage\n  permission manage = viewer + access\n}\n"
+ :folded-shapes
+ ["(viewer & viewer) + access" "(viewer & viewer) + parent->view"
+  "(viewer + owner) & (owner + viewer)" "((viewer & viewer) + parent->open) - banned"]}

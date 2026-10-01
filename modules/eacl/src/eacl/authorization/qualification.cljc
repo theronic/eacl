@@ -34,7 +34,7 @@
     (qualifier/error! :qualification-context))
   (let [prepared (if (and prepared-context
                           (or (not (contains? options :context))
-                              (identical? context (context/value prepared-context))))
+                              (context/prepared-for? prepared-context context)))
                    prepared-context
                    (context/prepare (or context {})))]
     (->Qualification time (context/value prepared) evaluator entity version basis cache
@@ -110,12 +110,53 @@
                     (select-keys (evaluator/descriptor engine)
                                  [:profile :profile-fingerprint :fingerprint :capability-version])))))
 
+(defn certified-denotation-scope
+  "The qualification scope of a subproblem denotation that stores the
+   interval its evidence certifies: `exact-reuse-identity` without its
+   evaluation time, which reuse checks against that interval, and without its
+   basis. Every denotation storage key already carries the evaluated
+   snapshot's exact basis as its reuse identity, derived from the same
+   semantic snapshot identity this request records as its basis. One value
+   per request, so its hash is computed once."
+  [request]
+  (memo! request [:certified-denotation-scope]
+         #(let [[format _ _ context evaluator] (exact-reuse-identity request)]
+            [:certified-point evidence/format-version format context evaluator])))
+
+(defn- relation-allowance [request relation-id]
+  (memo! request [:relation relation-id]
+         #(let [relation (:entity (entity-data request relation-id))]
+            (when-not (and (map? relation) (seq relation))
+              (qualifier/error! :missing-relation))
+            (qualifier/relation-allowance relation))))
+
+(defn- metadata-error? [error]
+  (contains? #{:eacl.qualifier/invalid :eacl.caveat/invalid} (:type (ex-data error))))
+
+(defn caveat-declarations
+  "The Caveats that `relation-ids` admit, read through this request's
+   memoized entity data: `{:name n :parameters [[parameter type] ...]}` in
+   name order. A Relation or Caveat whose metadata does not decode declares
+   nothing here; evaluation reports it as a fault if an edge demands it."
+  [request relation-ids]
+  (let [caveat-ids (into (sorted-set)
+                         (mapcat (fn [relation-id]
+                                   (try
+                                     (remove nil? (relation-allowance request relation-id))
+                                     (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+                                       (if (metadata-error? error) [] (throw error))))))
+                         relation-ids)]
+    (->> caveat-ids
+         (keep (fn [caveat-id]
+                 (try
+                   (select-keys (:header (named-definition request caveat-id)) [:name :parameters])
+                   (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+                     (if (metadata-error? error) nil (throw error))))))
+         (sort-by :name)
+         vec)))
+
 (defn- allowed! [request relation-id caveat-id]
-  (let [allowed (memo! request [:relation relation-id]
-                       #(let [relation (:entity (entity-data request relation-id))]
-                          (when-not (and (map? relation) (seq relation))
-                            (qualifier/error! :missing-relation))
-                          (qualifier/relation-allowance relation)))]
+  (let [allowed (relation-allowance request relation-id)]
     (when-not (contains? allowed caveat-id) (qualifier/error! :caveat-not-allowed))))
 
 (defn- qualifier-input [request qid]
@@ -223,13 +264,26 @@
                              (if (keyword? (:reason result)) (:reason result) :invalid-outcome))
       (evidence/fault :eacl.caveat/evaluation :invalid-outcome))))
 
+(defn- edge-fault
+  "One faulted edge: a Kleene unknown carrying a sanitized reason. Recorded on
+   the request's `:qualifier-faults` meter so that a fault absorbed by a
+   definite answer remains observable."
+  [type reason]
+  (counters/add! :qualifier-faults)
+  (evidence/fault type reason))
+
 (defn qualify
   "Returns evidence for one compact native edge. The ordinary integer branch
-   allocates nothing and never dereferences request state. All authoritative
-   faults remain faults, including faults on subtracting edges."
+   allocates nothing and never dereferences request state. Authoritative
+   faults remain faults, including faults on subtracting edges; composition
+   decides whether a definite operand absorbs them."
   [request relation-id compact-edge]
   (if-not (vector? compact-edge)
-    (some? compact-edge)
+    (if (nil? compact-edge)
+      false
+      (if (edge/valid? compact-edge)
+        true
+        (edge-fault :eacl.qualifier/invalid :qualifier-ref)))
     (do
       (execution/check! :qualifier-resolution)
       (try
@@ -239,13 +293,15 @@
           (allowed! request relation-id caveat)
           (if (and valid-until-ms (>= (:time request) valid-until-ms))
             false
-            (evidence/with-certificate
+            (let [value (evidence/with-certificate
               (if caveat (caveat-evidence request definition caveat-context) true)
-              valid-until-ms true)))
+                          valid-until-ms true)]
+              (when (evidence/fault? value) (counters/add! :qualifier-faults))
+              value)))
         (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
           (let [{:keys [type reason]} (ex-data error)]
             (if (contains? #{:eacl.qualifier/invalid :eacl.caveat/invalid
                              :eacl.caveat/evaluator-unavailable
                              :eacl.authorization/invalid-evidence} type)
-              (evidence/fault type (if (keyword? reason) reason :unavailable))
+              (edge-fault type (if (keyword? reason) reason :unavailable))
               (throw error))))))))

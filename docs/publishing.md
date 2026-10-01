@@ -56,11 +56,11 @@ Dispatching on a branch is rejected. If a Clojars upload failed partway through
 an immutable release, inspect the remote artifact set before retrying: Clojars
 does not support overwriting released versions.
 
-The release set is `dev.eacl/eacl`, `eacl-caveats-jvm`, `eacl-datomic`,
-`eacl-datahike`, and `eacl-datascript`, all at the same version. Datalevin remains
+The release set is `dev.eacl/eacl`, `eacl-caveats-jvm`, `eacl-caveats-portable`,
+`eacl-datomic`, `eacl-datahike`, and `eacl-datascript`, all at the same version. Datalevin remains
 excluded until its maintained fork dependency is published.
 
-Repository configuration: allow merge commits and auto-merge, require all ten
+Repository configuration: allow merge commits and auto-merge, require all eleven
 Tests/Formal jobs on the snapshot branch, restrict the `clojars` environment to
 version tags with maintainer approval, and prevent version-tag updates/deletion.
 Keep the release workflow on `main` as well as the snapshot branch so manual

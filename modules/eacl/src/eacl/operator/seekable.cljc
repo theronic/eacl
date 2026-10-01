@@ -135,7 +135,9 @@
                 value (if cached? (:evidence cursor)
                           (qualification/qualify (:qualification options) (:relation-id cursor) compact))
                 cursor (if cached? cursor (assoc cursor :qualified-edge compact :evidence value))]
-            (evidence/throw-if-fault! value)
+            ;; A faulting head is possibly active: it joins the intersection
+            ;; or exclusion like any other head, and only a consumed root
+            ;; decision that depends on it fails.
             (when (and (not cached?) (not (boolean? value)))
               (vswap! (:examined-certificate options)
                       #(evidence/combine :intersection %

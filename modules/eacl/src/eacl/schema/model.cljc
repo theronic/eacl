@@ -12,9 +12,7 @@
   ([resource-type relation-name subject-type]
    {:pre [(keyword? resource-type)
           (keyword? relation-name)
-          (keyword? subject-type)
-          (not= resource-type :self)
-          (not= relation-name :self)]}
+          (keyword? subject-type)]}
    {:eacl/id                     (->relation-id resource-type relation-name subject-type)
     :eacl.relation/resource-type resource-type
     :eacl.relation/relation-name relation-name

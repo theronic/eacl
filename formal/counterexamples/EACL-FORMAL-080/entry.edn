@@ -1,0 +1,23 @@
+{:id :EACL-FORMAL-080
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace "eacl-rust/clojure-campaign/EACL-RS-004"
+ :minimized-fixture "fixture.edn"
+ :impact :omission
+ :affected-versions ["v8.0.0"]
+ :affected-backends [:shared :datomic :datascript :datahike]
+ :root-cause
+ "A read-relationships scan without :subject/id and :resource/id reads AVET values [p0 p1 p2 primary qualifier], so one primary endpoint's rows are ordered by qualifier eid (plain rows first) before owner eid. The cursor edge and beyond-cursor? compared only (primary, owner), and the seek positioned only by primary. Whenever qualifier order disagreed with owner order a continued page dropped rows it had not returned or re-emitted rows it had; a filtered window (:expiry-active, :authorization) resumed each chunk on an already-examined row, so it examined the same rows until the candidate window was exhausted and every later page resumed from the same progress edge."
+ :fix
+ "physical-compare orders partial scans by (primary, qualifier with nil first, owner); a qualified row's progress edge carries its :qualifier-id (encoded as a native cursor coordinate), plain rows keep the original edge shape; every backend's partial scan resumes with endpoint-pair/resume-bound at the boundary row's exact position; the engine fails closed with :eacl/backend-contract-violation :strict-order when a scan's rows do not advance strictly in that order."
+ :closing-evidence
+ ["eacl.datascript.qualified-write-test/partial-relationship-walks-over-qualified-rows-are-total-and-terminate"
+  "eacl.datomic.qualified-write-test/partial-relationship-walks-over-qualified-rows-are-total-and-terminate"
+  "eacl.datahike.qualified-write-test/partial-relationship-walks-over-qualified-rows-are-total-and-terminate"
+  "eacl.engine.relationships-test/qualified-partial-scans-page-in-physical-order-test"
+  "eacl.engine.relationships-test/qualified-partial-filtered-windows-terminate-test"
+  "eacl.engine.relationships-test/random-qualified-partial-walks-are-total-and-duplicate-free-test"
+  "eacl.engine.relationships-test/scans-outside-physical-order-fail-closed-test"
+  "eacl.formal.qualified.production-mutations/production-mutations-are-killed-by-conformance-gates"]
+ :notes
+ "Also :duplicate (a page boundary inside a primary group re-emits rows) and :availability (:expiry-active and :authorization walks never terminate; each :authorization page examined the full 10,000-candidate window). Datalevin applies an AVE seek's entity component to every datom it returns (ascending e >= entity, descending e <= entity), not only to the first value, so its resumed partial scan also dropped plain rows of later primary groups whose owner eid was smaller (larger, backwards) than the boundary owner; with a native limit of one boundary row, a seek that landed before the boundary also truncated the spec. Datalevin now positions inside the boundary value group and continues from the adjacent value without an entity component. The shared contract covers every backend, Datalevin in its module suite. Reported by the eacl-rust port: https://github.com/theronic/eacl-rust/blob/main/BUGS.md (EACL-RS-004)."}

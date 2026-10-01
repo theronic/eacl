@@ -5,9 +5,15 @@
   contexts.  It then evaluates the signed question graph dependency-first.
   Positive components use a deterministic fact worklist; intersection state
   is materialized only after its sealed anchor fact exists.  Negative edges
-  may consume absence only after their dependency component is complete."
+  may consume absence only after their dependency component is complete.
+
+  Qualified facts compose with strong-Kleene connectives and accumulate by
+  union to the least fixed point in the per-completion order
+  false < fault < true. A faulting via edge is joined with its target like
+  any other via, so it faults a head only when the target can hold."
   (:require [eacl.authorization.evidence :as evidence]
             [eacl.authorization.evidence-index :as evidence-index]
+            [eacl.authorization.point-reuse :as point-reuse]
             [eacl.authorization.qualification :as qualification]
             [eacl.relationships.edge :as edge]
             [eacl.backend.direct-membership :as direct]
@@ -16,6 +22,7 @@
             [eacl.execution :as execution]
             [eacl.operator.batch-schedule :as batch-schedule]
             [eacl.operator.plan :as operator-plan]
+            [eacl.operator.vector-evaluator :as vector-evaluator]
             [eacl.request.counters :as request-counters]
             [eacl.secure-format :as secure-format]
             [eacl.subproblem-cache :as subproblem]))
@@ -122,10 +129,21 @@
 (defn- question-subject-eid [q] (nth q 4))
 (defn- question-resource-eid [q] (nth q 5))
 
+(def ^:private ^:dynamic *question-keys*
+  "The printed keys of one evaluation's questions, or nil outside one."
+  nil)
+
 (defn- question-key [q]
   ;; pr-str is portable across the closed key domain and removes host map/set
-  ;; iteration from command, component, fact, and checkpoint order.
-  (pr-str q))
+  ;; iteration from command, component, fact, and checkpoint order. An
+  ;; evaluation prints each question once: its condensation, sorts and
+  ;; checkpoints compare the same strings many times.
+  (if-let [keys *question-keys*]
+    (or (get @keys q)
+        (let [key (pr-str q)]
+          (vswap! keys assoc q key)
+          key))
+    (pr-str q)))
 
 (defn- sorted-questions [questions]
   ;; Decorate-sort-undecorate: `sort-by question-key` re-runs `pr-str` on
@@ -155,27 +173,36 @@
               "Recursive candidate must contain a complete typed point context."
               {:candidate candidate})))
 
-(defn- direct-probe [q descriptor]
-  (when-let [{:keys [relation-id]}
-             (operator-plan/relation-partition
-              descriptor (question-subject-type q))]
-    (if (= :forward (question-direction q))
-      {:direction :forward
-       :descriptor
-       {:subject-type (question-subject-type q)
-        :subject-eid (question-subject-eid q)
-        :relation-eid relation-id
-        :resource-type (first (question-permission q))}
-       :candidate [(first (question-permission q))
-                   (question-resource-eid q)]}
-      {:direction :reverse
-       :descriptor
-       {:resource-type (first (question-permission q))
-        :resource-eid (question-resource-eid q)
-        :relation-eid relation-id
-        :subject-type (question-subject-type q)}
-       :candidate [(question-subject-type q)
-                   (question-subject-eid q)]})))
+(defn- direct-probe [q relation-id subject-eid]
+  (if (= :forward (question-direction q))
+    {:direction :forward
+     :descriptor
+     {:subject-type (question-subject-type q)
+      :subject-eid subject-eid
+      :relation-eid relation-id
+      :resource-type (first (question-permission q))}
+     :candidate [(first (question-permission q))
+                 (question-resource-eid q)]}
+    {:direction :reverse
+     :descriptor
+     {:resource-type (first (question-permission q))
+      :resource-eid (question-resource-eid q)
+      :relation-eid relation-id
+      :subject-type (question-subject-type q)}
+     :candidate [(question-subject-type q)
+                 subject-eid]}))
+
+(defn- direct-probes
+  "The subject's own direct probe, plus the wildcard subject's probe when the
+  relation declares `T:*`. Base probes of one question combine by union."
+  [q descriptor]
+  (if-let [{:keys [relation-id wildcard-eid]}
+           (operator-plan/relation-partition
+            descriptor (question-subject-type q))]
+    (cond-> [(direct-probe q relation-id (question-subject-eid q))]
+      (and (some? wildcard-eid) (not= wildcard-eid (question-subject-eid q)))
+      (conj (direct-probe q relation-id wildcard-eid)))
+    []))
 
 (defn- arrow-target-question
   [roots q intermediate-eid {:keys [target-node]}]
@@ -245,8 +272,7 @@
     (case instruction
       :direct-membership
       {:key q :kind :base :dependencies []
-       :base-probes (if-let [probe (direct-probe q (:descriptor predicate))]
-                      [probe] [])}
+       :base-probes (direct-probes q (:descriptor predicate))}
 
       :permission-membership
       (let [target (:target-node predicate)
@@ -447,10 +473,13 @@
 
                           :else
                           (let [children
-                                (vec
-                                 (reverse
-                                  (sort-by component-key
-                                           (get dependencies component))))]
+                                (into []
+                                      (map second)
+                                      (reverse
+                                       (sort-by first compare
+                                                (map (fn [dependency]
+                                                       [(component-key dependency) dependency])
+                                                     (get dependencies component)))))]
                             (recur
                              (into (conj (pop stack) [component true])
                                    (map #(vector % false)) children)
@@ -502,7 +531,9 @@
                              (qualification/qualify qualification (:via-relation-eid partition) compact-edge)
                              true)]
                    (cond
-                     (or (evidence/no? via) (evidence/fault? via))
+                     ;; A faulting via is a Kleene unknown joined with its
+                     ;; target below; only a definite denial is inactive.
+                     (evidence/no? via)
                      [dependencies probes probe-vias (evidence/combine :union inactive via)]
 
                      permission-target?
@@ -513,15 +544,19 @@
                       probes probe-vias inactive]
 
                      :else
-                     (if-let [probe (direct-probe
-                                     (question [(:intermediate-type partition) (:target-name partition)]
-                                               -1 (question-direction q) (question-subject-type q)
-                                               (question-subject-eid q) intermediate-eid)
-                                     (:target-relation partition))]
-                       [dependencies (conj probes probe)
-                        (if (true? via) probe-vias (assoc probe-vias (+ first-probe (count probes)) via))
-                        inactive]
-                       [dependencies probes probe-vias inactive]))))
+                     (let [target-probes
+                           (direct-probes
+                            (question [(:intermediate-type partition) (:target-name partition)]
+                                      -1 (question-direction q) (question-subject-type q)
+                                      (question-subject-eid q) intermediate-eid)
+                            (:target-relation partition))]
+                       [dependencies (into probes target-probes)
+                        (if (true? via)
+                          probe-vias
+                          (reduce (fn [vias offset]
+                                    (assoc vias (+ first-probe (count probes) offset) via))
+                                  probe-vias (range (count target-probes))))
+                        inactive]))))
                [[] [] (:base-probe-vias spec) false]
                values)
               short-chunk? (< (count values)
@@ -898,7 +933,9 @@
   ;; Positive components accumulate derivations, including their certificates.
   ;; Replacing a grounded grant with a cyclic alternative can circulate distinct
   ;; deadlines forever. Union retains that witness while still propagating
-  ;; residual growth, incomplete absence evidence, and every encountered fault.
+  ;; residual growth, incomplete absence evidence, and every fault no grant
+  ;; absorbs. The accumulation is the least fixed point in the
+  ;; per-completion order false < fault < true.
   (let [prior (get (:facts state) head false)
         value (evidence/combine :union prior derived)]
     (if (= value prior)
@@ -912,23 +949,6 @@
         (cond-> (assoc state :facts facts)
           (not pending?) (update :agenda conj head)
           (not pending?) (update :queued conj head))))))
-
-(defn- unanchored-evidence [state rule slot anchor]
-  ;; No join is retained before an anchor has a nonempty completion set.
-  ;; A false anchor supplies a conservative certificate by itself. Already
-  ;; encountered faults remain authoritative even without an allocated join.
-  (if (nil? slot)
-    (or (reduce (fn [fault dependency]
-                  (let [value (dependency-value state dependency)]
-                    (if (evidence/fault? value)
-                      (if fault (evidence/combine :intersection fault value) value)
-                      fault))) nil (:dependencies rule))
-        anchor)
-    (let [child (dependency-value state (nth (:dependencies rule) slot))
-          prior (get (:facts state) (:key rule) false)]
-      (cond (evidence/fault? child) (evidence/combine :intersection prior child)
-            (evidence/fault? prior) prior
-            :else anchor))))
 
 (defn- charge-evidence-anchor! [rule limits counters]
   (let [states (inc (:anchor-states @counters))
@@ -958,10 +978,15 @@
           (let [prior (get-in state [:join-states key])
                 anchor (when (= kind :intersection)
                          (dependency-value state (nth dependencies (:anchor-slot rule))))
+                ;; No join is retained before the anchor can hold. A false
+                ;; anchor decides the intersection with its own certificate,
+                ;; whatever its siblings are, faults included (strong
+                ;; Kleene). A faulting anchor allocates the join: a false
+                ;; sibling can still make the intersection false.
                 unanchored? (and (= kind :intersection) (nil? prior)
-                                 (or (evidence/no? anchor) (evidence/fault? anchor)))]
+                                 (evidence/no? anchor))]
             (if unanchored?
-              [state (unanchored-evidence state rule slot anchor)]
+              [state anchor]
               (let [_ (when (and (= kind :intersection) (nil? prior))
                         (charge-evidence-anchor! rule limits counters))
                     joined (if prior
@@ -1041,7 +1066,14 @@
                                       attached (or (:attached-probe-count spec) 0)]
                                   (map-indexed (fn [i probe] [q probe (+ attached i)])
                                                (drop attached (:base-probes spec))))))
-                      (sorted-questions (keys nodes)))
+                      ;; Only questions with unattached probes contribute, in
+                      ;; the same sorted order.
+                      (sorted-questions
+                       (filter (fn [q]
+                                 (let [spec (get nodes q)]
+                                   (< (or (:attached-probe-count spec) 0)
+                                      (count (:base-probes spec)))))
+                               (keys nodes))))
         probe-count (count entries)
         next-probes (+ (:probes @counters) probe-count)]
     (limit-counter! limits counters :probes :maximum-probes next-probes)
@@ -1128,7 +1160,7 @@
                                  [(conj out [q encoded]) size]))
                              [[] 0] (sorted-questions (keys (:facts state)))))
                     (vec (sorted-questions (:facts state))))]
-        (cond-> {:version checkpoint-version :command-identity identity :completed? true :facts facts
+        (cond-> {:version checkpoint-version :command-identity (force identity) :completed? true :facts facts
                  :anchor-states (if qualified? []
                                     (mapv second (sort-by first compare
                                                         (map (fn [[key value]] [(question-key key) [key value]])
@@ -1180,9 +1212,7 @@
   (validate-many-options! plan candidates)
   (evaluate-many-validated (update options :limits normalize-limits)))
 
-(defn- evaluate-many-validated
-  "Trusted core of `evaluate-many`: options already validated and limits
-  normalized (each caller validates exactly once at its boundary)."
+(defn- evaluate-questions
   [{:keys [adapter plan candidates permission limits checkpoint
            scope-identity undelivered-boundary checkpoint? qualification]
     :or {checkpoint? true}}]
@@ -1190,13 +1220,14 @@
         permission (or permission (:root plan))
         root-questions (mapv #(candidate->root-question roots permission %)
                              candidates)
-        identity (command-identity plan root-questions
-                                   (if qualification
-                                     [:qualified evidence/format-version scope-identity
-                                      (qualification/exact-reuse-identity qualification)]
-                                     scope-identity))]
+        ;; Only a replay or a checkpoint reads the command identity.
+        identity (delay (command-identity plan root-questions
+                                          (if qualification
+                                            [:qualified evidence/format-version scope-identity
+                                             (qualification/exact-reuse-identity qualification)]
+                                            scope-identity)))]
     (if checkpoint
-      (let [result (replay-checkpoint checkpoint identity root-questions)]
+      (let [result (replay-checkpoint checkpoint (force identity) root-questions)]
         (when qualification (doseq [value (:decisions result)] (qualification/observe-evidence! qualification value)))
         result)
       (if (empty? candidates)
@@ -1334,7 +1365,9 @@
                                 (let [lower? (contains? (:lower graph) q)
                                       upper? (contains? (:upper graph) q)]
                                   (case (evidence/permissionship decision)
-                                    :evaluation-failure true
+                                    ;; A fault is neither definitely true nor
+                                    ;; definitely false.
+                                    :evaluation-failure (and (not lower?) upper?)
                                     :has-permission upper?
                                     :no-permission (not lower?)
                                     :conditional-permission (and (not lower?) upper?))))
@@ -1348,76 +1381,141 @@
           (observe! @counters)
           result)))))
 
-(def ^:private point-cache-options
-  {:valid? boolean?})
+(defn- evaluate-many-validated
+  "Trusted core of `evaluate-many`: options already validated and limits
+  normalized (each caller validates exactly once at its boundary)."
+  [options]
+  (binding [*question-keys* (volatile! {})]
+    (evaluate-questions options)))
 
-(def ^:private qualified-point-cache-options {:valid? string?})
+(defn- conditional-decision?
+  "True for a residual-bearing value: neither Boolean, decisive, nor a
+  fault."
+  [decision]
+  (not (or (boolean? decision) (evidence/has? decision) (evidence/no? decision)
+           (evidence/fault? decision))))
+
+(defn- evaluate-delegated
+  "Decides point questions whose recursion is confined to union-only operands
+  (`operator-plan/delegated-permissions`): the acyclic vector evaluator runs
+  the operator nodes, and `delegate` decides every union-only operand through
+  its own sealed union plan. No question graph, component condensation, or
+  checkpoint exists on this path; the decisions are the same denotation.
+
+  A batched `delegate` may certify a decisive operand until its widest
+  witness expires, where the point check certifies its first witness. The
+  two deadlines show only in a conditional result's residual. So a
+  conditional decision is recomputed with `point-delegate` before it is
+  returned or published, and equals what a check returns."
+  [{:keys [adapter plan candidates permission qualification delegate
+           point-delegate holdings]}
+   delegated]
+  (let [permission (or permission (:root plan))
+        evaluate
+        (fn [delegate candidates]
+          ;; Candidates were validated once and deduplicated by
+          ;; `evaluate-cached-many`; the vector evaluator's own
+          ;; re-validation is skipped.
+          (vector-evaluator/check-many-trusted
+           (cond-> {:adapter adapter
+                    :plan (operator-plan/delegated-view plan delegated)
+                    :permission permission
+                    :candidates
+                    (mapv (fn [{:keys [direction subject-type subject-eid resource-eid]}]
+                            {:direction direction
+                             :subject-type subject-type
+                             :subject-eid subject-eid
+                             :resource-type (first permission)
+                             :resource-eid resource-eid
+                             :true-nodes #{}})
+                          candidates)
+                    :delegate delegate
+                    :holdings holdings}
+             qualification
+             (assoc :qualification qualification
+                    :witness-scope (qualification/exact-reuse-identity qualification)))))
+        decisions (evaluate delegate candidates)
+        conditional (when point-delegate
+                      (vec (keep-indexed (fn [index decision]
+                                           (when (conditional-decision? decision) index))
+                                         decisions)))]
+    {:decisions
+     (if (seq conditional)
+       (reduce (fn [decisions [index decision]] (assoc decisions index decision))
+               (vec decisions)
+               (map vector conditional
+                    (evaluate point-delegate (mapv #(nth candidates %) conditional))))
+       decisions)
+     :checkpoint nil
+     :counters {}
+     :replayed? false}))
+
+(defn- evaluate-fresh
+  "The uncached evaluator for validated options: delegated evaluation when
+  the caller supplies a union-operand oracle and the plan's recursion lies
+  entirely inside union-only permissions, otherwise the tabled evaluator."
+  [{:keys [plan delegate checkpoint] :as options}]
+  (if-let [delegated (when (and delegate (nil? checkpoint))
+                       (operator-plan/delegation plan))]
+    (evaluate-delegated options delegated)
+    (evaluate-many-validated options)))
 
 (defn- point-cache-key
   [plan permission scope-identity candidate]
   [:operator-recursive-point checkpoint-version
-   (:fingerprint plan) permission scope-identity candidate])
+   (:fingerprint plan) permission scope-identity
+   (-> candidate
+       (update :subject-eid point-reuse/canonical-id)
+       (update :resource-eid point-reuse/canonical-id))])
 
 (defn evaluate-cached-many
   "Returns aligned recursive point decisions with proof-compatible completed
   point reuse. Only unresolved distinct points enter the recursive evaluator;
-  no point is published until that whole demanded vector succeeds."
+  no point is published until that whole demanded vector succeeds. An
+  optional `:delegate` oracle, `(fn [permission candidates] decisions)`,
+  decides union-only operands when the plan's recursion lies inside them."
   [{:keys [plan candidates permission scope-identity checkpoint qualification] :as options}]
   (validate-many-options! plan candidates)
   (let [options (assoc options :limits (normalize-limits (:limits options)))]
     (if (or checkpoint (nil? subproblem/*store*))
-      (evaluate-many-validated options)
+      (evaluate-fresh options)
       (let [permission (or permission (:root plan))
-            store subproblem/*store*
-            scope-identity (if qualification
-                             [:qualified-point evidence/format-version scope-identity
-                              (qualification/exact-reuse-identity qualification)]
-                             scope-identity)
-            looked-up
-            (mapv
-             (fn [candidate]
-               (let [key (point-cache-key
-                          plan permission scope-identity candidate)]
-                 (if-let [resolved
-                          (subproblem/lookup-denotation! key)]
-                   (do
-                     (subproblem/record-avoided-backend-operation! store)
-                     {:candidate candidate :key key
-                      :decision (if qualification (qualification/observe-evidence! qualification (evidence/decode (:value resolved))) (:value resolved))
-                      :cached? true})
-                   {:candidate candidate :key key :cached? false})))
-             candidates)
+            ;; A qualified decision is keyed without its evaluation time and
+            ;; stored with its certified interval, so a later request reuses
+            ;; it while that interval admits the later time.
+            scope (point-reuse/scope qualification)
+            keys (mapv #(point-reuse/scoped-key
+                         (point-cache-key plan permission scope-identity %) scope)
+                       candidates)
+            reused (point-reuse/reuse! qualification keys ::miss)
             misses
-            (->> looked-up
-                 (remove :cached?)
-                 (map :candidate)
-                 distinct
-                 vec)
+            (into [] (comp (keep (fn [[candidate decision]]
+                                   (when (= ::miss decision) candidate)))
+                           (distinct))
+                  (map vector candidates reused))
             evaluated
             (if (seq misses)
-              (evaluate-many-validated (assoc options :candidates misses))
+              (evaluate-fresh (assoc options :candidates misses))
               {:decisions [] :counters {}})
             miss-decisions (zipmap misses (:decisions evaluated))
             decisions
-            (mapv (fn [{:keys [candidate decision cached?]}]
-                    (if cached? decision (get miss-decisions candidate)))
-                  looked-up)]
-        (when (and subproblem/*populate?* (not-any? evidence/fault? (:decisions evaluated)))
+            (mapv (fn [candidate decision]
+                    (if (= ::miss decision) (get miss-decisions candidate) decision))
+                  candidates reused)]
+        (when (not-any? evidence/fault? (:decisions evaluated))
           ;; Duplicate candidates share one key; publish each key once.
-          (reduce (fn [published {:keys [candidate key cached?]}]
-                    (if (or cached? (contains? published key))
-                      published
-                      (do (subproblem/publish-denotation!
-                           key (if qualification qualified-point-cache-options point-cache-options)
-                           (let [value (get miss-decisions candidate)]
-                             (if qualification (evidence/encode value) value)))
-                          (conj published key))))
-                  #{}
-                  looked-up))
+          (point-reuse/publish!
+           qualification
+           (vals (reduce (fn [entries [candidate key decision]]
+                           (if (or (not= ::miss decision) (contains? entries key))
+                             entries
+                             (assoc entries key [key (get miss-decisions candidate)])))
+                         {}
+                         (map vector candidates keys reused)))))
         {:decisions decisions
          :counters
          (assoc (:counters evaluated)
-                :point-cache-hits (- (count looked-up) (count misses))
+                :point-cache-hits (- (count candidates) (count misses))
                 :point-cache-misses (count misses))
          :replayed? false
          :point-cached? (empty? misses)}))))

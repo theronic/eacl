@@ -22,6 +22,14 @@
                   (for [[relation-name type-refs] relations]
                     [(keyword relation-name)
                      (vec (distinct (map (comp keyword :type) type-refs)))]))
+            ;; Relations holding a `T:*` branch cannot be the left side of an
+            ;; arrow (SpiceDB rejects them the same way).
+            :wildcard-relations
+            (into #{}
+                  (keep (fn [[relation-name type-refs]]
+                          (when (some :wildcard? type-refs)
+                            (keyword relation-name))))
+                  relations)
             :permissions (set (map (comp keyword :name) permissions))}])))
 
 (defn- issue
@@ -139,7 +147,7 @@
   [catalog resource-type permission-name path {:keys [base target grouped?]} issues]
   (let [base (keyword base)
         target (keyword target)
-        {:keys [relations permissions]} (get catalog resource-type)
+        {:keys [relations permissions wildcard-relations]} (get catalog resource-type)
         subject-types (get relations base)]
     (cond
       (contains? permissions base)
@@ -156,6 +164,14 @@
                          {:name base
                           :expected :relation
                           :message "Arrow base relation does not exist on the resource type."}))
+
+      (contains? wildcard-relations base)
+      (add-issue! issues
+                  (issue :wildcard-arrow-base resource-type permission-name path
+                         {:name base
+                          :message (str "Relation " (name resource-type) "#" (name base)
+                                        " includes a wildcard subject type: wildcard"
+                                        " relations cannot be used on the left side of arrows.")}))
 
       :else
       (let [partitions
@@ -198,6 +214,9 @@
     :arrow
     (resolve-arrow catalog resource-type permission-name path node issues)
 
+    :self
+    (expression/self-leaf (boolean (:grouped? node)))
+
     :union
     (let [children (resolve-children catalog resource-type permission-name
                                      path (:children node) issues)]
@@ -222,6 +241,14 @@
                 (issue :type-invalid-reference resource-type permission-name path
                        {:node node
                         :message "Parser produced an unknown permission-expression node."}))))
+
+(defn- eacl-limitation?
+  "Resolution issues of schemas SpiceDB accepts: an arrow target that some
+   subject type of the source relation lacks, or a target that is a relation
+   on some subject types and a permission on others."
+  [{:keys [type subject-type subject-types path]}]
+  (or (and (= :missing-reference type) (some? subject-type) (some #{:partition} path))
+      (and (= :ambiguous-reference type) (some? subject-types))))
 
 (defn resolve-definitions-with-metadata
   "Resolves and bounds every permission from parser/transform-schema
@@ -273,16 +300,48 @@
                     (sort-by issue-sort-key)
                     vec)]
     (when (seq errors)
-      (throw (ex-info "Permission-expression reference resolution failed."
-                      {:type :eacl.schema/expression-resolution-failed
-                       :eacl/error :eacl.schema/expression-resolution-failed
-                       :errors errors
-                       :error-count (count errors)})))
+      (if (every? eacl-limitation? errors)
+        ;; SpiceDB accepts these arrows: a target that a subject type lacks
+        ;; contributes nothing there. EACL resolves every target partition.
+        (throw (ex-info (str "Unsupported feature: " (:message (first errors))
+                             " SpiceDB accepts this arrow; EACL requires its target on every"
+                             " subject type of the source relation, with one kind.")
+                        {:type :eacl.schema/unsupported-feature
+                         :eacl/error :eacl.schema/unsupported-feature
+                         :issues (mapv #(assoc % :type :arrow-target :reason (:type %)) errors)
+                         :issue-count (count errors)}))
+        (throw (ex-info "Permission-expression reference resolution failed."
+                        {:type :eacl.schema/expression-resolution-failed
+                         :eacl/error :eacl.schema/expression-resolution-failed
+                         :errors errors
+                         :error-count (count errors)}))))
     (let [metadata (mapv #(dissoc % :expression) resolved)]
       {:expressions (mapv :expression resolved)
        :metadata metadata
        :aggregate-metrics
        (expression-limits/check-aggregate! metadata limits)}))))
+
+(defn- uses-self?
+  [root]
+  (loop [pending [root]]
+    (if-let [node (peek pending)]
+      (case (:op node)
+        :self true
+        (:union :intersection) (recur (into (pop pending) (:children node)))
+        :exclusion (recur (conj (pop pending) (:left node) (:right node)))
+        (recur (pop pending)))
+      false)))
+
+(defn- self-relations
+  "The identity Relation (`expression/self-relation`) of every definition
+   whose permissions use `self`, sorted by definition."
+  [expressions]
+  (->> expressions
+       (filter (comp uses-self? :root))
+       (map :resource-type)
+       distinct
+       (sort-by str)
+       (mapv #(model/Relation % expression/self-relation %))))
 
 (defn resolve-parse-tree
   "Validates parser-level restrictions and resolves every expression in one
@@ -292,27 +351,38 @@
   ([parse-tree limits]
    (resolve-parse-tree parse-tree limits {}))
   ([parse-tree limits admission]
-   (let [transformed (parser/transform-schema parse-tree)
-         _ (parser/validate-eacl-restrictions parse-tree transformed admission)
+   (let [transformed (parser/transform-schema parse-tree limits)
+         ;; Expression storage represents wildcard branches; only the legacy
+         ;; flat projection (parser/->eacl-schema) keeps rejecting them.
+         _ (parser/validate-eacl-restrictions
+            parse-tree transformed (assoc admission :allow-wildcards? true))
          relations
-         (if (true? (:allow-caveats? admission))
-           (parser/staged-relation-entities transformed)
-           (vec
-            (for [[resource-type {:keys [relations]}]
-                  (sort-by key (:definitions transformed))
-                  [relation-name type-refs] (sort-by key relations)
-                  {:keys [type]} (sort-by :type type-refs)]
-              (model/Relation (keyword resource-type)
-                              (keyword relation-name)
-                              (keyword type)))))
+         (parser/relation-entities
+          transformed {:strict? (true? (:allow-caveats? admission))})
          {:keys [expressions metadata aggregate-metrics]}
          (resolve-definitions-with-metadata (:definitions transformed) limits)
          dependency-certificate
-         (expression-graph/build-certificate expressions)]
+         (try
+           (expression-graph/build-certificate expressions)
+           (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) e
+             (if (= :eacl.schema/unstratified-exclusion (:type (ex-data e)))
+               ;; SpiceDB accepts recursion through an exclusion; EACL evaluates
+               ;; exclusion only over a completed lower stratum.
+               (throw (ex-info (str "Unsupported feature: " (ex-message e)
+                                    " SpiceDB accepts this schema; EACL requires every"
+                                    " exclusion to subtract a permission that does not depend on it.")
+                               (assoc (ex-data e)
+                                      :type :eacl.schema/unsupported-feature
+                                      :eacl/error :eacl.schema/unsupported-feature
+                                      :issues [(assoc (select-keys (ex-data e) [:negative-edge :cycle])
+                                                      :type :unstratified-exclusion)]
+                                      :issue-count 1)
+                               e))
+               (throw e))))]
      (cond-> {:definitions (mapv (comp keyword key)
                                  (sort-by key (:definitions transformed)))
               :expressions expressions
-              :relations relations
+              :relations (into relations (self-relations expressions))
               :expression-metadata metadata
               :aggregate-expression-metrics aggregate-metrics
               :dependency-certificate dependency-certificate}

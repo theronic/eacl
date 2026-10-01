@@ -36,6 +36,8 @@ Each adapter SHALL implement exact logical matching, adjacency, Relationship fil
 
 Every vector seek bound SHALL use the full stored arity where the backend's vector comparator requires it. A logical point match SHALL seek by owner, attribute, and first-four identity and SHALL validate that at most one qualifier variant exists.
 
+An owner-unanchored scan reads the attribute's value index, so the rows of one opposite endpoint are ordered by component five, with `nil` first, before the owner entity. Relationship pagination over such a scan SHALL compare and resume by the complete physical position (component four, component five, owner); a continuation SHALL NOT position by component four and owner alone. A scan whose rows do not advance strictly in that order SHALL fail closed with a typed backend-contract violation.
+
 #### Scenario: Forward endpoint scan
 - **WHEN** authorization or Relationship pagination scans outward from a known subject
 - **THEN** the adapter seeks only the v8 forward attribute under `[subject-type relation-eid resource-type]`
@@ -50,6 +52,11 @@ Every vector seek bound SHALL use the full stored arity where the backend's vect
 - **WHEN** EACL checks one known subject, Relation, and resource
 - **THEN** it performs one bounded seek beginning at the five-component value whose qualifier is `nil`
 - **AND** accepts only a value with the exact owner, attribute, and first-four identity
+
+#### Scenario: Partial Relationship walk over qualified rows
+- **WHEN** a `read-relationships` walk without `:subject/id` and `:resource/id` pages over a Relation whose stored rows include caveated or expiring values whose qualifier order disagrees with owner order
+- **THEN** every stored row is returned exactly once, in the order of one large page, in forward and backward walks of any page size
+- **AND** `:expiry-active` and `:authorization` walks of the same Relation terminate after examining each row at most once
 
 #### Scenario: Reverse-order continuation
 - **WHEN** a descending scan resumes from a Relationship cursor

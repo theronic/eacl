@@ -98,6 +98,33 @@
       (finally
         (b/delete {:path (.getPath directory)})))))
 
+(deftest caveat-evaluator-jars-stay-in-their-own-modules
+  (let [directory (temporary-directory)
+        classes (io/file directory "classes")
+        jar-file (io/file directory "module.jar")
+        jar-of (fn [entries]
+                 (b/delete {:path (.getPath classes)})
+                 (doseq [entry entries] (write-entry! classes entry))
+                 (b/jar {:class-dir (.getPath classes) :jar-file (.getPath jar-file)})
+                 (.getPath jar-file))]
+    (try
+      (is (true? (module/assert-adapter-jar-isolation!
+                  :eacl-caveats-portable (jar-of ["eacl/caveats/portable.cljc"]))))
+      (doseq [[module-id owned forbidden-entry]
+              [[:eacl-caveats-portable "eacl/caveats/portable.cljc" "eacl/caveats/jvm.clj"]
+               [:eacl-caveats-portable "eacl/caveats/portable.cljc" "exoscale/cel/parser.clj"]
+               [:eacl-caveats-portable "eacl/caveats/portable.cljc" "eacl/datascript/core.cljc"]
+               [:eacl-caveats-jvm "eacl/caveats/jvm.clj" "eacl/caveats/portable.cljc"]
+               [:eacl-datascript "eacl/datascript/core.cljc" "eacl/caveats/portable.cljc"]
+               [:eacl "eacl/core.cljc" "eacl/caveats/portable/cache.cljc"]]]
+        (let [failure (error-data #(module/assert-adapter-jar-isolation!
+                                    module-id (jar-of [owned forbidden-entry])))]
+          (is (= :eacl.build/backend-isolation-failed (:type failure)))
+          (is (contains? (set (:entries failure)) forbidden-entry) (pr-str [module-id failure]))
+          (is (not (contains? (set (:entries failure)) owned)))))
+      (finally
+        (b/delete {:path (.getPath directory)})))))
+
 (deftest core-artifact-does-not-require-retired-cache-policy-bytecode
   (is (contains? module/required-core-entries
                  "AcyclicEngine/__default.class"))

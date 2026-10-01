@@ -1,0 +1,9 @@
+{:plain {:pages [[["f" :child "f"]] [["f" :child "c"]]]
+         :equals-single-page true}
+ :expiry-active {:pages [[["f" :child "f"]] [["f" :child "c"]]]
+                 :terminates true}
+ :authorization {:pages [[]] :has-next-page? false :bounded? false}
+ :walk-invariants {:total true :duplicate-free true
+                   :order-equals-single-page true
+                   :directions [:forward :backward]}
+ :scan-order-disagreement :eacl/backend-contract-violation}

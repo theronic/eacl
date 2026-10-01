@@ -124,6 +124,7 @@ jobs:
                      (runner/test
                       {:dirs [\"modules/eacl/test\"
                               \"modules/eacl-caveats-jvm/test\"
+                              \"modules/eacl-caveats-portable/test\"
                               \"modules/eacl-datomic/test\"
                               \"modules/eacl-datascript/test\"
                               \"modules/eacl-datahike/test\"
@@ -161,7 +162,8 @@ jobs:
       matrix:
         # eacl-datalevin joins this matrix only after its maintained fork is
         # published from an immutable public source commit.
-        module: [eacl, eacl-caveats-jvm, eacl-datomic, eacl-datascript, eacl-datahike]
+        module: [eacl, eacl-caveats-jvm, eacl-caveats-portable, eacl-datomic, eacl-datascript,
+                 eacl-datahike]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -1,0 +1,20 @@
+{:id :EACL-FORMAL-070
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "snapshot-protocol/caller-runtime-option-injection"
+ :minimized-fixture "fixture.edn"
+ :impact :false-grant
+ :affected-versions
+ ["v8.0 pre-release before snapshot option closure"]
+ :affected-backends
+ [:shared :datomic :datahike :datascript]
+ :root-cause
+ "The public snapshot wrapper passed an empty internal options map, but the public protocol method also accepted caller-supplied options and merged them over trusted client runtime dependencies. A caller could replace public-ID resolution while retaining the client's trusted database and schema."
+ :fix
+ "Keep the protocol arity for implementers but require an exactly empty options map in the shared client before basis selection. Caller requests can choose only the documented consistency descriptor; trusted codecs, clocks, caches, and security configuration remain captured from make-client."
+ :closing-evidence
+ ["SnapshotOptionBoundary.EmptyPublicSnapshotCapturesTrustedRuntime"
+  "SnapshotOptionBoundary.ClosedProtocolRejectsEveryCallerOption"
+  "eacl.formal.executed-mutation-controls/snapshot-option-injection-killed?"
+  "eacl.datascript.contract-test/public-request-shapes-fail-closed-before-datascript-mutation-test"]}

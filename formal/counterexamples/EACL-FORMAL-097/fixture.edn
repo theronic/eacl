@@ -1,0 +1,18 @@
+{:operation :validate-schema
+ :schema "definition user {}\ndefinition doc {\n relationviewer: user\n}"
+ :before {:accepted true :relations [[:doc :viewer :user]]}
+ :spicedb-v1.56.0 :reject
+ :related
+ [{:corpus-id "eacl-rs/003-glued-permission"
+   :schema "definition user {}\ndefinition doc {\n relation viewer: user\n permissionview = viewer\n}"
+   :spicedb-v1.56.0 :reject}
+  {:corpus-id "eacl-rs/003-glued-definition" :schema "definitionuser {}" :spicedb-v1.56.0 :reject}
+  {:corpus-id "eacl-rs/003-glued-caveat"
+   :schema "caveatcav(a int) { a > 1 }\ndefinition user {}\n"
+   :spicedb-v1.56.0 :reject}
+  {:corpus-id "eacl-rs/003-glued-with"
+   :schema "caveat cav(a int) { a > 1 }\ndefinition user {}\ndefinition doc {\n relation viewer: user withcav\n}"
+   :spicedb-v1.56.0 :reject}
+  {:corpus-id "eacl-rs/003-glued-nil"
+   :schema "definition user {}\ndefinition doc {\n relation viewer: user\n permission view = nilviewer\n}"
+   :spicedb-v1.56.0 :reject}]}

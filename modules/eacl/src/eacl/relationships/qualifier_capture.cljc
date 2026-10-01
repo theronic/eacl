@@ -41,7 +41,7 @@
                    (when (seq rows)
                      (reduce (fn [result [a v]]
                                (let [attribute ((:attribute-ident native) db a)]
-                                 (if (= :eacl.relation/caveats attribute)
+                                 (if (contains? qualifier/relation-many-attributes attribute)
                                    (update result attribute (fnil conj #{}) v)
                                    (assoc result attribute v))))
                              {:db/id eid} rows))))]

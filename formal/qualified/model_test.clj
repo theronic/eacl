@@ -7,26 +7,64 @@
 (def universe (m/worlds 2))
 (def operators [:union :intersection :exclusion :arrow])
 (def subsets (mapv (fn [mask] (set (filter #(bit-test mask %) universe))) (range 16)))
-(def outcomes (into (mapv m/value subsets) [(m/fault :invalid) (m/fault :evaluator)]))
+(def outcomes
+  "Every Boolean residual, both total faults, and residuals that fault only
+  in some worlds."
+  (-> (mapv m/value subsets)
+      (into [(m/fault :invalid) (m/fault :evaluator)])
+      (into (for [op [:union :intersection :exclusion]
+                  worlds [#{0} #{1 2} #{0 1 2}]
+                  reason [:invalid :evaluator]]
+              (m/compose op (m/value worlds) (m/fault reason))))))
+
+(deftest finite-world-enumeration-never-wraps
+  (is (= #{0} (m/worlds 0)))
+  (is (= #{0 1 2 3} (m/worlds 2)))
+  (doseq [fields [-1 1.5 (inc m/maximum-fields) 32]]
+    (is (thrown? clojure.lang.ExceptionInfo (m/worlds fields)))))
 
 (defn boolean-compose [op a b]
   (case op :union (or a b) :intersection (and a b)
         :arrow (and a b) :exclusion (and a (not b))))
 
-(deftest exhaustive-residual-and-authoritative-fault-algebra
+(defn kleene
+  "Independent strong-Kleene truth table on one world: true, false, or a
+  fault's reason set."
+  [op a b]
+  (let [unknown? set?
+        unite (fn [] (cond (and (unknown? a) (unknown? b)) (set/union a b) (unknown? a) a :else b))]
+    (case op
+      :union (if (or (true? a) (true? b)) true (if (or (unknown? a) (unknown? b)) (unite) false))
+      (:intersection :arrow) (if (or (false? a) (false? b)) false (if (or (unknown? a) (unknown? b)) (unite) true))
+      :exclusion (if (or (false? a) (true? b)) false (if (or (unknown? a) (unknown? b)) (unite) true)))))
+
+(deftest exhaustive-residual-and-strong-kleene-fault-algebra
   (doseq [op operators a outcomes b outcomes]
-    (let [actual (m/compose op a b)
-          expected (if (or (:fault a) (:fault b))
-                     {:fault (set/union (:fault a #{}) (:fault b #{}))}
-                     (m/value (set (filter #(boolean-compose op (contains? (:worlds a) %)
-                                                             (contains? (:worlds b) %)) universe))))]
-      (is (= expected actual))))
+    (let [actual (m/compose op a b)]
+      (doseq [w universe]
+        (is (= (kleene op (m/at a w) (m/at b w)) (m/at actual w)) (pr-str [op a b w])))))
+  ;; Definite absorbers decide beside a fault; a fault never absorbs.
+  (doseq [fault [(m/fault :invalid) (m/compose :union (m/value #{0}) (m/fault :invalid))]]
+    (is (= :has (m/kind universe (m/compose :union (m/value universe) fault))))
+    (is (= :no (m/kind universe (m/compose :intersection (m/value #{}) fault))))
+    (is (= :no (m/kind universe (m/compose :exclusion fault (m/value universe)))))
+    (is (= :failure (m/kind universe (m/compose :union (m/value #{}) fault)))))
   (doseq [x outcomes]
-    (is (= (= :has (m/kind universe x)) (= x (m/value universe)))))
+    (is (= (= :has (m/kind universe x)) (m/same? universe x (m/value universe))))
+    (is (= (= :failure (m/kind universe x)) (m/faulted? universe x))))
   (is (= #{0} (m/missing-fields universe (m/atom-value universe 0) 2)))
   (is (= #{1} (m/missing-fields universe (m/atom-value universe 1) 2)))
   (let [residual (m/compose :exclusion (m/atom-value universe 0) (m/atom-value universe 1))]
     (is (= #{0 1} (m/missing-fields universe residual 2)))))
+
+(deftest composition-is-order-independent-and-monotone
+  (let [rank #(cond (true? %) 2 (set? %) 1 :else 0)]
+    (doseq [op [:union :intersection] a outcomes b outcomes c (take-nth 5 outcomes)]
+      (is (m/same? universe (m/compose op a b) (m/compose op b a)))
+      (is (m/same? universe (m/compose op (m/compose op a b) c) (m/compose op a (m/compose op b c)))))
+    (doseq [op operators a outcomes b outcomes a' outcomes w universe
+            :when (<= (rank (m/at a w)) (rank (m/at a' w)))]
+      (is (<= (rank (m/at (m/compose op a b) w)) (rank (m/at (m/compose op a' b) w)))))))
 
 (def qualifier-cases
   (vec (for [v [(m/value universe) (m/value #{}) (m/atom-value universe 0) (m/fault :evaluator)]
@@ -40,7 +78,7 @@
         result (m/combine universe op x y)
         future (m/compose op (:value (at a later)) (:value (at b later)))]
     (or (not (and (:complete? result) (<= start later) (m/before? later (:end result))))
-        (= (:value result) future))))
+        (m/same? universe (:value result) future))))
 
 (deftest temporal-witness-certificates-cover-all-outcome-roles
   (doseq [op operators a qualifier-cases b qualifier-cases
@@ -57,6 +95,16 @@
     (is (nil? (:end union)))
     (is (m/publishable? union 1000)))
   (is (not (m/publishable? (assoc (m/evidence (m/value universe) nil) :complete? false) 0))))
+
+(deftest both-decisive-witnesses-keep-the-later-deadline
+  (let [grant (fn [end] (m/evidence (m/value universe) end))
+        denial (fn [end] (m/evidence (m/value #{}) end))]
+    (is (= 3 (:end (m/combine universe :union (grant 1) (grant 3)))
+           (:end (m/combine universe :union (grant 3) (grant 1)))))
+    (is (nil? (:end (m/combine universe :union (grant 1) (grant nil)))))
+    (is (= 3 (:end (m/combine universe :intersection (denial 3) (denial 1)))))
+    (is (= 3 (:end (m/combine universe :exclusion (denial 1) (grant 3)))))
+    (is (= 1 (:end (m/combine universe :union (grant 1) (denial 3)))))))
 
 (deftest publication-and-one-captured-time
   (let [identity [1 2 3 4 5]
@@ -152,8 +200,8 @@
         certificate (m/cursor-certificate [skipped-ban emitted] [lookahead] true)]
     (is (= {:end 100 :complete? true} certificate))
     (is (not (:complete? (m/cursor-certificate [emitted] [] false))))
-      (is (not (:complete? (m/cursor-certificate [emitted]
-                                                 [(assoc lookahead :complete? false)] true))))))
+    (is (not (:complete? (m/cursor-certificate [emitted]
+                                               [(assoc lookahead :complete? false)] true))))))
 
 (deftest recursive-certificate-follows-expiring-subtracting-base-evidence
   (doseq [mask (range 512)]
@@ -202,7 +250,10 @@
         result (m/fixed-point universe base rules 16)]
     ;; Both nodes have grounded grants, but recomputation alone swaps their
     ;; chosen deadlines on every iteration after membership has stabilized.
+    ;; Accumulation converges instead: a union of two decisive witnesses keeps
+    ;; the later deadline, so node 0, which also holds through node 1 and 3,
+    ;; is certified until 102 like node 1.
     (is (:complete? result))
     (is (= [(m/value universe) (m/value universe)]
            (mapv #(get-in result [:values % :value]) [0 1])))
-    (is (= [101 102] (mapv #(get-in result [:values % :end]) [0 1])))))
+    (is (= [102 102] (mapv #(get-in result [:values % :end]) [0 1])))))

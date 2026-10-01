@@ -1,8 +1,11 @@
 include "QualifiedTemporal.dfy"
 
+// Scope, basis and time admission for reusing qualified results. A Failure
+// (an outcome with a U world) is never accepted, so a reused result is always
+// Has, No or Conditional.
 module QualifiedReuse {
   import opened E = QualifiedEvidence
-  import opened T = QualifiedTemporal
+  import opened Temporal = QualifiedTemporal
 
   // These identities are collision-checked canonical values, not bare hashes.
   datatype Scope = Scope(source: nat, schema: nat, relations: seq<nat>, qualifiers: seq<nat>, context: seq<nat>, evaluator: seq<nat>, policy: nat, abi: seq<nat>, query: seq<nat>)
@@ -60,6 +63,11 @@ module QualifiedReuse {
 
   lemma ConditionalAliasIsRejected(universe: set<nat>, entry: Entry, scope: Scope, basis: nat, ancestors: set<nat>, time: int)
     requires Classify(universe, entry.evidence.value) == Conditional && entry.kind == Has
+    ensures !AcceptCache(universe, entry, scope, basis, ancestors, time)
+  {}
+
+  lemma FaultedEntryIsRejected(universe: set<nat>, entry: Entry, scope: Scope, basis: nat, ancestors: set<nat>, time: int)
+    requires Faulted(universe, entry.evidence.value)
     ensures !AcceptCache(universe, entry, scope, basis, ancestors, time)
   {}
 

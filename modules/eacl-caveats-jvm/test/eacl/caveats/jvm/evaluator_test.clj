@@ -173,6 +173,43 @@
       (is (= {:outcome :error :reason :missing-map-key} (check engine source parameters {"m" {}} {})))
       (is (= {:outcome :true} (check engine (str "(" source ") || true") parameters {"m" {}} {}))))))
 
+(deftest comprehensions-parse-once-and-fold-in-the-adapter
+  (let [engine (jvm/evaluator)
+        parameters {"inventory" [:list :string] "sensitive" [:list :string]
+                    "m" [:map :string :bool] "flag" :bool}
+        nested (definition/entity "nested" parameters
+                                  "flag || inventory.exists(x, sensitive.all(y, x != y) && !(x in sensitive))")
+        parses (atom 0)
+        make-program cel/make-program
+        check #(evaluator/evaluate engine nested % nil)]
+    (with-redefs [cel/make-program (fn [source] (swap! parses inc) (make-program source))]
+      (is (= {:outcome :true}
+             (check {"inventory" ["keys" "badge"] "sensitive" ["keys"] "flag" false "m" {}})))
+      (is (= 3 @parses) "the root and each comprehension's predicate are parsed once")
+      (is (= {:outcome :false}
+             (check {"inventory" (vec (repeat 64 "keys")) "sensitive" ["keys"] "flag" false "m" {}})))
+      (is (= {:outcome :true}
+             (check {"inventory" ["a"] "sensitive" [] "flag" false "m" {}})))
+      (is (= 3 @parses) "warm evaluation parses nothing, whatever the number of elements"))
+    (is (= {:outcome :conditional :missing-fields #{"inventory"}
+            :residual [:exists [:param "inventory"] "x"
+                       [:and [:all [:literal [:list :string] ["keys"]] "y" [:ne [:var "x"] [:var "y"]]]
+                        [:not [:in [:var "x"] [:literal [:list :string] ["keys"]]]]]]}
+           (check {"sensitive" ["keys"] "flag" false}))
+        "incomplete contexts use the portable evaluator")))
+
+(deftest comprehension-results-compose-with-cel-parser-operators
+  (let [engine (jvm/evaluator)
+        parameters {"xs" [:list :string] "m" [:map :string :bool] "flag" :bool}]
+    (doseq [[source context expected]
+            [["!xs.all(x, m[x])" {"xs" ["a"] "m" {} "flag" true} {:outcome :error :reason :missing-map-key}]
+             ["false && xs.all(x, m[x])" {"xs" ["a"] "m" {} "flag" true} {:outcome :false}]
+             ["xs.all(x, m[x]) || flag" {"xs" ["a"] "m" {} "flag" true} {:outcome :true}]
+             ["xs.exists(x, m[x]) == flag" {"xs" ["a"] "m" {"a" true} "flag" true} {:outcome :true}]
+             ["m.all(k, m[k]) != flag" {"xs" [] "m" {"a" true "b" false} "flag" false} {:outcome :false}]
+             ["xs.exists(xs, xs == \"a\")" {"xs" ["b" "a"] "m" {} "flag" true} {:outcome :true}]]]
+      (is (= expected (check engine source parameters context nil)) source))))
+
 (deftest registered-jvm-evaluator-satisfies-caveated-schema-admission
   (let [schema {:relations [{:eacl.relation/caveats [[:eacl.caveat/name "enabled"]]
                              :eacl.relation/allows-unqualified? false}]}]

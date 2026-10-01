@@ -1,0 +1,27 @@
+{:id :EACL-FORMAL-071
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "public-value/boolean-false-confused-with-absence"
+ :minimized-fixture "fixture.edn"
+ :impact :omission
+ :affected-versions
+ ["v8.0 pre-release before value-presence hardening"]
+ :affected-backends
+ [:shared :datomic :datahike :datalevin :datascript :third-party]
+ :root-cause
+ "Public validation admitted every non-nil identity and several request values, but later branches used host-language truthiness as a proxy for value presence. Boolean false was therefore a valid public identity at one boundary and an absent filter or cursor coordinate at another; explicit false execution controls were likewise defaulted or ignored."
+ :fix
+ "Use non-nil value presence for public IDs throughout filter resolution, cursor conversion, and backend identity resolution; reject explicit false evaluation, timeout, and cancellation controls with typed errors; cover the distinction in Dafny, portable mutation controls, and a real DataScript authorization/inspection/pagination regression."
+ :closing-evidence
+ ["PublicIdentityBoundary.TruthinessDropsAnAdmittedFalseIdentity"
+  "PublicIdentityBoundary.PresencePreservesEveryAdmittedIdentity"
+  "PublicRequestBoundary.TruthinessAcceptsExplicitFalseExecutionControl"
+  "PublicRequestBoundary.ClosedExecutionControlRejectsExplicitFalse"
+  "eacl.formal.executed-mutation-controls/false-public-identity-presence-killed?"
+  "eacl.formal.executed-mutation-controls/false-stable-edge-presence-killed?"
+  "eacl.formal.executed-mutation-controls/false-evaluation-control-killed?"
+  "eacl.formal.executed-mutation-controls/false-timeout-control-killed?"
+  "eacl.formal.executed-mutation-controls/false-cancellation-control-killed?"
+  "eacl.execution-test/invalid-controls-fail-during-normalization-test"
+  "eacl.datascript.contract-test/false-valued-public-identities-remain-present-across-inspection-test"]}

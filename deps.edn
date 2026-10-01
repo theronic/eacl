@@ -1,4 +1,5 @@
 {:paths ["modules/eacl/src"
+         "modules/eacl-caveats-portable/src"
          "modules/eacl-datomic/src"
          "modules/eacl-datascript/src"
          "modules/eacl-datahike/src"
@@ -27,10 +28,7 @@
         ;; (composite tuples derived + validated under :attribute-refs?)
         org.replikativ/datahike
         {:mvn/version "0.8.1759"
-         :exclusions [com.github.pkpkpk/cljs-cache]}
-
-        ;; Parsing
-        instaparse/instaparse {:mvn/version "1.5.0"}}
+         :exclusions [com.github.pkpkpk/cljs-cache]}}
  :aliases {:caveats-jvm
            {:extra-paths ["modules/eacl-caveats-jvm/src" "modules/eacl-caveats-jvm/test"]
             :extra-deps {com.exoscale/cel-parser {:mvn/version "0.1.8"}
@@ -50,6 +48,7 @@
             :extra-deps {org.clojure/clojurescript
                          {:mvn/version "1.12.42"}}}
            :dev {:extra-paths ["modules/eacl/test"
+                               "modules/eacl-caveats-portable/test"
                                "modules/eacl-datomic/test"
                                "modules/eacl-datascript/test"
                                "modules/eacl-datahike/test"]}
@@ -120,10 +119,16 @@
              org.clojure/data.json {:mvn/version "2.5.1"}
              slipset/deps-deploy {:mvn/version "0.2.5"}}
             :exec-fn eacl.build.release/deploy}
+           ;; The DataScript CLJS runner also compiles the portable evaluator's
+           ;; tests, which inline the JVM module's shared Caveat corpus.
            :cljs-test {:extra-paths ["modules/eacl/test"
+                                     "modules/eacl-caveats-portable/test"
+                                     "modules/eacl-caveats-jvm/test"
                                      "modules/eacl-datascript/test"]
                        :extra-deps {org.clojure/clojurescript {:mvn/version "1.12.42"}}}
            :datascript-cljs-test {:extra-paths ["modules/eacl/test"
+                                                "modules/eacl-caveats-portable/test"
+                                                "modules/eacl-caveats-jvm/test"
                                                 "modules/eacl-datascript/test"]
                                   :extra-deps {org.clojure/clojurescript {:mvn/version "1.12.42"}}
                                   :main-opts ["-m" "cljs.main"
@@ -132,6 +137,7 @@
                                               "-o" "target/datascript-cljs-test.js"
                                               "-c" "eacl.datascript.cljs-test-runner"]}
            :test {:extra-paths ["modules/eacl/test"
+                                "modules/eacl-caveats-portable/test"
                                 "modules/eacl-datomic/test"
                                 "modules/eacl-datascript/test"
                                 "modules/eacl-datahike/test"
@@ -153,6 +159,7 @@
                                      "modules/eacl-datahike/test"
                                      "src-build"]}}
            :nrepl {:extra-paths ["modules/eacl/test"
+                                 "modules/eacl-caveats-portable/test"
                                  "modules/eacl-datomic/test"
                                  "modules/eacl-datascript/test"
                                  "modules/eacl-datahike/test"]

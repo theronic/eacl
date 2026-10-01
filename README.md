@@ -227,6 +227,7 @@ This README is too long & too technical, so I am working to simplify it and brea
     * [Creating Relationships](#creating-relationships)
     * [Permission Checks](#permission-checks)
     * [Arrow Permissions](#arrow-permissions)
+    * [Wildcard Subjects](#wildcard-subjects)
   * [EACL ID Configuration](#eacl-id-configuration)
   * [Caching](#caching)
     * [Cache Coherence](#cache-coherence)
@@ -812,6 +813,9 @@ where `updates` is a collection of `RelationshipUpdate` records:
   - or, maps `{:operation op :relationship rel}`, and
   - `operation` is one of `:create`, `:touch` or `:delete`.
   - A bare `[operation relationship]` vector is rejected as an unsupported update.
+  - Mutation envelopes are closed: unknown keys, nil/non-sequential updates,
+    and a single update map passed to a plural API are rejected rather than
+    treated as an empty successful write.
 
 - Schema names are validated: unknown definitions, relations or bad subject types will fail with `:eacl/unknown-definition` / `:eacl/unknown-relation-or-permission`.
 
@@ -823,8 +827,29 @@ Relationship Conflicts?
   - A Datahike remote writer cannot transport a transaction function and keeps the plan-time check only
   - `:touch` is idempotent. Repeating one operation for the same relationship inside a batch has the same outcome as submitting it once (`:create` still conflicts when the relationship existed before the batch); mixing different operations for the same resolved relationship throws `:eacl/invalid-relationship-update-batch` before submission.
 - `(eacl/create-relationships! acl relationships)` simply calls `write-relationships!` with `:create` operation.
+- The map form of `write-relationship!` is closed too: a misspelled qualifier
+  such as `:valid-until-mss` is rejected instead of creating a relationship
+  without the intended expiry.
 - `(eacl/delete-relationships! acl relationships)` simply calls `write-relationships!` with `:delete` operation.
+- `delete-relationships!` also accepts a `read-relationships` page containing
+  sequential `:data`; one bare `Relationship` map/record is rejected so a
+  revocation cannot silently become a no-op.
 - `(eacl/delete-object! acl object) => {:zed/token "eacl_z4_...", :retracted-datoms n}` is a convenience helper that removes every relationship touching `object`, in both directions. `n` counts relationship datoms actually retracted by the committed transactions. On Datomic the retractions are committed in batches of 1,000 (a concurrent reader can observe a partially deleted object between batches); on DataScript and Datahike they are one atomic transaction. Consumers are expected to delete relationships before retracting a secured entity — see [Deleting a Secured Entity](#deleting-a-secured-entity).
+- `delete-object!` rejects malformed objects, including a missing or nil ID,
+  rather than returning a successful zero-retraction cleanup response.
+- `(eacl/delete-object-by-eid! acl native-eid)` is the explicit ghost-repair form for an entity whose public identity has already been retracted. Numeric IDs passed to `delete-object!` remain public IDs and are never reinterpreted as backend entity IDs.
+- Public request maps are closed. Unknown fields—including misspelled
+  consistency controls—raise `:eacl/invalid-request` before snapshot selection
+  or writer dispatch.
+- Pagination is stable-basis only. `:page/basis :stable` is accepted;
+  reserved or malformed alternatives such as `:live` are rejected instead of
+  being silently ignored.
+- The public schema writer does not expose the lower-level
+  `:allow-empty-schema?` escape hatch. Intentional low-level schema wipes must
+  use a backend schema API and its cache-recovery obligations.
+- Snapshot callers may choose a documented consistency mode, but cannot
+  supply protocol-level runtime options. Trusted identity codecs, clocks,
+  caches, and security configuration always come from `make-client`.
 
 All list APIs use the v8 Relay pagination contract:
 
@@ -832,6 +857,8 @@ All list APIs use the v8 Relay pagination contract:
 - Backward: pass `:last` and optionally `:before`.
 - Responses include `:page-info` with `:start-cursor`, `:end-cursor`, `:has-next-page?`, and `:has-previous-page?`.
 - Lookup cursors paginate in the sealed plan's stable first-discovery order; a page size change is rejected as an incompatible cursor rather than silently re-windowed.
+- Lookups check the page keys before they decode a cursor. An invalid combination, such as `:first` with `:before`, fails with `:eacl.pagination/invalid-page-request`, and the error data contains the cursor strings you passed, never their decrypted contents.
+- Cursors are accepted only in the exact spelling EACL issued; any changed character makes a cursor invalid.
 
 ### Aggregate authorization
 
@@ -922,6 +949,23 @@ arrow boundaries remain visible; expansion is shallow in the SpiceDB sense,
 so leaves contain subjects found by direct relation scans rather than a
 flattened effective-membership set. To decide whether a subject has the
 permission, use `can?`; do not infer authorization by flattening a tree.
+
+Caveated and expiring Relationships appear in the tree like plain ones. The
+leaf subject, or arrow child node, that a qualified Relationship reaches
+carries its `:caveat`, `:caveat-context` (omitted when empty) and
+`:valid-until-ms`, exactly as `read-relationships` returns them:
+
+```clojure
+{:expanded-object   {:type :document :id "readme"}
+ :expanded-relation :viewer
+ :leaf {:subjects [{:type :user :id "alice" :valid-until-ms 1767225600000}
+                   {:type :user :id "bob" :caveat "on_days"
+                    :caveat-context {"days" ["tuesday"]}}]}}
+```
+
+Expansion never evaluates a Caveat or reads the clock, so an expired
+Relationship stays listed with its deadline and the tree is the same at any
+evaluation time.
 
 Child and subject vector order is non-semantic and may differ by backend.
 Empty branches and duplicate paths are preserved. Compare trees as annotated
@@ -1136,7 +1180,7 @@ com.github.theronic/cljs-cache
 
 ## EACL Schema
 
-EACL parses a documented subset of the SpiceDB schema DSL to define your authorization model. Use `eacl/write-schema!` to parse, validate, and transact your schema:
+EACL reads the SpiceDB v1.56.0 schema language to define your authorization model ([SpiceDB schema compatibility](docs/spicedb-schema-compatibility.md)). Use `eacl/write-schema!` to parse, validate, and transact your schema:
 
 ```clojure
 (eacl/write-schema! acl
@@ -1159,11 +1203,12 @@ EACL parses a documented subset of the SpiceDB schema DSL to define your authori
 ### Schema Validation
 
 `write-schema!` validates your schema and provides informative error messages. An invalid schema throws and nothing is transacted:
-- **Parse validation**: unparseable schema strings and duplicate `definition`/relation declarations throw. `//` and `/* */` comments are supported.
-- **Reference validation**: all relations and permissions must reference valid definitions. Arrow targets must exist on **every** subject type of the source relation.
-- **Orphan protection**: relations with existing relationships cannot be deleted.
+- **SpiceDB validation**: a schema SpiceDB v1.56.0 rejects is rejected with a typed error: syntax (`:eacl.schema/parse-error` with `:line`/`:column`), names (`:eacl.schema/invalid-name`), duplicate declarations, references, wildcard rules, caveat definitions and permission alias cycles. `//` and `/* */` comments are supported.
+- **Reference validation**: all relations and permissions must reference valid definitions. EACL also requires an arrow's target on **every** subject type of the source relation; SpiceDB does not, so such a schema is `:eacl.schema/unsupported-feature`.
+- **Orphan protection**: relations with existing relationships cannot be deleted, whether those relationships are plain, expiring (expired ones included) or Caveated. The error is `:eacl.schema/relation-in-use` with the relation and the `:count` of retained relationships.
 - **Empty-schema guard**: the public `eacl/write-schema!` rejects replacing a non-empty schema with zero definitions. The backend schema namespaces expose a lower-level `{:allow-empty-schema? true}` option for an intentional wipe; direct use must also follow the cache-recovery rules because it bypasses the EACL client.
-- **Unsupported feature detection**: rejects SpiceDB features unsupported by EACL (see [Limitations](#limitations-deficiencies--gotchas))
+- **Unsupported feature detection**: a valid SpiceDB schema that uses a feature EACL does not support throws `:eacl.schema/unsupported-feature` naming it (see [Limitations](#limitations-deficiencies--gotchas) and [SpiceDB schema compatibility](docs/spicedb-schema-compatibility.md))
+- **Declaration errors**: definitions and Caveats are read in source order, and the first invalid or duplicate declaration determines the error.
 
 ### Schema Updates
 
@@ -1287,6 +1332,114 @@ Now you can use `can?` to check those arrow permissions:
 Internally, EACL stores relation and permission definitions as entities and
 stores each relationship in both directions for efficient traversal.
 
+### Wildcard Subjects
+
+A relation can grant every subject of a type with SpiceDB's wildcard, `user:*`,
+beside or instead of concrete subjects, and a wildcard branch can name a
+[Caveat](docs/caveats.md):
+
+```clojure
+(eacl/write-schema! acl
+  "caveat nothing_sensitive(carrying list<string>) {
+     !(\"launch-codes\" in carrying) && !(\"customer-list\" in carrying)
+   }
+
+   definition user {}
+
+   definition document {
+     relation viewer: user | user:*
+     relation banned: user
+     permission view = viewer - banned
+   }
+
+   definition area {
+     relation anyone: user:* with nothing_sensitive
+     permission exit = anyone
+   }")
+```
+
+A relationship whose subject ID is `"*"` gives every user its relation:
+
+```clojure
+(eacl/create-relationships! acl
+  [(eacl/->Relationship (->user "*") :viewer (->document "handbook"))
+   (eacl/->Relationship (->user "bob") :banned (->document "handbook"))])
+
+(eacl/can? acl (->user "alice") :view (->document "handbook")) ; => true
+(eacl/can? acl (->user "bob") :view (->document "handbook"))   ; => false
+```
+
+Checks, `lookup-resources` and `count-resources` give each subject what its
+type's wildcard holds, through union, intersection, exclusion, arrows and
+recursion. `lookup-subjects` returns the wildcard as the subject `"*"`. Where
+intersection or exclusion withholds the permission from some subjects,
+`:excluded-subjects` lists them:
+
+```clojure
+(eacl/lookup-subjects acl
+  {:resource (->document "handbook") :permission :view :subject/type :user})
+;; :data [{:type :user :id "*" :excluded-subjects [{:type :user :id "bob"}]}]
+```
+
+Read a subject lookup as SpiceDB's: a subject has the permission through its
+own entry or, unless `*` excludes it, through `*`. EACL may also list a
+granted subject that has a relationship of its own although `*` covers it.
+`count-subjects` counts entries, so `*` counts once.
+
+A page containing `*` may need to inspect every subject reachable through
+the permission's relations to compute its exclusions, even with a small page
+size. Declaring wildcard support alone does not trigger that scan: EACL first
+checks whether the positive permission paths reach a stored wildcard tuple.
+
+A Caveated wildcard branch requires its Caveat on every wildcard
+relationship, and the Caveat is evaluated for each subject:
+
+```clojure
+(eacl/write-relationships! acl
+  [{:operation :touch
+    :relationship (assoc (eacl/->Relationship (->user "*") :anyone (->area "vault"))
+                         :caveat "nothing_sensitive")}])
+
+(eacl/check-permission acl
+  {:subject (->user "alice") :permission :exit :resource (->area "vault")
+   :caveat-context {"carrying" ["lunch"]}})
+;; includes {:allowed? true :permissionship :has-permission}
+```
+
+As in SpiceDB:
+
+- A relation that holds a wildcard cannot be the left side of an arrow
+  (`parent->view` with `relation parent: folder | folder:*`); an arrow can
+  lead to a relation or permission that holds one (`folder->viewer`).
+- A write fails with `:eacl/unknown-relation-or-permission` when the relation
+  does not declare the subject's form (`:reason :wildcard-subject-not-allowed`
+  or `:concrete-subject-not-allowed`). As for a concrete branch, a wildcard
+  relationship without the Caveat that `user:* with c` requires fails with
+  `:reason :caveat-not-allowed`.
+- The object ID `"*"` is reserved. It means the wildcard in the subject of
+  relationship writes, reads and filters, and in `delete-object!`, which
+  removes every relationship whose subject is that type's wildcard. It is
+  rejected with `:eacl/wildcard-not-allowed` as a resource ID, and as the
+  subject of `can?`, `check-permission(s)`, `lookup-resources` and
+  `count-resources`.
+
+The reserved `"*"` identity bypasses application ID codecs. Custom codecs
+receive concrete objects only; they do not need to handle EACL's private
+wildcard entity. An application ID cannot alias that entity.
+
+Unlike SpiceDB, a wildcard grants the objects that exist: an ID that names no
+object is still [unknown](#unknown-object-ids).
+
+A wildcard branch is stored as two attributes of the Relation entity, and all
+wildcard relationships share one EACL-owned subject entity; relationship
+storage is unchanged. EACL installs the attributes on Datomic and Datahike
+when a schema first declares a wildcard, and on Datalevin when a client opens
+the connection; a DataScript connection needs EACL's current schema
+(`eacl.datascript.core/create-conn`). Upgrade every serving Peer before
+writing a schema that uses wildcards: an older Peer rejects a relation that
+only allows the wildcard, but would treat the wildcard as an ordinary subject
+elsewhere.
+
 ## EACL ID Configuration
 
 SpiceDB uses strings for subject and resource IDs. Internally, EACL uses backend-native entity IDs, but you can configure EACL to convert internal IDs to external, and vice versa.
@@ -1328,10 +1481,22 @@ ceilings:
 
 The profile applies to schema reads and writes performed by that client. It is
 also accepted by direct schema writers and the explicit Datomic v7-to-v8
-permission migration. Two Peers may deliberately use different profiles: a
-stricter Peer can reject a schema accepted by a looser Peer, but schemas
-accepted by both have identical permission meaning. The profile is never
-written to the database and never coordinates Peers.
+permission migration. A permission whose canonical payload is larger than
+`:maximum-expression-bytes` fails with `:eacl.schema/expression-limit
+{:dimension :encoded-byte-size :maximum m :actual n}`, however large it is.
+`:maximum-schema-source-bytes` (1,048,576 by default, also its ceiling) bounds
+the schema text in UTF-8 bytes and the work of validating it: expanding
+partials may visit at most a quarter of that many statements, and `use
+typechecking` at most that many relations and permissions. Beyond either bound
+the schema fails with `:eacl.schema/expression-limit` and `:dimension
+:partial-expansion` or `:typechecking`. Like the other expression limits and
+the parser's 256-level nesting limit, these are resource limits, outside the
+SpiceDB compatibility rule
+([resource limits](docs/spicedb-schema-compatibility.md#resource-limits)).
+Two Peers may deliberately use different profiles: a stricter Peer can reject
+a schema accepted by a looser Peer, but schemas accepted by both have identical
+permission meaning. The profile is never written to the database and never
+coordinates Peers.
 
 All backends issue non-expiring cursors by default. Configure a positive
 `:cursor-ttl-seconds` only when the application deliberately wants a maximum
@@ -1419,7 +1584,10 @@ so another request can ask to see that write.
 | `at-least-as-fresh` | Read a version that includes an earlier write. |
 | `at-exact-snapshot` | Read the exact historical version named by a token. |
 
-Treat tokens as opaque strings. A token applies only to its original database
+Treat tokens as opaque strings. EACL accepts a token only in the exact spelling
+it issued, so you can compare, cache, or log tokens by their string; any other
+string, even one that decodes to the same contents, fails with
+`:eacl/invalid-zed-token`. A token applies only to its original database
 and lifecycle. For tokens returned by a browser, the server should normally
 choose `at-least-as-fresh`; letting a caller select old authorization state
 requires a separate application policy.
@@ -1440,6 +1608,10 @@ entities:
 
 - **Reads** (`can?`, `lookup-resources`, `lookup-subjects`, `count-resources`, `count-subjects`, `read-relationships`) treat unknown IDs as matching nothing: `can?` returns `false`, lookups and reads return empty pages.
 - **Writes** (`write-relationships!` and friends) throw `ex-info {:type :eacl/unknown-object, :object {:type … :id …}}` — a relationship to a nonexistent entity is unsatisfiable, and failing loudly beats minting ghost entities or raw Datomic errors.
+
+The ID `"*"` never names an object: it is the [wildcard subject](#wildcard-subjects).
+A wildcard grants the objects that exist, so `can?` is still `false` for an
+unknown subject ID.
 
 If a lookup result has no external ID in the selected database,
 `lookup-resources` and `lookup-subjects` raise
@@ -1528,11 +1700,39 @@ adapter guides:
 
 ## Schema Syntax
 
-EACL parses a documented subset of the SpiceDB schema DSL. Use
+EACL reads the schema language of SpiceDB v1.56.0. Every schema SpiceDB
+accepts is accepted by EACL, or rejected with `:eacl.schema/unsupported-feature`
+naming a feature EACL cannot serve; every schema SpiceDB rejects is rejected.
+A corpus of 4,359 schemas with SpiceDB's verdicts checks this on every test
+run ([SpiceDB schema compatibility](docs/spicedb-schema-compatibility.md)).
+Resource limits are outside this rule, and so is one deliberate difference
+(see [Differences from SpiceDB](#differences-from-spicedb)). Use
 `eacl/write-schema!` to define your schema.
-EACL's parser requires each `relation` or `permission` declaration to end at a
-newline; put the next declaration and the definition's closing brace on a later
-line. Empty definitions may still use the compact `definition user {}` form.
+
+- A statement ends at `;` or at a line end after a name, keyword, `)`, `}`
+  or `*`. After an operator such as `+`, `&`, `-`, `->` or `|` it continues on
+  the next line, so `permission view = viewer +⏎ editor` is one permission.
+  A line that starts with `+` is an error, and so is `definition doc⏎{`.
+- Names follow SpiceDB: definitions, relations and permissions have 3 to 64
+  characters (lowercase letters, digits and `_`), start with a letter and do
+  not end with `_`. A keyword glued to a name (`relationviewer`) is one name.
+- Partials (`use partial`), type annotations (`use typechecking`),
+  `with expiration` (`use expiration`), `self` (`use self`: `permission view =
+  viewer + self` grants the resource itself), `rel.any(target)` and `user#...`
+  are supported. Without `use self`, `self` is an ordinary name.
+
+```zed
+use expiration
+
+definition user {}
+
+definition doc {
+  relation viewer: user | user with expiration
+  relation editor: user; relation owner: user
+  permission view = viewer + editor +
+    owner
+}
+```
 
 ```clojure
 (eacl/write-schema! acl
@@ -1588,9 +1788,36 @@ release's limitation for new entities and tempids.
 
 ## Limitations, Deficiencies & Gotchas:
 
+### SpiceDB schema features EACL does not support
+
+EACL accepts a SpiceDB v1.56.0 schema or rejects it with
+`:eacl.schema/unsupported-feature` naming the feature. Of the 1,746 schemas
+SpiceDB accepts in EACL's compatibility corpus, EACL accepts 1,002 and names
+the other 744 unsupported ([SpiceDB schema compatibility](docs/spicedb-schema-compatibility.md)).
+Wildcard subjects (`user:*`) and CEL `exists`/`all` are supported in this
+release; `use self` is supported (`permission view = viewer + self`).
+
+| Feature | Example | EACL |
+| --- | --- | --- |
+| Subject relations (usersets) | `relation viewer: group#member` | unsupported; planned for v8.1 |
+| `nil` | `permission none = nil` | unsupported |
+| Intersection arrows | `permission view = parent.all(view)` | unsupported; `.any()` works as `->` |
+| CEL types | `caveat c(n uint) { n > 1u }` | unsupported: `uint`, `double`, `bytes`, `duration`, `ipaddress`, `any`, nested containers |
+| CEL arithmetic and unary minus | `caveat c(n int) { n + 1 > 2 }` | unsupported |
+| CEL list and map literals, `null` | `caveat c(s string) { s in ["a", "b"] }` | unsupported |
+| CEL ordering of strings and Booleans, equality of lists and maps | `caveat c(s string) { s < "m" }` | unsupported |
+| CEL indexing, functions and methods | `caveat c(xs list<int>) { xs[0] == 1 }` | unsupported |
+| CEL escapes and literals EACL does not read, integers beyond ±2^53, names and sizes beyond EACL's profile | `caveat c(n int) { n == 9007199254740993 }` | unsupported |
+| Namespaced types and caveat names | `definition docs/document {}`, `caveat org/check(...)` | unsupported |
+| Exclusion through recursion | `permission view = viewer - view` | unsupported |
+| Arrows to a target some subject type lacks, or to a relation on some types and a permission on others | `permission view = parent->view` where one of `parent`'s types has no `view` | unsupported |
+| A relation named `self` as an arrow's base (without `use self`) | `permission view = self->view` | unsupported |
+
+### Other limitations
+
 - Caveats use a bounded CEL subset. JVM clients need the optional
-  `eacl-caveats-jvm` evaluator; ClojureScript clients must supply a compatible
-  evaluator. See [supported expressions and limits](docs/caveats.md).
+  `eacl-caveats-jvm` evaluator; ClojureScript clients need the optional
+  `eacl-caveats-portable` evaluator. See [supported expressions and limits](docs/caveats.md).
 - When relationships expire, stale cursors are invalidated and you'll get an
   `:eacl.pagination/restart-required` error. Start the lookup again without the
   expired cursor. When using an explicit EACL snapshot, including one selected
@@ -1606,7 +1833,12 @@ release's limitation for new entities and tempids.
   replacement require quiescing affected traffic, completing the operation,
   rotating the shared source lifecycle and affected clients/caches, and then
   resuming with deliberate token/cursor key-version policy.
-- SpiceDB `subject#relation` subject sets are not supported. Model group membership with explicit group Relationships and arrow permissions when that expresses the required semantics.
+- SpiceDB `subject#relation` subject sets are not supported. Public operations
+  reject any object with a non-nil `:relation` as
+  `:eacl/unsupported-subject-relation`; EACL never silently treats it as the
+  base `type:id` object. Model group membership with explicit group
+  Relationships and arrow permissions when that expresses the required
+  semantics.
 - *Expansion is structural, not a membership proof:* permission trees preserve
   relation, permission, union, intersection, directed exclusion, and arrow
   boundaries. Use `can?` for an authorization decision.
@@ -1654,9 +1886,22 @@ but it is not a byte-for-byte or operational clone:
   not have direct SpiceDB API equivalents.
 - V8 supports [Caveats and expiring Relationships](docs/caveats.md), including
   conditional results and an exclusive UTC-millisecond expiry. Its bounded CEL
-  profile is a subset of SpiceDB's expression language; wildcard subjects and
-  subject relations remain unsupported. Qualified activation requires upgrading
-  every serving Peer first.
+  profile is a subset of SpiceDB's expression language; subject relations
+  remain unsupported. Qualified activation requires upgrading every serving
+  Peer first.
+- [Wildcard subjects](#wildcard-subjects) grant the objects that exist; SpiceDB
+  grants any subject ID. `lookup-subjects` may list a granted subject that has
+  a relationship of its own beside `*`, where SpiceDB leaves it to `*`. A
+  subject that is only conditionally excluded from `*` is excluded and also
+  returned as its own conditional entry under `:result-policy :detailed`;
+  SpiceDB returns it as a conditional exclusion. Default (definite) lookups
+  omit a subject that only its own conditional relationship and a conditional
+  wildcard together grant, as they omit any conditional result.
+- A Caveat or qualifier that faults at evaluation is an *unknown*, composed with
+  strong-Kleene logic: a definite grant or denial beside a faulting branch
+  decides, and answers do not depend on evaluation order. A request context
+  value that no reachable Caveat's declared type admits is rejected before
+  evaluation. See [Faults](docs/caveats.md#faults).
 - EACL evaluates relationship cycles as a fixed point and has no separate
   dispatch-depth limit for checks, lookups, and counts. These operations remain
   subject to configured traversal work limits. SpiceDB uses a configurable
@@ -1664,11 +1909,29 @@ but it is not a byte-for-byte or operational clone:
   error for deep or cyclic data, so the two systems can differ on those graphs.
   Only `expand-permission-tree` refuses cycles (`:eacl.permission-tree/cycle-detected`)
   and depth beyond `:permission-tree-limits` (`:max-depth 50` by default).
-- Object identifiers are arbitrary non-empty strings and schema names follow
-  the parser's grammar rather than SpiceDB's exact identifier and name
-  grammars. A schema or dataset that must also load into SpiceDB should follow
-  SpiceDB's stricter identifier and schema-name rules rather than relying on
-  EACL's broader parser.
+- Schemas follow SpiceDB's language and name rules exactly
+  ([SpiceDB schema compatibility](docs/spicedb-schema-compatibility.md)).
+  Apart from resource limits and the transitive-wildcard difference below,
+  EACL rejects a valid SpiceDB schema only with `:eacl.schema/unsupported-feature`
+  ([Limitations](#spicedb-schema-features-eacl-does-not-support)): subject
+  relations, `nil`, `.all()`, prefixed names like `org/user`, arrows whose
+  target is missing on some subject type, recursion through an exclusion, a
+  relation named `self` as an arrow's base, and caveats outside EACL's CEL
+  profile. `use self` is supported. `with
+  expiration` is accepted but not enforced, because EACL permits expiring
+  relationships on every relation. Object identifiers are arbitrary non-empty
+  strings; a dataset that must also load into SpiceDB should follow SpiceDB's
+  object-ID rules.
+- SpiceDB v1.56.0 caches its transitive-wildcard check by relation name across
+  definitions, so it accepts some schemas whose subject relation reaches a
+  wildcard (`group#member` where `member` is `user:*`), on every write or only
+  on some. EACL deliberately keeps the check per definition and relation and
+  rejects them with `:eacl.schema/expression-resolution-failed`
+  ([details](docs/spicedb-schema-compatibility.md#deliberate-difference-transitive-wildcards)).
+- SpiceDB v1.56.0's LookupSubjects returns a `self` permission's resource id
+  under any requested subject type (`doc:1#view` lists `user:1`), which its
+  CheckPermission denies. EACL returns the self subject only when the subject
+  type is the resource type, as CheckPermission answers.
 - A relation name is accepted only in the `:permission` slot of
   `expand-permission-tree`; `can?`, `check-permission`, the lookups and the
   counts require a permission (SpiceDB accepts either).

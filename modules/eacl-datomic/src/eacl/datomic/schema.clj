@@ -18,7 +18,8 @@
             [eacl.schema.expression-resolver :as expression-resolver]
             [eacl.schema.model :as model]
             [eacl.schema.relation-allowance :as relation-allowance]
-            [eacl.schema.replacement-plan :as replacement-plan]))
+            [eacl.schema.replacement-plan :as replacement-plan]
+            [eacl.schema.wildcard :as wildcard]))
 
 ; should these Malli specs be in a separate namespace, e.g. specs?
 ; might be confused for Datomic fn's like Relation / Permission in impl. base.
@@ -442,7 +443,10 @@
                          :eacl.relation/resource-type :eacl.relation/relation-name]
                   (d/entid db :eacl.relation/caveats)
                   (into [:eacl.relation/allows-unqualified?
-                         {:eacl.relation/caveats [:eacl.caveat/name]}]))]
+                         {:eacl.relation/caveats [:eacl.caveat/name]}])
+                  (d/entid db wildcard/unqualified-attribute)
+                  (into [wildcard/unqualified-attribute
+                         {wildcard/caveats-attribute [:eacl.caveat/name]}]))]
     (mapv relation-allowance/canonicalize
           (d/q '[:find [(pull ?relation pattern) ...]
                  :in $ pattern
@@ -748,6 +752,16 @@
                :existing
                {:relations (count (:relations existing-schema))
                 :permissions (count (:permissions existing-schema))}})))
+        wildcards? (wildcard/schema-uses-wildcards? (:relations new-schema-map))
+        _ (when (and wildcards?
+                     (not (every? #(d/entid db %) wildcard/attributes)))
+            (throw
+             (ex-info
+              "Datomic database lacks the EACL wildcard Relation attributes; write the schema through eacl/write-schema! or run eacl.datomic.schema/install!."
+              {:type :eacl.schema/wildcard-attributes-missing
+               :eacl/error :eacl.schema/wildcard-attributes-missing
+               :backend :datomic
+               :attributes (vec (sort wildcard/attributes))})))
         deltas (compare-schema existing-schema new-schema-map)
         _ (relation-allowance/validate-existing! (:relations deltas) #(stored-relation-caveats db %))
         semantic
@@ -766,12 +780,14 @@
         caveat-addition-entities
         (mapv #(assoc % :db/id (d/tempid :db.part/user)) (:additions caveats))
         caveat-refs (into {} (map (juxt :eacl.caveat/name :db/id)) caveat-addition-entities)
+        caveat-ref (fn [refs] (mapv (fn [[_ name :as ref]] (get caveat-refs name ref)) refs))
         relation-addition-entities
         (mapv (fn [relation]
                 (cond-> (assoc relation :db/id (d/tempid :db.part/user))
                   (contains? relation :eacl.relation/caveats)
-                  (update :eacl.relation/caveats
-                          #(mapv (fn [[_ name :as ref]] (get caveat-refs name ref)) %))))
+                  (update :eacl.relation/caveats caveat-ref)
+                  (contains? relation wildcard/caveats-attribute)
+                  (update wildcard/caveats-attribute caveat-ref)))
               (:additions relations))
         relation-initial-stamps
         (mapv (fn [relation]
@@ -790,6 +806,10 @@
         tx-data
         (vec
          (concat
+          ;; The EACL-owned wildcard subject exists before any wildcard
+          ;; relationship can reference it; the upsert is idempotent.
+          (when wildcards?
+            [(assoc wildcard/entity :db/id (d/tempid :db.part/user))])
           caveat-addition-entities
           (relation-allowance/attribute-retractions relations)
           relation-addition-entities
@@ -869,6 +889,14 @@
   ;; created before per-relation stamps picks it up on its next valid schema
   ;; write rather than silently running without result caching.
   (ensure-relation-version-history! conn true)
+  ;; A database installed before wildcard support gains the two additive
+  ;; Relation attributes on its first wildcard schema write.
+  (when (wildcard/schema-uses-wildcards? (:relations new-schema-map))
+    (let [db (d/db conn)
+          missing (filterv #(nil? (d/entid db (:db/ident %)))
+                           caveat-schema/wildcard-attribute-schema)]
+      (when (seq missing)
+        @(d/transact conn missing))))
   (let [db (d/db conn)
         missing (cond-> []
                   (not (d/entid db :eacl/schema-version))

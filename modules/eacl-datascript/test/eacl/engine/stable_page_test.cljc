@@ -351,7 +351,10 @@
   (doseq [direction [:after :before]
           [token expected] [["eacl_sd1.obsolete" :eacl.page/cursor-upgrade-required]
                             [false :eacl.page/invalid-cursor]
-                            [{} :eacl.page/invalid-cursor]]]
+                            [{} :eacl.page/invalid-cursor]
+                            [(str page/token-prefix
+                                  (apply str (repeat (inc page/maximum-token-size) "A")))
+                             :eacl.page/invalid-cursor]]]
     (let [calls (atom 0)
           error (with-redefs [backend/invoke (fn [& _] (swap! calls inc))]
                   (try (page/page {direction token}) nil
@@ -359,6 +362,49 @@
                          (:eacl/error (ex-data e)))))]
       (is (= expected error))
       (is (zero? @calls)))))
+
+(deftest standalone-page-rejects-ambiguous-and-invalid-page-input-before-adapter-work
+  (doseq [request [{:after "eacl_sd2.a.b" :before "eacl_sd2.a.b" :page-size 1}
+                   {:page-size 0}
+                   {:page-size -1}
+                   {:page-size 1.5}]]
+    (let [calls (atom 0)
+          failure (with-redefs [backend/invoke (fn [& _] (swap! calls inc))]
+                    (try (page/page request) nil
+                         (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo) e
+                           (ex-data e))))]
+      (is (contains? #{:eacl.page/invalid-cursor :eacl.page/invalid-page-size}
+                     (:eacl/error failure)))
+      (is (zero? @calls)))))
+
+(deftest standalone-token-expiry-is-exclusive
+  (let [env (seeded :explorer-acyclic)
+        options (base-options env {:page-size 1 :token-ttl-seconds 1})
+        first-page (with-redefs [page/now-seconds (constantly 100)]
+                     (page/page options))
+        cursor (get-in first-page [:page-info :end-cursor])]
+    (is (seq (:data (with-redefs [page/now-seconds (constantly 100)]
+                      (page/page (assoc options :after cursor))))))
+    (is (= :eacl.page/expired-cursor
+           (:eacl/error
+            (try (with-redefs [page/now-seconds (constantly 101)]
+                   (page/page (assoc options :after cursor)))
+                 nil
+                 (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo) e
+                   (ex-data e))))))))
+
+(deftest authenticated-standalone-token-requires-exact-positive-edge-shape
+  (let [env (seeded :explorer-acyclic)
+        options (base-options env {:page-size 1})
+        binding (page/execution-binding options)
+        error-of (fn [token]
+                   (try (page/page (assoc options :after token)) nil
+                        (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo) e
+                          (:eacl/error (ex-data e)))))]
+    (is (= :eacl.page/invalid-cursor
+           (error-of (page/edge-token options binding 0 "alice"))))
+    (is (= :eacl.page/invalid-cursor
+           (error-of (page/edge-token options (assoc binding :unexpected true) 1 "alice"))))))
 
 (deftest token-rejection-test
   (let [env (seeded :folder-chain)

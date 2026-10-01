@@ -4,7 +4,10 @@
             [eacl.caveats.publication-batch-contract :as batch]
             [eacl.caveats.public-write-contract :as public]
             [eacl.caveats.schema-allowance-contract :as allowance]
+            [eacl.caveats.relation-removal-contract :as removal]
             [eacl.caveats.inspection-contract :as inspection]
+            [eacl.caveats.partial-scan-contract :as partial-scan]
+            [eacl.caveats.permission-tree-contract :as permission-tree]
             [eacl.caveats.deletion-contract :as deletion]
             [eacl.caveats.cache-trace-contract :as cache-trace]
             [eacl.authorization.qualification-test :as fixtures]
@@ -59,6 +62,30 @@
                           :writer #(qualifiers/writer conn) :entid d/entid :now now})
       (finally (d/release conn) (d/delete-database uri)))))
 
+(deftest partial-relationship-walks-over-qualified-rows-are-total-and-terminate
+  (let [uri (str "datomic:mem://partial-scan-" (random-uuid))
+        _ (d/create-database uri)
+        conn (d/connect uri)
+        now (atom 1000)]
+    (try
+      (schema/install! conn)
+      (partial-scan/check! {:client (api/make-client conn {:clock #(deref now)
+                                                           :caveat-evaluator (fixtures/portable-evaluator (atom 0))})
+                            :writer #(qualifiers/writer conn) :now now})
+      (finally (d/release conn) (d/delete-database uri)))))
+
+(deftest permission-trees-list-qualified-relationships-without-evaluating-them
+  (let [uri (str "datomic:mem://permission-tree-" (random-uuid))
+        _ (d/create-database uri)
+        conn (d/connect uri)
+        now (atom 1000)]
+    (try
+      (schema/install! conn)
+      (permission-tree/check! {:client (api/make-client conn {:clock #(deref now)
+                                                              :caveat-evaluator (fixtures/portable-evaluator (atom 0))})
+                               :writer #(qualifiers/writer conn) :now now})
+      (finally (d/release conn) (d/delete-database uri)))))
+
 (deftest qualified-cache-traces-match-uncached-authorization
   (let [uri (str "datomic:mem://qualified-cache-trace-" (random-uuid))
         _ (d/create-database uri) conn (d/connect uri) now (atom 99)]
@@ -77,4 +104,13 @@
       (deletion/check! {:client (api/make-client conn {:clock (constantly 200)
                                                        :caveat-evaluator (fixtures/portable-evaluator (atom 0))})
                         :writer #(qualifiers/writer conn)})
+      (finally (d/release conn) (d/delete-database uri)))))
+
+(deftest removing-a-relation-with-qualified-relationships-reports-relation-in-use
+  (let [uri (str "datomic:mem://relation-removal-" (random-uuid))
+        _ (d/create-database uri) conn (d/connect uri)]
+    (try
+      (schema/install! conn)
+      (removal/check! {:client (api/make-client conn {:caveat-evaluator (fixtures/portable-evaluator (atom 0))})
+                       :writer #(qualifiers/writer conn)})
       (finally (d/release conn) (d/delete-database uri)))))

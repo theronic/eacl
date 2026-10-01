@@ -652,3 +652,39 @@
         (is (:published? (subproblem/publish! store :answer key accept-any-publication {:revision 2})))))
     (is (= {:revision 2} (:value (subproblem/lookup! store :answer key))))
     (is (= 1 (count (subproblem/resident-tier-entries store :answer))))))
+
+(deftest batch-operations-count-and-retain-like-single-operations-test
+  (let [changes (atom 0)
+        store (subproblem/store {:denotation-max-entries 16 :answer-max-entries 2}
+                                #(swap! changes inc))
+        key-fn (exact-key-fn 10)
+        stat #(get (subproblem/stats store) %)]
+    (binding [subproblem/*store* store
+              subproblem/*exact-denotation-key-fn* key-fn]
+      (is (= 2 (subproblem/publish-denotations!
+                {:valid? keyword?} [[:a :x] [:b :y] [:c 42]])))
+      (is (= 1 @changes) "one content change per published batch")
+      (is (= [2 1 1] [(stat :puts) (stat :invalid-results) (stat :publication-rejections)]))
+      (is (= [:x :y ::absent ::absent]
+             (subproblem/lookup-denotations! [:a :b :c :d] ::absent)))
+      (is (= [2 2] [(stat :denotation-hits) (stat :lookup-misses)]))
+      (is (= :x (:value (subproblem/lookup! store :denotation (key-fn :a))))
+          "a batch publishes under the key a single publication uses")
+      (testing "a resident value keeps its key unless the replacement predicate admits"
+        (is (zero? (subproblem/publish-denotations! {:valid? keyword?} [[:a :z]])))
+        (is (= 1 (stat :publication-races)))
+        (is (= 1 (subproblem/publish-denotations!
+                  {:valid? keyword? :replace? (fn [prior next] (= [:x :w] [prior next]))}
+                  [[:a :w] [:b :w]])))
+        (is (= [:w :y] (subproblem/lookup-denotations! [:a :b] ::absent))))
+      (testing "an empty batch touches nothing"
+        (is (zero? (subproblem/publish-denotations! {:valid? keyword?} [])))
+        (is (= [] (subproblem/lookup-denotations! [] ::absent)))))
+    (testing "without a bound store nothing is looked up or published"
+      (is (= [::absent] (subproblem/lookup-denotations! [:a] ::absent)))
+      (is (zero? (subproblem/publish-denotations! {:valid? keyword?} [[:q :x]]))))
+    (testing "an incomplete key is skipped, as a single publication skips it"
+      (binding [subproblem/*store* store
+                subproblem/*exact-denotation-key-fn* (fn [_] :incomplete)]
+        (is (zero? (subproblem/publish-denotations! {:valid? keyword?} [[:q :x]])))
+        (is (= [::absent] (subproblem/lookup-denotations! [:q] ::absent)))))))

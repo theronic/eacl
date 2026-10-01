@@ -1,6 +1,37 @@
 (ns eacl.caveats.values-test
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is testing]]
-            [eacl.caveats.values :as values]))
+            [clojure.string :as str]
+            [eacl.caveats.values :as values]
+            [eacl.secure-format :as secure]))
+
+(deftest map-key-ordering-encodes-each-key-once
+  (let [keys ["" "a" "aa" "b" "é" "中" "\uFFFF" "😀"]
+        input (zipmap (reverse keys) (repeat false))
+        encode secure/utf8-bytes
+        encodes (atom 0)]
+    (with-redefs [secure/utf8-bytes (fn [s] (swap! encodes inc) (encode s))]
+      (is (= keys (vec (values/sorted-keys input))))
+      (is (= (count input) @encodes)))))
+
+(deftest host-contexts-merge-by-exact-keys
+  (let [folded #(sorted-map-by (fn [a b] (compare (str/lower-case a) (str/lower-case b))) %1 %2)
+        parameters {"a" :bool "A" :bool "m" [:map :string :bool]}]
+    (is (= {"a" false "A" true}
+           (values/merge-context parameters (folded "a" false) {"A" true})))
+    (is (= {"m" {"A" true}}
+           (values/merge-context parameters {"m" (folded "a" true)} {"m" {"A" true}})))
+    (is (not (contains? (get (values/normalize-context parameters {"m" (folded "A" true)}) "m") "a")))))
+
+#?(:clj
+   (deftest boxed-booleans-round-trip-as-canonical-booleans
+     (doseq [[type wrap] [[:bool identity] [[:list :bool] vector] [[:map :string :bool] #(hash-map "key" %)]]
+             value [false true]
+             :let [parameters {"a" type}
+                   input {"a" (wrap (Boolean. value))}
+                   expected {"a" (wrap value)}]]
+       (is (= (values/encode-context parameters expected) (values/encode-context parameters input)))
+       (is (= expected (values/decode-context parameters (values/encode-context parameters input)))))
+     (is (false? (get (values/normalize-context {"a" :bool} {"a" (Boolean. false)}) "a")))))
 
 (def parameters [["active" :bool] ["region" :string] ["roles" [:list :string]]
                  ["settings" [:map :string :bool]] ["until" :timestamp]])

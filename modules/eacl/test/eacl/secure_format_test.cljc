@@ -1,6 +1,7 @@
 (ns eacl.secure-format-test
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is testing]]
+            [#?(:clj clojure.edn :cljs cljs.tools.reader.edn) :as edn]
             [clojure.string :as str]
             [eacl.cache.standard-lru :as lru]
             [eacl.causal-token :as token]
@@ -112,7 +113,7 @@
     (str prefix
          (secure/b64url-encode
           (secure/utf8-bytes
-          (secure/encode-canonical envelope'))))))
+           (secure/encode-canonical envelope'))))))
 
 (defn- tamper-compact-authenticator
   [token]
@@ -379,8 +380,8 @@
             (error-data
              #(token/token-data
                (assoc options :now-seconds
-                      (inc (:expires-at
-                            (token/token-data options encoded))))
+                      (:expires-at
+                       (token/token-data options encoded)))
                encoded)))))
     (is (= :malformed-token
            (:reason
@@ -458,7 +459,7 @@
                     "proof-secret-98bd"]]
       (is (not (str/includes? token-a secret))))
     (is (= value (cursor/token->cursor token-a
-                                      (assoc options :now-seconds 100))))))
+                                       (assoc options :now-seconds 100))))))
 
 (deftest encrypted-cursor-size-bound-rejects-instead-of-truncating-test
   (let [value {:v 12 :scope (apply str (repeat 80 "x"))}
@@ -517,7 +518,7 @@
     (testing "a token minted by this cache skips repeated authenticated decode"
       (let [decode-work (atom {})]
         (binding [cursor/*codec-work* decode-work]
-        (is (= value
+          (is (= value
                  (cursor/token->cursor encoded cached-options)))
           (is (empty? @decode-work)))))
     (testing "an unknown token still passes through authenticated decoding"
@@ -1129,3 +1130,387 @@
       (is (= :invalid-unicode
              (:reason (try (secure/utf8-size s) nil
                            (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error (ex-data error)))))))))
+
+;; ---------------------------------------------------------------------------
+;; Digest contract restated independently of the streaming implementation
+;; ---------------------------------------------------------------------------
+
+(defn- reference-records-digest
+  "The records digest restated on the public codec: SHA-256 over every
+  length-framed record, domain first, each record being its canonical UTF-8
+  bytes behind their four-byte big-endian length."
+  [domain records]
+  (let [frame (fn [bytes]
+                (let [n (count bytes)]
+                  (into [(bit-and (bit-shift-right n 24) 255)
+                         (bit-and (bit-shift-right n 16) 255)
+                         (bit-and (bit-shift-right n 8) 255)
+                         (bit-and n 255)]
+                        bytes)))]
+    (secure/b64url-encode
+     (secure/sha-256
+      (into (frame (secure/utf8-bytes domain))
+            (mapcat #(frame (secure/utf8-bytes (secure/encode-canonical %))))
+            records)))))
+
+(defn- reference-tree-records
+  "The tree digest's pre-order record sequence, built the way the original
+  implementation built it: members ordered by their canonical encodings."
+  [value]
+  (cond
+    (map? value)
+    (cons [:map (count value)]
+          (mapcat (fn [key]
+                    (concat (reference-tree-records key)
+                            (reference-tree-records (get value key))))
+                  (sort-by secure/encode-canonical (keys value))))
+    (set? value)
+    (cons [:set (count value)]
+          (mapcat reference-tree-records (sort-by secure/encode-canonical value)))
+    (sequential? value)
+    (cons [:sequence (count value)] (mapcat reference-tree-records value))
+    :else [[:value value]]))
+
+(defn- digest-outcome
+  [f]
+  (try (f)
+       (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+         [:rejected (:type (ex-data error))])))
+
+(defn- digest-corpus
+  "Deterministic nested values: every container kind, keywords the fast path
+  accepts and ones it must send to the reader (including ambiguous ones),
+  strings that need escaping or are not well-formed, integers at and past
+  the exact range, and UUIDs."
+  [n]
+  (let [state (atom 20260923)
+        next-int (fn [bound]
+                   (let [value (mod (* 48271 @state) 2147483647)]
+                     (reset! state value)
+                     (mod (quot value 256) bound)))
+        keywords (into (pseudo-random-keywords 24)
+                       [:a :b :a/b :x/y-z :eacl/id (keyword "9") (keyword "a" "b/c")
+                        (keyword "a b") (keyword "é") (keyword "x" "é")])
+        strings ["" "a" "\"q\"" "back\\slash" "tab\t" "nl\n" "é中" "\u0001"
+                 "\uD800"]
+        scalars [nil true false 0 -1000 999 9007199254740991 -9007199254740991
+                 #uuid "00000000-0000-0000-0000-00000000002a"]
+        scalar (fn []
+                 (case (next-int 4)
+                   0 (nth keywords (next-int (count keywords)))
+                   1 (nth strings (next-int (count strings)))
+                   2 (- (next-int 2001) 1000)
+                   (nth scalars (next-int (count scalars)))))
+        value (fn value [depth]
+                (if (or (> depth 3) (< (next-int 10) 4))
+                  (scalar)
+                  (case (next-int 4)
+                    0 (into {} (repeatedly (next-int 5)
+                                           #(vector (value (inc depth))
+                                                    (value (inc depth)))))
+                    1 (into #{} (repeatedly (next-int 5) #(value (inc depth))))
+                    2 (vec (repeatedly (next-int 5) #(value (inc depth))))
+                    (apply list (repeatedly (next-int 4) #(value (inc depth)))))))]
+    (vec (repeatedly n #(value 0)))))
+
+(deftest canonical-tree-digest-vector-test
+  (is (= "7HzY4FrE7NBe8E0yrqd_aLzUcYirGiod2GUjYMPsR8E"
+         (secure/canonical-tree-digest
+          "test/tree/v1"
+          {:rule :arrow-permission :node [:account :read_account]
+           :path [:root :child 2] :ids #{3 1 2} :name "a\"bé" :none nil
+           :flags [true false] :nested {[:k 1] {:x/y -7}}
+           :uuid #uuid "00000000-0000-0000-0000-000000000001"}))
+      "CLJ and CLJS must reproduce the digest the original record-building
+      implementation produced for this value"))
+
+(deftest streaming-digests-equal-the-restated-record-contract-test
+  (let [corpus (digest-corpus #?(:clj 1500 :cljs 400))
+        outcomes (atom {:digest 0 :rejected 0})]
+    (doseq [value corpus]
+      (let [tree (digest-outcome
+                  #(secure/canonical-tree-digest "test/tree-contract/v1" value))
+            records (digest-outcome
+                     #(secure/canonical-records-digest
+                       "test/records-contract/v1" [value [:wrapped value]]))]
+        (swap! outcomes update (if (string? tree) :digest :rejected) inc)
+        (is (= (digest-outcome
+                #(reference-records-digest "test/tree-contract/v1"
+                                           (reference-tree-records value)))
+               tree)
+            (pr-str value))
+        (is (= (digest-outcome
+                #(reference-records-digest "test/records-contract/v1"
+                                           [value [:wrapped value]]))
+               records)
+            (pr-str value))))
+    (testing "the corpus exercises both accepted and rejected values"
+      (is (< 100 (:digest @outcomes)))
+      (is (< 20 (:rejected @outcomes))))))
+
+(defn- reference-unambiguous-keyword?
+  "The original admission rule: well-formed components, then either the
+  conservative spelling regex or an exact reader round trip."
+  [value]
+  (let [well-formed? #(string? (digest-outcome (fn [] (str (secure/utf8-size %)))))
+        ordinary #"[A-Za-z_*!?$%&=<>.+-][A-Za-z0-9_*!?$%&=<>.+-]*"
+        rendered (str ":" (when-let [n (namespace value)] (str n "/")) (name value))]
+    (boolean
+     (and (well-formed? (name value))
+          (or (nil? (namespace value)) (well-formed? (namespace value)))
+          (or (and (re-matches ordinary (name value))
+                   (or (nil? (namespace value))
+                       (re-matches ordinary (namespace value))))
+              (try (= value (edn/read-string rendered))
+                   (catch #?(:clj Exception :cljs :default) _ false)))))))
+
+(deftest keyword-admission-fast-path-equals-the-regex-rule-test
+  (let [codes (concat (range 32 127) [0xE9 0x4E2D 0xD800 0xDC00])
+        character (fn [code]
+                    #?(:clj (str (char code)) :cljs (.fromCharCode js/String code)))
+        singles (map character codes)
+        pairs (for [a "aZ0_*!?.+-/:#'\"\\,;@^~`([{ é"
+                    b "aZ09_*!?$%&=<>.+-/:#'\",;@ é"]
+                (str a b))
+        names (concat singles pairs ["abc" "a-b" "a.b" "ab9" "9ab" "-9" "+a" ".5"])
+        corpus (for [n [nil "a" "x.y" "9" "é" "a-b" "a b"]
+                     component names]
+                 (keyword n component))]
+    (doseq [value corpus]
+      (is (= (reference-unambiguous-keyword? value)
+             (string? (digest-outcome #(secure/encode-canonical value))))
+          (pr-str [(namespace value) (name value)])))))
+
+;; One accepted spelling per value and per authenticated string.
+
+(def ^:private b64url-alphabet
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
+
+(defn- rejected?
+  [f]
+  (try
+    (f)
+    false
+    (catch #?(:clj Exception :cljs :default) _
+      true)))
+
+(defn- accepted-variants
+  "The variants that `decode` accepts. Each would be a second accepted
+  spelling of something EACL issued once."
+  [decode variants]
+  (vec (remove #(rejected? (fn [] (decode %))) variants)))
+
+(defn- single-bit-variants
+  "Every string obtained by flipping one of the six bits of one Base64URL
+  character of `token`. Characters outside the alphabet, such as cursor
+  segment separators, are kept."
+  [token]
+  (for [index (range (count token))
+        :let [value (str/index-of b64url-alphabet
+                                  (subs token index (inc index)))]
+        :when value
+        bit [1 2 4 8 16 32]
+        :let [flipped (bit-xor value bit)]]
+    (str (subs token 0 index)
+         (subs b64url-alphabet flipped (inc flipped))
+         (subs token (inc index)))))
+
+(defn- unused-bit-variants
+  "Spellings of `encoded` that differ only in the unused low bits of its last
+  character. A lenient decoder maps every one of them to the same bytes."
+  [encoded]
+  (let [unused (case (mod (count encoded) 4) 2 4 3 2 0)
+        last-index (dec (count encoded))]
+    (when (pos? unused)
+      (let [value (str/index-of b64url-alphabet (subs encoded last-index))]
+        (for [bits (range 1 (bit-shift-left 1 unused))
+              :let [changed (bit-xor value bits)]]
+          (str (subs encoded 0 last-index)
+               (subs b64url-alphabet changed (inc changed))))))))
+
+(deftest decode-canonical-admits-only-the-canonical-spelling-test
+  (testing "input after the first complete form is never ignored"
+    (doseq [wire ["{:allowed 1}] [{:forged 2}"
+                  "{:allowed 1}] )))((("
+                  "{:allowed 1}]"
+                  "1]"
+                  "{:allowed 1} "
+                  " {:allowed 1}"
+                  "{:allowed 1},"]]
+      (is (= :noncanonical
+             (:reason (error-data #(secure/decode-canonical wire))))
+          wire)))
+  (testing "another spelling of a canonical value is rejected"
+    (doseq [wire ["{:b 1, :a 2}" "{:a 2 :b 1}" "{:a 2,  :b 1}" "{:a 2,\n:b 1}"
+                  "#{2 1}" "[1  2]" "(1 2)" "+1" "-0" "\"\\u0041\"" "nil "
+                  "\"a\" "]]
+      (is (= :noncanonical
+             (:reason (error-data #(secure/decode-canonical wire))))
+          wire))
+    (doseq [wire ["1N" "010" "0x10"]]
+      (is (contains? #{:noncanonical :malformed}
+                     (:reason (error-data #(secure/decode-canonical wire))))
+          wire)))
+  (testing "reader syntax that hides input is outside the wire language"
+    (doseq [wire ["^:hidden {:a 1}"
+                  "^{:hidden \"x; # y\"} {:a 1}"
+                  ;; A character literal outside a string once desynchronised
+                  ;; the hidden-input scanner, which then missed the discard,
+                  ;; comment, or namespaced map that followed it.
+                  "^{:k \\\"} {:a #_ 2 1}"
+                  "^{:k \\\"} {:a 1} ;c\n"
+                  "^{:k \\\"} #:a{:b 1}"
+                  "[\\a]"]]
+      (is (= :malformed
+             (:reason (error-data #(secure/decode-canonical wire))))
+          wire)))
+  (testing "a canonical encoding decodes to its value and re-encodes to the same bytes"
+    (doseq [value [nil true false 0 -1
+                   secure/maximum-safe-integer secure/minimum-safe-integer
+                   "" "quote:\" slash:\\ \n\u0001 hé😀" "#uuid \"x\""
+                   :k :ns/k [] {} #{} [1 [2 [3]]]
+                   {:b #{3 2 1} :a [1 true nil] "s" {:n -7}}
+                   #{[:a 1] [:a 2] {:x "y"}}
+                   #uuid "854e138f-b8a4-42ee-a8f9-49c01ac19fc1"
+                   {:lifecycle #uuid "854e138f-b8a4-42ee-a8f9-49c01ac19fc1"}]]
+      (let [wire (secure/encode-canonical value)]
+        (is (= (secure/canonicalize value) (secure/decode-canonical wire)) wire)
+        (is (= wire (secure/encode-canonical (secure/decode-canonical wire)))
+            wire)))))
+
+(deftest base64url-decoding-admits-only-the-canonical-spelling-test
+  (doseq [n (range 40)]
+    (let [bytes (vec (take n (cycle [0 1 63 64 127 128 191 254 255])))
+          encoded (secure/b64url-encode bytes)]
+      (is (= bytes (secure/b64url-decode encoded)) encoded)
+      (doseq [variant (concat [(str encoded "=") (str encoded "==")
+                               (str encoded " ") (str " " encoded)
+                               (str encoded "\n")]
+                              (unused-bit-variants encoded))]
+        (is (= :malformed-base64
+               (:reason (error-data #(secure/b64url-decode variant))))
+            (pr-str variant)))))
+  (doseq [encoded ["A" "AAAAA" "A+" "A/" "AA.A" "AA=A" "\u00c0A"]]
+    (is (= :malformed-base64
+           (:reason (error-data #(secure/b64url-decode encoded))))
+        encoded)))
+
+(deftest authenticated-envelopes-accept-only-their-issued-spelling-test
+  (let [prefix "test_spelling_"
+        format-options (merge options {:domain "test/spelling"
+                                       :prefix prefix
+                                       :payload-keys #{:v :answer}})
+        payload {:v 1 :answer true}
+        token (secure/encode-authenticated format-options payload)
+        body (subs token (count prefix))
+        envelope (secure/bytes->utf8 (secure/b64url-decode body))
+        tag (second (re-find #":tag \"([^\"]+)\"" envelope))
+        respell (fn [text]
+                  (str prefix (secure/b64url-encode (secure/utf8-bytes text))))
+        decode #(secure/decode-authenticated format-options %)]
+    (is (= payload (decode token)))
+    (testing "text appended inside the envelope is not ignored"
+      (doseq [suffix ["] TAMPERED ((( " "]" " " "," "] [{:forged 2}"]]
+        (is (rejected? #(decode (respell (str envelope suffix)))) suffix)))
+    (testing "an equal envelope spelled differently is rejected"
+      (doseq [text [(str " " envelope)
+                    (str/replace envelope ", " ",  ")
+                    (str/replace envelope ", " " ")
+                    (str/replace envelope ":v 2}" ":v 2N}")
+                    (str "^:hidden " envelope)
+                    ;; The same four fields in another order.
+                    (str "{:v 2, "
+                         (subs envelope 1 (str/index-of envelope ", :v 2}"))
+                         "}")]]
+        (is (rejected? #(decode (respell text))) text)))
+    (testing "the token and its tag each have one Base64URL spelling"
+      (let [variants (concat [(str token "=") (str token "==")]
+                             (map #(str prefix %) (unused-bit-variants body))
+                             (map #(respell (str/replace envelope tag %))
+                                  (unused-bit-variants tag)))]
+        (is (seq variants))
+        (is (= [] (accepted-variants decode variants)))))
+    (testing "every single-bit change to the token or its envelope bytes is rejected"
+      (let [envelope-bytes (secure/b64url-decode body)
+            variants (concat
+                      (single-bit-variants token)
+                      (for [index (range (count envelope-bytes))
+                            bit [1 2 4 8 16 32 64 128]]
+                        (str prefix
+                             (secure/b64url-encode
+                              (update envelope-bytes index bit-xor bit)))))]
+        (is (< 1000 (count variants)))
+        (is (= [] (accepted-variants decode variants)))))))
+
+(deftest encrypted-cursors-accept-only-their-issued-spelling-test
+  (let [value {:v 12 :edge {:kind :stable-edge :ordinal 7}}
+        token (cursor/cursor->token value options)
+        decode #(cursor/token->cursor % options)
+        segments (str/split (subs token (count cursor/cursor-prefix)) #"\." -1)
+        with-segment (fn [index segment]
+                       (str cursor/cursor-prefix
+                            (str/join "." (assoc segments index segment))))]
+    (is (= 4 (count segments)))
+    (is (= value (decode token)))
+    (testing "every segment has one Base64URL spelling"
+      (let [variants (concat
+                      [(str token "=") (str token "==")]
+                      (for [index (range (count segments))
+                            :let [segment (nth segments index)]
+                            variant (concat (unused-bit-variants segment)
+                                            [(str segment "=")
+                                             (str segment "==")])]
+                        (with-segment index variant)))]
+        (is (seq variants))
+        (is (= [] (accepted-variants decode variants)))))
+    (testing "every single-bit change is rejected"
+      (let [variants (single-bit-variants token)]
+        (is (< 600 (count variants)))
+        (is (= [] (accepted-variants decode variants)))))))
+
+(defn- counted-naturals
+  "An unbounded lazy sequence that counts realized elements and fails once a
+  walk passes `ceiling`, so an unbounded validation fails instead of hanging."
+  [realized ceiling]
+  (map (fn [n]
+         (when (> (swap! realized inc) ceiling)
+           (throw (ex-info "Validation walked past its entry bound."
+                           {:ceiling ceiling})))
+         n)
+       (range)))
+
+(deftest validation-work-is-bounded-by-maximum-entries-test
+  (doseq [[label validate]
+          [["encode-canonical" #(secure/encode-canonical % {:maximum-entries 16})]
+           ["canonicalize" #(secure/canonicalize % {:maximum-entries 16})]
+           ["capture-portable" #(secure/capture-portable % {:maximum-entries 16})]]
+          [shape wrap]
+          [["sequence" identity]
+           ["map value" (fn [values] {:values values})]
+           ["nested sequence" (fn [values] [[:prefix] [values]])]]]
+    (let [realized (atom 0)
+          data (error-data #(validate (wrap (counted-naturals realized 10000))))]
+      (is (= :too-many-entries (:reason data)) (str label ", " shape))
+      ;; One chunk of a chunked lazy sequence may be realized ahead.
+      (is (<= @realized 64) (str label ", " shape ": " @realized " realized")))))
+
+(defrecord PortableRecord [a])
+
+(deftest records-project-to-maps-and-colliding-members-are-rejected-test
+  (testing "a record is encoded as its field map"
+    (is (= (secure/encode-canonical {:a 1})
+           (secure/encode-canonical (->PortableRecord 1))))
+    (is (= {:a 1} (secure/canonicalize (->PortableRecord 1))))
+    (is (not (record? (secure/canonicalize (->PortableRecord 1))))))
+  (testing "members that project to one portable value are rejected, not merged"
+    (is (= 2 (count {(->PortableRecord 1) :record {:a 1} :map})))
+    (doseq [value [{(->PortableRecord 1) :record {:a 1} :map}
+                   {[(->PortableRecord 1)] :record [{:a 1}] :map}
+                   #{(->PortableRecord 1) {:a 1}}
+                   [#{(->PortableRecord 1) {:a 1}}]]
+            [label f] [["encode-canonical" secure/encode-canonical]
+                       ["canonicalize" secure/canonicalize]
+                       ["capture-portable" #(secure/capture-portable % {})]]]
+      (is (contains? #{:duplicate-key :duplicate-member}
+                     (:reason (error-data #(f value))))
+          (str label " " (pr-str value))))))

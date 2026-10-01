@@ -107,24 +107,24 @@
                  :resource/type :account}
           lookup-calls (atom 0)
           count-calls (atom 0)
-          lookup-resources engine/lookup-resources
-          count-resources engine/count-resources]
-      (with-redefs [engine/lookup-resources
+          lookup-resources engine/lookup-resources-eids
+          count-resources engine/count-resources-eids]
+      (with-redefs [engine/lookup-resources-eids
                     (fn [& args]
                       (swap! lookup-calls inc)
                       (apply lookup-resources args))
-                    engine/count-resources
+                    engine/count-resources-eids
                     (fn [& args]
                       (swap! count-calls inc)
                       (apply count-resources args))]
         (is (= 3 (count (:data (eacl/lookup-resources acl query)))))
         (is (= 3 (count (:data (eacl/lookup-resources
-                               acl (assoc query :cache? true))))))
+                                acl (assoc query :cache? true))))))
         (is (= 1 @lookup-calls))
 
         (is (= 3 (:count (eacl/count-resources acl query))))
         (is (= 3 (:count (eacl/count-resources
-                         acl (assoc query :cache? true)))))
+                          acl (assoc query :cache? true)))))
         (is (= 1 @count-calls))))))
 
 (deftest transient-acl-exact-token-is-authenticated-once-test
@@ -307,7 +307,7 @@
 
       (testing "read-relationships"
         (let [page-1 (eacl/read-relationships early {:subject/type :user
-                                                      :subject/id "alice" :first 2})
+                                                     :subject/id "alice" :first 2})
               page-2 (eacl/read-relationships
                       early {:subject/type :user
                              :subject/id "alice"
@@ -385,10 +385,10 @@
           alice (spice-object :user "alice")
           account (spice-object :account "acct0")
           calls (atom 0)
-          original engine/check-evidence]
-      (with-redefs [engine/check-evidence (fn [& args]
-                                            (swap! calls inc)
-                                            (apply original args))]
+          original engine/check-evidence-eids]
+      (with-redefs [engine/check-evidence-eids (fn [& args]
+                                                 (swap! calls inc)
+                                                 (apply original args))]
         (dotimes [_ 3] (is (true? (eacl/can? acl alice :admin account))))
         (is (= 1 @calls) "identical fully-consistent reads at one basis compute once")
 

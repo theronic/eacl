@@ -147,4 +147,59 @@ module CaveatProfile {
     AdditionBound(a, b, limit);
     AdditionBound(1, if op == Contains then SaturatingMultiply(a, b, limit) else SaturatingAdd(a, b, limit), limit);
   }
+
+  // Profile 2 charges a comprehension over n supplied elements for its node,
+  // its range leaf and the range's size once, then for one unit plus the
+  // predicate's work per element. The predicate's work is computed for the
+  // widest element, so it bounds every element's. Nesting multiplies, since
+  // an inner comprehension is part of the outer predicate's work.
+  function ComprehensionWork(rangeSize: nat, elements: nat, predicateWork: nat, limit: nat): nat {
+    SaturatingAdd(SaturatingAdd(2, rangeSize, limit),
+                  SaturatingMultiply(elements, SaturatingAdd(1, predicateWork, limit), limit), limit)
+  }
+
+  lemma ComprehensionWorkBound(rangeSize: nat, elements: nat, predicateWork: nat, limit: nat)
+    ensures ComprehensionWork(rangeSize, elements, predicateWork, limit) <= limit + 1
+    // Iterations cannot hide work: every element's predicate is charged,
+    // even after an early element decides the result.
+    ensures elements * (1 + predicateWork) > limit ==> ComprehensionWork(rangeSize, elements, predicateWork, limit) > limit
+    ensures 2 + rangeSize + elements * (1 + predicateWork) <= limit
+            ==> ComprehensionWork(rangeSize, elements, predicateWork, limit) == 2 + rangeSize + elements * (1 + predicateWork)
+    // An empty range charges no predicate work.
+    ensures elements == 0 ==> ComprehensionWork(rangeSize, elements, predicateWork, limit) == SaturatingAdd(2, rangeSize, limit)
+  {
+    AdditionBound(2, rangeSize, limit);
+    AdditionBound(1, predicateWork, limit);
+    var perElement := SaturatingAdd(1, predicateWork, limit);
+    MultiplicationBound(elements, perElement, limit);
+    if 1 + predicateWork > limit && elements > 0 {
+      assert perElement == limit + 1;
+      assert elements * perElement >= perElement;
+    }
+    if elements * (1 + predicateWork) > limit && 1 + predicateWork <= limit {
+      assert perElement == 1 + predicateWork;
+    }
+    AdditionBound(SaturatingAdd(2, rangeSize, limit), SaturatingMultiply(elements, perElement, limit), limit);
+  }
+
+  // A comprehension nested in another's predicate is charged once per outer
+  // element: an n-element comprehension around an m-element one pays for
+  // n * m inner predicates.
+  lemma NestedComprehensionsMultiply(outer: nat, inner: nat, rangeSize: nat, predicateWork: nat, limit: nat)
+    requires outer * inner * (1 + predicateWork) > limit
+    ensures ComprehensionWork(0, outer, ComprehensionWork(rangeSize, inner, predicateWork, limit), limit) > limit
+  {
+    var innerWork := ComprehensionWork(rangeSize, inner, predicateWork, limit);
+    ComprehensionWorkBound(rangeSize, inner, predicateWork, limit);
+    if innerWork <= limit {
+      assert inner * (1 + predicateWork) <= limit;
+      assert innerWork == 2 + rangeSize + inner * (1 + predicateWork);
+      assert outer * (1 + innerWork) >= outer * (inner * (1 + predicateWork));
+      assert outer * (inner * (1 + predicateWork)) == outer * inner * (1 + predicateWork);
+    } else {
+      assert outer > 0;
+      assert outer * (1 + innerWork) >= 1 + innerWork;
+    }
+    ComprehensionWorkBound(0, outer, innerWork, limit);
+  }
 }

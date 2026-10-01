@@ -4,6 +4,7 @@
             [eacl.authorization.qualification-test :as fixtures]
             [eacl.caveats.definition-test :as errors]
             [eacl.caveats.evaluator :as evaluator]
+            [eacl.caveats.relation-removal-contract :as removal]
             [eacl.caveats.schema-admission-test :as schemas]
             [eacl.client.orchestration :as orchestration]
             [eacl.core :as eacl]
@@ -81,3 +82,8 @@
       (let [capabilities backend/capabilities]
         (with-redefs [backend/capabilities #(dissoc (capabilities %) :qualified-publication)]
           (is (= :eacl/unsupported-capability (errors/error-type #(eacl/can? client request)))))))))
+
+(deftest removing-a-relation-with-qualified-relationships-reports-relation-in-use
+  (let [conn (schema/create-conn)]
+    (removal/check! {:client (api/make-client conn {:caveat-evaluator (fixtures/portable-evaluator (atom 0))})
+                     :writer #(qualifiers/writer conn)})))

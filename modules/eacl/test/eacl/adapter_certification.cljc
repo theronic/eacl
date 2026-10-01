@@ -166,7 +166,7 @@
    (map
     (fn [object]
       [object
-       (backend/invoke adapter :object-id->internal (:id object))])
+       (backend/object-id->internal adapter (:id object))])
     objects)))
 
 (defn- materialized-forward
@@ -681,7 +681,7 @@
           :schema-enumeration
           :all-permission-nodes
           :exact-schema-coverage
-         (fn []
+          (fn []
             (certify-definitions!
              adapter fixture
              (or @relations

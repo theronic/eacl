@@ -2,6 +2,11 @@
 
 Date: 2026-08-11
 
+Release-policy update (2026-09-30): independent review is deferred to a later
+external-certification stage. The live obligations are in
+`formal/assurance_contract.clj`; the review item below records the historical
+audit state.
+
 Scope: GitHub issue 111, `IAuthorization/expand-permission-tree`, its portable
 CLJ/CLJS kernel, shipped adapter wiring, SpiceDB compatibility fixture, and
 `formal/dafny/PermissionTree.dfy`.

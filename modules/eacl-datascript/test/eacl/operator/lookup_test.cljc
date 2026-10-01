@@ -29,11 +29,11 @@
 (def exact-child-order-schema
   "definition user {}
    definition document {
-     relation a: user
-     relation b: user
-     relation c: user
-     relation d: user
-     permission view = (a - b) + (c & d)
+     relation aaa: user
+     relation bbb: user
+     relation ccc: user
+     relation ddd: user
+     permission view = (aaa - bbb) + (ccc & ddd)
    }")
 
 (def arrow-schema
@@ -234,13 +234,13 @@
         env
         (custom-fixture
          exact-child-order-schema [user x y z]
-         [(eacl/->Relationship user :a x)
-          (eacl/->Relationship user :b x)
-          (eacl/->Relationship user :c x)
-          (eacl/->Relationship user :d x)
-          (eacl/->Relationship user :a y)
-          (eacl/->Relationship user :c z)
-          (eacl/->Relationship user :d z)])
+         [(eacl/->Relationship user :aaa x)
+          (eacl/->Relationship user :bbb x)
+          (eacl/->Relationship user :ccc x)
+          (eacl/->Relationship user :ddd x)
+          (eacl/->Relationship user :aaa y)
+          (eacl/->Relationship user :ccc z)
+          (eacl/->Relationship user :ddd z)])
         operator-plan (plan/seal-plan (:adapter env) [:document :view])
         page
         (lookup/lookup-page

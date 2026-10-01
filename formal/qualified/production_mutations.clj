@@ -23,6 +23,8 @@
             [eacl.authorization.qualifier-cache-test :as qualifier-cache-test]
             [eacl.datascript.qualifier-cache-test :as public-qualifier-cache-test]
             [eacl.authorization.qualification-test :as qualification-test]
+            [eacl.engine.relationships :as relationship-engine]
+            [eacl.backend.v8 :as backend-v8]
             [eacl.engine.scan-cache :as scan-cache]
             [eacl.engine.scan-cache-test :as scan-test]
             [eacl.engine.stable-reducer :as reducer]
@@ -70,7 +72,10 @@
             [eacl.operator.seekable-evidence-test :as seekable-test]
             [eacl.operator.recursive :as recursive]
             [eacl.operator.vector-evaluator :as vector]
-            [eacl.operator.vector-evaluator-test :as vector-test]))
+            [eacl.operator.vector-evaluator-test :as vector-test]
+            [eacl.formal.qualified.operator-bridge :as operator-bridge]
+            [eacl.datascript.kleene-fault-test :as kleene-test]
+            [eacl.datascript.caveat-context-admission-test :as admission-test]))
 
 (defn failures [gate]
   (let [events (atom [])]
@@ -84,9 +89,13 @@
         certificate qualification/certificate
         retain-certificate @#'range-reuse/retain-certificate
         externalize-relationships relay/externalize-relationship-page
+        progress-edge relationship-engine/progress-edge
+        physical-compare relationship-engine/physical-compare
+        reduce-scan backend-v8/reduce-scan
         inspection-window inspection/window-options
         plan-schema datascript-schema/plan-schema-replacement
         qualify qualification/qualify identity qualification/exact-reuse-identity
+        certified-scope qualification/certified-denotation-scope
         fetch reducer/adapter-fetch-fn descriptor scan-cache/descriptor-key
         snapshot-opts @#'orchestration/snapshot-opts
         head-evidence @#'seekable/head-evidence
@@ -108,7 +117,7 @@
         values-for @#'staged/values-for
         collect data/collect
         can? core/can?
-        check-evidence engine/check-evidence
+        check-evidence-eids engine/check-evidence-eids
         check-result result/check-result
         discovery-options stable-route/discovery-options
         buffer-id @#'reducer/buffer-id
@@ -126,7 +135,11 @@
         plan-entry @#'staged/plan-entry
         plan-batch staged/plan-batch
         plan-retractions staged/plan-retraction-batch
-        write-relationship! core/write-relationship!]
+        write-relationship! core/write-relationship!
+        combine evidence/combine
+        caveat-index engine/caveat-parameter-index
+        add-counter counters/add!
+        reject-ill-typed context/reject-ill-typed!]
     {:temporal-collection-resident-lookup-ignores-interval
      {:gate #'temporal-test/collection-certificates-guard-resident-answers-and-replacement
       :redefs {#'cache/lookup-answer (fn [store key _] (lookup-answer store key nil))}}
@@ -143,9 +156,14 @@
      :qualified-object-delete-loses-selected-basis-guard
      {:gate #'public-write-test/qualified-object-deletion-is-atomic-and-bounded
       :redefs {#'staged/plan-retraction-batch (fn [& args] (let [tx (apply plan-retractions args)] (if (seq tx) (subvec tx 1) tx)))}}
-     :qualified-shared-denotation-identity-omits-time
+     ;; Shared point decisions are keyed without their evaluation time; their
+     ;; certified interval alone decides whether a later request may reuse one.
+     :qualified-shared-denotation-reuse-ignores-certificate
      {:gate #'cache-trace-test/qualified-cache-traces-match-uncached-authorization
-      :redefs {#'qualification/exact-reuse-identity (fn [request] (assoc (identity request) 2 99))}}
+      :redefs {#'temporal/reusable-point
+               (fn [answer _]
+                 (when (and (map? answer) (= temporal/point-format (:format answer)))
+                   (evidence/decode (:value answer))))}}
      :qualified-answer-identity-omits-request-context
      {:gate #'cache-trace-test/qualified-cache-traces-match-uncached-authorization
       :redefs {#'qualification/exact-reuse-identity (fn [request] (assoc (identity request) 3 :omitted))}}
@@ -327,9 +345,9 @@
       :redefs {#'core/can? (fn [& args] (try (apply can? args) (catch Throwable _ false)))}}
      :public-point-routing-omits-qualification
      {:gate #'public-point-test/public-point-routes-preserve-conditional-evidence-and-expiring-bans
-      :redefs {#'engine/check-evidence (fn [& args]
-                                         (binding [engine/*qualification* nil]
-                                           (apply check-evidence args)))}}
+      :redefs {#'engine/check-evidence-eids (fn [& args]
+                                              (binding [engine/*qualification* nil]
+                                                (apply check-evidence-eids args)))}}
      :legacy-inactive-stream-path-becomes-active
      {:gate #'legacy-lookup-test/qualified-unions-keep-native-order-and-complete-node-evidence
       :redefs {#'least-path/stream-next
@@ -423,15 +441,67 @@
      :public-context-validation-bypassed
      {:gate #'public-context-test/invalid-context-fails-before-selection-even-on-warm-or-empty-requests
       :redefs {#'context/prepare (let [empty-context (context/prepare {})] (constantly empty-context))}}
-     :time-omitted-from-exact-point-scope
+     :certified-point-scope-keeps-the-time
      {:gate #'vector-test/qualified-vectors-retain-alignment-and-exact-cache-scope
-      :redefs {#'qualification/exact-reuse-identity (fn [request] (assoc (identity request) 2 nil))}}
+      :redefs {#'qualification/certified-denotation-scope
+               (fn [request] (conj (certified-scope request) (:time request)))}}
      :evidence-witness-validation-bypassed
      {:gate #'vector-test/exact-evidence-witnesses-avoid-rechecking-proven-nodes
       :redefs {#'vector/validate-evidence-witnesses! (fn [& _] nil)}}
-     :cached-grant-hides-encountered-witness-fault
-     {:gate #'vector-test/exact-evidence-witnesses-avoid-rechecking-proven-nodes
-      :redefs {#'vector/demanded-witness-fault (constantly nil)}}
+     ;; Strong-Kleene fault semantics and fail-fast context admission.
+     :fault-dominates-boolean-absorber
+     {:gate #'evidence-test/a-definite-absorber-decides-beside-a-fault
+      :redefs {#'evidence/combine (fn [op a b]
+                                    (if (or (evidence/fault? a) (evidence/fault? b))
+                                      (evidence/fault :mutant/dominant :fault)
+                                      (combine op a b)))}}
+     :public-union-fault-dominates-grant
+     {:gate #'kleene-test/a-definite-operand-absorbs-a-faulting-one-on-every-route-in-any-order
+      :redefs {#'evidence/combine (fn [op a b]
+                                    (if (and (= :union op) (or (evidence/fault? a) (evidence/fault? b)))
+                                      (evidence/fault :mutant/dominant :fault)
+                                      (combine op a b)))}}
+     :operator-fault-is-decisive
+     {:gate #'operator-bridge/scalar-intersection-and-exclusion-refinement
+      :redefs {#'scalar/decisive? (fn [op value]
+                                    (or (evidence/fault? value)
+                                        (if (= :union op) (evidence/has? value) (evidence/no? value))))}}
+     :released-row-fault-fails-the-walk
+     {:gate #'kleene-test/a-faulting-edge-that-reaches-no-resource-never-fails-a-walk
+      :redefs {#'least-path/stream-next (fn [ctx s]
+                                          (let [[value next-stream :as result] (stream-next ctx s)]
+                                            (when value (evidence/throw-if-fault! (get next-stream :evidence true)))
+                                            result))}}
+     :definite-stream-drops-conditional-before-filter
+     {:gate #'kleene-test/a-filter-edge-composes-with-every-possible-decision
+      :redefs {#'engine/fetch-inclusive-candidates
+               (fn [result-type fetch-exclusive bound limit inclusive-evidence-fn]
+                 (filterv #(or (not (contains? % :evidence)) (evidence/has? (:evidence %)) (evidence/fault? (:evidence %)))
+                          (inclusive-candidates result-type fetch-exclusive bound limit inclusive-evidence-fn)))}}
+     :context-admission-bypassed
+     {:gate #'admission-test/a-value-no-reachable-declaration-admits-is-rejected-before-evaluation
+      :redefs {#'context/reject-ill-typed! (fn [_ _] nil)}}
+     :context-admission-ignores-filter-relation
+     {:gate #'admission-test/a-relationship-filter-clause-adds-its-relation-to-the-reachable-caveats
+      :redefs {#'engine/caveat-parameter-index (fn ([db rt p] (caveat-index db rt p nil))
+                                                 ([db rt p _] (caveat-index db rt p nil)))}}
+     :context-admission-rejects-ambiguous-values
+     {:gate #'admission-test/admission-ignores-undeclared-and-unreachable-fields-and-accepts-ambiguous-ones
+      :redefs {#'context/reject-ill-typed!
+               (fn [prepared index]
+                 (doseq [[parameter types] index
+                         :when (contains? (context/value prepared) parameter)
+                         type (keys types)]
+                   (reject-ill-typed prepared {parameter {type #{"mutant"}}})))}}
+     :masked-faults-unmetered
+     {:gate #'evidence-test/an-absorbed-fault-is-metered
+      :redefs {#'counters/add! (fn ([counter] (when-not (= :masked-faults counter) (add-counter counter)))
+                                 ([counter amount] (when-not (= :masked-faults counter) (add-counter counter amount))))}}
+     :wildcard-exclusion-fails-on-unconsumed-fault
+     {:gate #'kleene-test/a-faulting-subject-is-excluded-from-the-wildcard-and-fails-only-the-page-that-consumes-it
+      :redefs {#'engine/wildcard-excluded? (fn [decision]
+                                             (evidence/throw-if-fault! decision)
+                                             (not (evidence/has? decision)))}}
      :raw-clock-regresses
      {:gate #'clock-test/client-samples-once-and-snapshots-pin-time
       :redefs {#'clock/clock clojure.core/identity}}
@@ -509,6 +579,24 @@
       :redefs {#'relay/externalize-relationship-page
                (fn [& args] (update (apply externalize-relationships args) :data
                                     #(mapv (fn [r] (apply dissoc r mutations/qualifier-keys)) %)))}}
+     :partial-scan-cursor-drops-qualifier
+     {:gate #'public-write-test/partial-relationship-walks-over-qualified-rows-are-total-and-terminate
+      :redefs {#'relationship-engine/progress-edge (fn [row] (dissoc (progress-edge row) :qualifier-id))}}
+     :partial-scan-orders-by-owner-unguarded
+     {:gate #'public-write-test/partial-relationship-walks-over-qualified-rows-are-total-and-terminate
+      :redefs {#'relationship-engine/physical-compare
+               (fn [scan-kind a b] (physical-compare scan-kind (dissoc a :qualifier-id) (dissoc b :qualifier-id)))
+               #'relationship-engine/check-scan-order! (fn [_ _ _ rows] rows)}}
+     :permission-tree-scans-without-qualifiers
+     {:gate #'public-write-test/eacl-rs-005-expansions-list-expiring-and-caveated-relationships
+      :redefs {#'backend-v8/reduce-scan
+               (fn [adapter operation args init callbacks]
+                 (reduce-scan adapter operation
+                              (update args (dec (count args)) dissoc :include-qualifier?)
+                              init callbacks))}}
+     :permission-tree-drops-qualifier-annotations
+     {:gate #'public-write-test/eacl-rs-005-expansions-list-expiring-and-caveated-relationships
+      :redefs {#'qualification/inspect (fn [_ _ _] {})}}
      :inspection-fills-past-candidate-window
      {:gate #'inspection-test/expiry-filter-keeps-the-existing-candidate-work-bound
       :redefs {#'inspection/window-options
@@ -546,7 +634,7 @@
 
 (deftest production-mutations-are-killed-by-conformance-gates
   (let [cases (mutation-cases)]
-    (is (= 108 (count cases)))
+    (is (= 121 (count cases)))
     (doseq [[id {:keys [gate redefs]}] (sort-by key cases)]
       (is (zero? (failures gate)) (str id " unmodified gate must pass"))
       (is (pos? (with-redefs-fn redefs #(failures gate))) (str id " must be detected")))))

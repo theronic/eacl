@@ -5,7 +5,10 @@
             [eacl.caveats.public-write-contract :as public]
             [eacl.caveats.write-contention-contract :as contention]
             [eacl.caveats.schema-allowance-contract :as allowance]
+            [eacl.caveats.relation-removal-contract :as removal]
             [eacl.caveats.inspection-contract :as inspection]
+            [eacl.caveats.partial-scan-contract :as partial-scan]
+            [eacl.caveats.permission-tree-contract :as permission-tree]
             [eacl.caveats.deletion-contract :as deletion]
             [eacl.caveats.cache-trace-contract :as cache-trace]
             [eacl.authorization.qualification-test :as fixtures]
@@ -89,6 +92,28 @@
                             :cas-attribute (when (:attribute-refs? options) db/entid)})
         (finally (d/release conn) (d/delete-database config))))))
 
+(deftest partial-relationship-walks-over-qualified-rows-are-total-and-terminate
+  (doseq [options [{} {:attribute-refs? true}]]
+    (let [conn (schema/create-conn [] options)
+          config (:config (d/db conn))
+          now (atom 1000)]
+      (try
+        (partial-scan/check! {:client (api/make-client conn {:clock #(deref now)
+                                                             :caveat-evaluator (fixtures/portable-evaluator (atom 0))})
+                              :writer #(qualifiers/writer conn) :now now})
+        (finally (d/release conn) (d/delete-database config))))))
+
+(deftest permission-trees-list-qualified-relationships-without-evaluating-them
+  (doseq [options [{} {:attribute-refs? true}]]
+    (let [conn (schema/create-conn [] options)
+          config (:config (d/db conn))
+          now (atom 1000)]
+      (try
+        (permission-tree/check! {:client (api/make-client conn {:clock #(deref now)
+                                                                :caveat-evaluator (fixtures/portable-evaluator (atom 0))})
+                                 :writer #(qualifiers/writer conn) :now now})
+        (finally (d/release conn) (d/delete-database config))))))
+
 (deftest qualified-cache-traces-match-uncached-authorization
   (doseq [options [{} {:attribute-refs? true}]]
     (let [conn (schema/create-conn [] options) config (:config (d/db conn)) now (atom 99)]
@@ -112,3 +137,11 @@
         client (api/make-client conn {})]
     (contention/check! client #(qualifiers/writer conn))
     (contention/terminal-validation-check! client)))
+
+(deftest removing-a-relation-with-qualified-relationships-reports-relation-in-use
+  (doseq [options [{} {:attribute-refs? true}]]
+    (let [conn (schema/create-conn [] options) config (:config (d/db conn))]
+      (try
+        (removal/check! {:client (api/make-client conn {:caveat-evaluator (fixtures/portable-evaluator (atom 0))})
+                         :writer #(qualifiers/writer conn)})
+        (finally (d/release conn) (d/delete-database config))))))

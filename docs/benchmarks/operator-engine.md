@@ -28,3 +28,20 @@ artifacts or ignored `target/benchmarks/`.
 
 The [operator fixtures](../../formal/fixtures/operator-engine/README.md) retain
 expected behavior and counterexamples exercised against current code.
+
+## Intersection over recursive permissions
+
+`eacl.bench.recursive-intersection-test` (Datahike module, tagged
+`:benchmark`) gates `delete = delete_granted & read_account`, where both
+operands recurse through `parent`, on a minimal schema and on a ledger schema
+whose `read_account` spans about twenty rules, at 636 and 2,077 accounts. Each
+case interleaves the intersection with both operands on one warm snapshot. The
+budgets were authored before sampling: a full intersection lookup walk takes at
+most twice the sum of its operands' walks, and an intersection check at most
+twice the sum of its operands' checks.
+
+```sh
+clj-nrepl-eval -p <port> "(require 'eacl.bench.recursive-intersection-test :reload) (clojure.test/test-vars [#'eacl.bench.recursive-intersection-test/recursive-intersection-costs-what-its-operands-cost])"
+```
+
+Each run writes its samples to ignored `target/benchmarks/recursive-intersection/`.

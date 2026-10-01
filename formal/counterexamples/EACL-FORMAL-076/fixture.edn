@@ -1,0 +1,28 @@
+{:canonical-edn
+ {:boundary :eacl.secure-format/decode-canonical
+  :trailing-input ["{:allowed 1}] [{:forged 2}" "{:allowed 1}] )))((("]
+  :alternative-spellings ["{:b 1, :a 2}" "{:a 2 :b 1}" "(1 2)" "1N" "+1"
+                          "\"\\u0041\""]
+  :hidden-input ["^:hidden {:a 1}" "^{:k \\\"} {:a #_ 2 1}"]}
+ :base64url
+ {:boundary :eacl.secure-format/b64url-decode
+  :single-byte {:canonical "AA" :respellings ["AA==" "AB" "AP"]}
+  :two-bytes {:canonical "AAA" :respellings ["AAA=" "AAB" "AAD"]}
+  :javascript-only {:canonical "AAA" :respellings ["A AA"]}}
+ :zed-token
+ {:operation :can?
+  :consistency :at-least-as-fresh
+  :respellings ["Base64URL of the decoded envelope with \"] TAMPERED ((( \" appended"
+                "the token with == appended when its Base64URL length is 2 mod 4"
+                "the token with an unused low bit of its last character changed"]}
+ :cursor
+ {:format :eacl_c7_
+  :respellings ["an unused low bit of the last tag character changed"
+                "the cursor with = appended"]}
+ :observed
+ {:trailing-input {:allowed 1}
+  :alternative-spellings :accepted
+  :hidden-input {:a 1}
+  :base64url-respellings :accepted
+  :respelled-zed-token :accepted
+  :respelled-cursor :accepted}}

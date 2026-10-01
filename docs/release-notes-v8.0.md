@@ -469,6 +469,89 @@ as replayed counterexamples against the stable engine.
 
 ## Correctness findings closed
 
+- **Representation-sensitive public identity aliasing.** Ordered batch checks
+  memoize unresolved public demands only when both IDs have canonical
+  representations and the adapter certifies immutable/injective identities.
+  Relationship writes and speculative transaction planning now resolve
+  endpoints before coalescing. Public numeric object deletion cannot fall back
+  to a native EID; explicit ghost repair uses `delete-object-by-eid!`, and
+  resolver failures propagate. EACL-FORMAL-068 records the model, mutants, and
+  cross-runtime regressions.
+- **Fail-open public request shapes.** Point/count/schema reads now reject
+  unknown keys before consistency selection. Relationship mutation helpers
+  reject nil, bare-record, missing-update, and unknown-field batch shapes
+  instead of reporting an empty success. Singleton collections such as
+  `[relationship]` remain valid; only passing `relationship` itself to the
+  plural helper is rejected. A misspelled expiry can no longer be discarded to
+  create a permanent relationship. `delete-object!` accepts only a public
+  object with a non-nil ID; its envelope cannot carry `:native-eid`, and the
+  client protocol also rejects malformed or mixed identities. Reserved
+  `:page/basis` modes are rejected rather than ignored, and the backend-only
+  `:allow-empty-schema?` safety escape hatch no longer crosses the public
+  writer boundary. EACL-FORMAL-069
+  records the request-boundary model,
+  mutants, and real-backend regressions.
+- **Snapshot option injection.** The shared snapshot protocol now rejects all
+  caller-supplied runtime options. Previously, direct protocol invocation could
+  replace trusted dependencies such as public-ID resolution and turn a denied
+  check into another user's grant. EACL-FORMAL-070 records the dedicated model,
+  mutant, and real-backend regression.
+- **False-valued public IDs and execution controls.** Public validation admits
+  any non-nil ID for custom codecs, including boolean `false`. Permission
+  checks honored such an identity, but relationship filters and cursor resume
+  could mistake it for an omitted value and hide a live relationship. Stable
+  authorization-result cursors had a second copy of the same mistake. The
+  truthiness error also defaulted explicit `false` evaluation, timeout, and
+  cancellation controls. Identity paths now test non-nil presence, and invalid
+  controls fail with typed errors. EACL-FORMAL-071 records the models, five
+  mutants, and authorization, inspection, and both cursor regressions.
+- **Numeric public IDs cannot become native database IDs.** Applications may
+  deliberately map a public numeric ID such as user `0` through a custom
+  codec. Cursor resume and permission-tree expansion previously sent that
+  public value through an adapter operation whose numeric branch meant
+  “already-resolved database entity ID.” In a real paginated relationship
+  audit, pages could repeat forever and never reach grants after user `0`.
+  The existing `:object-id->internal` operation now performs only the
+  configured application-ID conversion. EACL calls it once at ingress and
+  gives the resolved EID directly to the engine; no new adapter option or
+  client configuration is required. This is exploitable through otherwise
+  valid library usage when an attacker can choose a numeric account ID;
+  applications restricted to string/UUID public IDs are not affected.
+  EACL-FORMAL-072 records the model, mutant, multi-page regression, and numeric
+  permission-tree regression.
+- **Unsupported SpiceDB subject sets now fail closed.** EACL does not implement
+  `subject#relation` usersets, but public object maps previously accepted a
+  non-nil `:relation` and then ignored it. For example, an application could
+  forward `user:grandmother-caregiver#member`; if the base object
+  `user:grandmother-caregiver` had access, EACL returned that grant without
+  evaluating `#member`. Ordinary documented EACL usage is not affected because
+  its objects do not carry a subject relation. The security risk applies when
+  an API, migration, or integration forwards attacker-controlled SpiceDB-shaped
+  references. Scalar and batch checks, lookups and scan filters, permission
+  trees, relationship writes, and object deletion now reject this input before
+  backend dispatch. EACL-FORMAL-073 records the model, mutant, and real-backend
+  regression.
+- **Incomplete authorization requests now fail before reader dispatch.** A
+  request such as `{:permission :view :resource document}` used to reach an
+  `IAuthorizationReader` without a `:subject`. The bundled backends normally
+  denied or rejected that request later, but a remote or third-party reader
+  could interpret the missing subject as a default user or wildcard and grant
+  it. This is exploitable when an application constructs EACL request maps from
+  attacker-controlled optional fields; it is also incorrect library usage,
+  because the documented fields are required. Scalar checks, lookups, counts,
+  permission-tree expansion, relationship scans, and batch checks now reject
+  incomplete shapes at the shared public boundary, including malformed nested
+  clauses. EACL-FORMAL-074 records the corrected model, mutant, and regressions.
+- **Nested relationship mutations now fail before writer dispatch.** The
+  generic plural write and transaction-planning wrappers used to validate only
+  the outer collection. For example, a nested `:valid-until-mss` typo could
+  reach a remote writer; if that writer ignored the field, an intended
+  temporary grant became permanent. Bundled backends already rejected this
+  later, so ordinary use of those backends was not exploitable. The risk
+  applies to remote or third-party writer extensions when an application
+  forwards attacker-controlled mutation payloads. The shared wrapper now
+  validates every nested operation, endpoint, relation, and qualifier first.
+  EACL-FORMAL-075 records the model, mutant, and regression.
 - **Datomic raw writer stamp mismatch.** Managed Datomic validation now uses
   only the physical `:eacl/relation-version` assertion written by the public
   and documented low-level helpers. Every relation is initialized on schema
@@ -722,6 +805,33 @@ V8 enables Caveats and expiring Relationships across the shared authorization
 engine. See the [Caveat guide](caveats.md) for context, conditional results,
 expiry, and coordinated serving upgrades.
 
+A Caveat or qualifier fault is a strong-Kleene *unknown*
+([Faults](caveats.md#faults)). A definite grant beside a faulting union branch
+is a grant, and a definite denial beside a faulting intersection, arrow or
+subtracted operand is a denial; a fault never stops evaluation. Answers no
+longer depend on evaluation order, entity ids, route, cache state or page size.
+Lookups and counts fail only when a consumed candidate's decision faults, so a
+faulting edge that reaches no resource never fails a walk, and a
+relationship-filtered lookup fails on the same candidates under both result
+policies. Requests whose context value no reachable Caveat's declared type
+admits are rejected before evaluation with `:eacl.caveat/invalid`
+`:reason :context-type` and `:parameter`, `:expected` and `:caveats`. Request
+meters gain `:qualifier-faults` and `:masked-faults`. Earlier candidates
+answered some of these requests with an evaluation failure that depended on
+internal order.
+
+The operator membership compatibility identity changes, so a cache snapshot
+exported by an earlier candidate no longer restores:
+
+- `restore-cache-snapshot!` throws `:eacl/incompatible-cache-snapshot`.
+- `restore-authenticated-cache-snapshot!` returns
+  `{:restored? false :cache-miss? true :reason :invalid-cache-artifact}` and
+  leaves the existing stores untouched.
+
+Neither call installs the old entries: the client keeps its current cache,
+which is cold for a newly started client. Callers that restore persisted
+snapshots with `restore-cache-snapshot!` must catch the error or reseed.
+
 Live `SecurityKeyring` controllers let running clients share externally supplied
 primary or dedicated Zed-token key updates. Full replacements use generation
 compare-and-set; add, activate, and retire operations preserve atomic state.
@@ -743,3 +853,155 @@ API, external secret ownership, rollback, partial rollout recovery, and limits.
 
 Datalevin's existing unpublished-artifact release guard remains in force; these
 changes do not publish its embedded Maven dependency.
+
+## Wildcard subjects
+
+V8 accepts SpiceDB wildcard relation types (issue #183): `relation viewer:
+user | user:*`, `relation anyone: user:* with some_caveat`, alone or beside
+concrete branches. A relationship whose subject is `(eacl/spice-object :user
+"*")` makes every user a member of the relation; see
+[Wildcard Subjects](../README.md#wildcard-subjects).
+
+- Checks, `lookup-resources` and `count-resources` include wildcard grants
+  through union, intersection, exclusion, arrows and recursion, with Caveats
+  and expiry.
+- `lookup-subjects` returns the wildcard as the subject `*`. When
+  intersection or exclusion withholds it from subjects, the `*` subject
+  carries `:excluded-subjects`. `count-subjects` counts entries.
+- `*` is reserved. It is rejected with `:eacl/wildcard-not-allowed` as a
+  resource ID and as the subject of checks, `lookup-resources` and
+  `count-resources`; an object whose external ID is `*` raises
+  `:eacl/reserved-object-id`. Writes whose subject form the relation does not
+  declare fail with `:eacl/unknown-relation-or-permission` and
+  `:reason :wildcard-subject-not-allowed` or `:concrete-subject-not-allowed`.
+  A relation that holds a wildcard cannot be the left side of an arrow.
+- Relationship and permission storage stay **8**. A wildcard branch adds
+  `:eacl.relation/allows-unqualified-wildcard?` and
+  `:eacl.relation/wildcard-caveats` to its Relation entity, and wildcard
+  relationships use one EACL-owned subject entity,
+  `{:eacl/id "eacl.wildcard-subject"}`. Datomic and Datahike install the
+  attributes on the first schema write that declares a wildcard; Datalevin
+  installs them when a client opens the connection; a DataScript connection
+  without them fails the schema write with
+  `:eacl.schema/wildcard-attributes-missing`.
+- Schemas without wildcards keep their plans, fingerprints, cursors and cache
+  keys. Upgrade every serving Peer before writing a schema that uses
+  wildcards.
+
+The behavior is compared with SpiceDB v1.56.0's answers to 72 requests
+([fixture](../formal/fixtures/wildcards/README.md)), with an independent
+reference over 40 seeded stores, and modeled in
+`formal/dafny/WildcardSubjects.dfy`.
+
+## `exists` and `all` in Caveats
+
+Caveats can use CEL's `exists` and `all` macros over a list or a map's keys,
+in EACL CEL profile 2. For example, this Caveat receives both what someone
+carries and what is sensitive in the request:
+
+```zed
+caveat nothing_sensitive(inventory list<string>, sensitive list<string>) {
+  !inventory.exists(item, item in sensitive)
+}
+```
+
+- Results follow CEL and SpiceDB. A deciding element, `true` for `exists` and
+  `false` for `all`, wins over another element's fault, and a missing list
+  gives a conditional result on that list alone. The variable hides a
+  parameter or outer variable of the same name inside its predicate. `has`,
+  `exists_one`, `map` and `filter` remain excluded. See the
+  [Caveat guide](caveats.md#exists-and-all).
+- Both evaluators support them. The JVM evaluator parses each predicate once
+  and folds it over the range itself, rather than using cel-parser's macros,
+  which reparse the predicate for every element.
+- The work preflight charges every element of a supplied range, and nested
+  comprehensions multiply. No limit is added.
+- A definition records the lowest profile its expression needs, so Caveats
+  without the macros stay `eacl-cel/1`, unchanged in storage. Evaluators now
+  advertise profile `eacl-cel/2` with a new profile fingerprint: core and the
+  evaluator modules must be the same release, and qualified cache entries and
+  cursors are not reused across the upgrade. Upgrade every serving Peer before
+  writing a schema that uses `exists` or `all`; an earlier Peer fails closed
+  on such a Caveat with `:unsupported-profile`.
+
+The behavior is compared with SpiceDB v1.56.0's answers to all 59 corpus
+cases ([fixture](../formal/fixtures/caveat-comprehensions/README.md)), checked
+against the finite model in `formal/caveats/`, and its fold algebra is proved
+in `formal/dafny/CaveatOutcomes.dfy`.
+
+## SpiceDB schema language
+
+EACL reads the schema language of SpiceDB v1.56.0 exactly
+([SpiceDB schema compatibility](spicedb-schema-compatibility.md)). Every
+schema SpiceDB accepts is accepted, or rejected only with
+`:eacl.schema/unsupported-feature` naming the construct EACL cannot serve;
+every schema SpiceDB rejects is rejected with a typed error. SpiceDB's
+validation runs before EACL's restrictions. A corpus of 4,359 schemas, each
+written to SpiceDB v1.56.0, checks this on the JVM and in ClojureScript.
+
+Breaking changes:
+
+1. **Names SpiceDB rejects now fail with `:eacl.schema/invalid-name`.**
+   Definition, relation and permission names must match
+   `^[a-z][a-z0-9_]{1,62}[a-z0-9]$` (3 to 64 characters, no trailing `_`), so
+   `relation r: user` now fails. Rename before upgrading: rewrite the schema
+   to rename a permission; for a relation or definition with stored
+   Relationships, add the new name, copy the Relationships, then remove the
+   old name. Migrations that re-validate stored v7 schema text apply the same
+   rules.
+2. **Empty and comment-only schema text is an empty schema**, not
+   `:eacl.schema/parse-error`; `eacl/write-schema!` refuses it over a
+   non-empty schema with `:eacl.schema/empty-schema-guard`. The rest of the
+   syntax is SpiceDB's too: `relationviewer: user`, `a->b->c`, `(a + b)->c`,
+   two statements on one line without `;`, Unicode whitespace other than
+   space, tab and line ends, and letters newer than Unicode 15.0 are
+   rejected; `;` and expressions continued after an operator on the next
+   line are accepted.
+3. **Unstratified exclusions and missing or mixed arrow targets are now
+   `:eacl.schema/unsupported-feature`** (with `:unstratified-exclusion` and
+   `:arrow-target` issues), and so are valid Caveats outside EACL's CEL
+   profile (previously `:eacl.caveat/invalid`). A schema SpiceDB rejects
+   reports SpiceDB's error even when it also uses an unsupported feature;
+   EACL's source limits are still checked first.
+4. **The first schema write after upgrading advances the schema generation
+   once, because caveat sources are rewritten to the CEL expression.** v8.0.0
+   stored a Caveat's whole body as `:eacl.caveat/expression-source`; EACL now
+   stores the expression SpiceDB compiles, without the whitespace and
+   comments around it. Stored v8.0.0 sources still evaluate. The first write
+   of an unchanged schema with Caveats rewrites them in place, so it is not a
+   no-op and cached answers are recomputed under the new generation; Caveats
+   keep their identity, so their Relationships are unaffected, and the next
+   write is a no-op. Write schemas from upgraded Peers: a v8.0.0 Peer writing
+   the same schema stores the whole bodies again.
+5. **Instaparse is no longer a dependency.** `instaparse/instaparse` is
+   removed from `dev.eacl/eacl`; applications that used it transitively must
+   declare it.
+
+Resource limits stay outside the compatibility rule.
+`:maximum-schema-source-bytes` (1,048,576 by default) now also bounds
+validation work: expanding partials visits at most a quarter of it in
+statements, and `use typechecking` at most that many relations and
+permissions. Beyond either bound the schema fails with
+`:eacl.schema/expression-limit` and `:dimension :partial-expansion` or
+`:typechecking`; unused partials are never expanded. See
+[resource limits](spicedb-schema-compatibility.md#resource-limits).
+
+`use self` is supported. `permission view = viewer + self` grants the resource
+object itself as a subject of its own type, through every route (checks,
+batches, lookups, counts, `expand-permission-tree`, authorized
+`read-relationships`) and every cache; `self` is never conditional. It is
+evaluated through an EACL-owned identity Relation (`:_self`) per definition
+that uses it: the adapter boundary serves its tuples, nothing is stored for it,
+and `read-schema` omits it. Without `use self`, `self` is an ordinary name
+again (except as an arrow's base). Upgrade every serving Peer before writing a
+schema that uses `self`: an older Peer cannot decode its expression and fails
+closed. SpiceDB's LookupSubjects lists a `self` resource under any requested
+subject type; EACL lists it only under its own type, as CheckPermission
+answers ([`self`](spicedb-schema-compatibility.md#self)).
+
+One difference is deliberate. SpiceDB v1.56.0 caches its transitive-wildcard
+check by relation name across definitions, so it accepts some schemas whose
+subject relation reaches a wildcard, on every write or only on some. EACL keeps
+the check per definition and relation and rejects them with
+`:eacl.schema/expression-resolution-failed`
+([details](spicedb-schema-compatibility.md#deliberate-difference-transitive-wildcards)).

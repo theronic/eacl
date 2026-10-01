@@ -4,7 +4,15 @@
             [eacl.exact-integer :as integer]
             [eacl.secure-format :as secure]))
 
-(def profile-id "eacl-cel/1")
+(def profile-id
+  "The profile evaluators implement. Profile 2 is profile 1 plus the `exists`
+   and `all` comprehension macros over lists and map keys."
+  "eacl-cel/2")
+(def definition-profiles
+  "Profiles a stored Caveat definition may record, oldest first. A definition
+   records the lowest one that admits its expression, so a definition without
+   comprehensions keeps profile 1 and its stored content."
+  ["eacl-cel/1" "eacl-cel/2"])
 (def format-version 1)
 (def limits
   {:source-utf8-bytes 8192 :tokens 1024 :source-group-depth 32
@@ -34,6 +42,12 @@
   (and (string? s) (<= (count s) (:identifier-ascii-bytes limits))
        (boolean (re-matches #"[A-Za-z_][A-Za-z0-9_]*" s))
        (not (contains? reserved-names s)) (not (str/starts-with? s "__eacl_"))))
+
+(defn variable-name?
+  "A comprehension variable is named like a parameter, but never `__result__`:
+   cel-go, and so SpiceDB, binds that name to the macro's accumulator."
+  [s]
+  (and (parameter-name? s) (not= "__result__" s)))
 
 (defn parameter-type? [t]
   (or (contains? scalar-types t)
@@ -68,14 +82,22 @@
     (when (> size (:string-utf8-bytes limits)) (error! :resource-limit {:limit :string-utf8-bytes})))
   v)
 
-(defn- scalar-order [a b]
-  (let [x (secure/utf8-bytes a) y (secure/utf8-bytes b)
-        nx (count x) ny (count y)]
+(defn- byte-order [x y]
+  (let [nx (count x) ny (count y)]
     (loop [i 0]
       (if (= i (min nx ny))
         (compare nx ny)
         (let [c (compare (nth x i) (nth y i))]
           (if (zero? c) (recur (inc i)) c))))))
+
+(defn sorted-keys
+  "A string-keyed map's keys in canonical Unicode scalar order, the order in
+   which comprehensions visit them."
+  [m]
+  ;; Encode each key once, not twice per comparison. Nested comprehensions
+  ;; repeat this traversal, so comparator allocation would multiply too.
+  (map second (sort-by first byte-order
+                       (mapv (fn [k] [(secure/utf8-bytes k) k]) (keys m)))))
 
 (defn- charge! [budget size]
   (vswap! budget (fn [[entries bytes]] [(inc entries) (+ bytes size)]))
@@ -86,11 +108,11 @@
 (defn- encode-value [type value budget]
   (charge! budget 1)
   (case type
-    :bool (if (boolean? value) [:bool value] (error! :context-type))
+    :bool (if (boolean? value) [:bool (boolean value)] (error! :context-type))
     :int (if (integer/exact? value) [:int value] (error! :context-type))
     :string (let [s (checked-string value)] (charge! budget (utf8-size s)) [:string s])
     :timestamp (if (and (vector? value) (= 2 (count value)) (= :timestamp (first value))
-                         (valid-time? (second value))) value (error! :context-type))
+                        (valid-time? (second value))) value (error! :context-type))
     (case (first type)
       :list (do
               (when-not (vector? value) (error! :context-type))
@@ -102,7 +124,7 @@
              (doseq [key (keys value)] (checked-string key) (charge! budget (utf8-size key)))
              [:map (nth type 2)
               (mapv (fn [key] [key (encode-value (nth type 2) (get value key) budget)])
-                    (sort scalar-order (keys value)))])
+                    (sorted-keys value))])
       (error! :parameter-type))))
 
 (def ^:private encoding-options
@@ -130,9 +152,9 @@
         _ (doseq [key (keys context)] (when-not (contains? types key) (error! :unknown-parameter)))
         budget (volatile! [0 0])
         pairs (mapv (fn [key]
-                       (charge! budget (count key))
-                       [key (encode-value (get types key) (get context key) budget)])
-                     (sort (keys context)))]
+                      (charge! budget (count key))
+                      [key (encode-value (get types key) (get context key) budget)])
+                    (sort (keys context)))]
     (encode-payload [:eacl.caveat/context format-version pairs])))
 
 (defn- bounded-source! [payload {:keys [maximum-size maximum-depth]}]
@@ -149,16 +171,21 @@
         (= c \u0022) (recur (next chars) depth (not quoted?) false)
         quoted? (recur (next chars) depth true false)
         (#{\[ \{ \(} c) (if (>= depth maximum-depth) (error! :resource-limit {:limit :payload-depth})
-                             (recur (next chars) (inc depth) false false))
+                            (recur (next chars) (inc depth) false false))
         (#{\] \} \)} c) (recur (next chars) (dec depth) false false)
         :else (recur (next chars) depth false false)))))
 
 (defn decode-bounded
-  "Checks byte and raw nesting limits before invoking the portable reader."
+  "Checks byte and raw nesting limits before invoking the portable reader.
+  The reader accepts only the canonical spelling; any other spelling is
+  `:noncanonical-payload`."
   [payload options]
   (bounded-source! payload options)
   (try (secure/decode-canonical payload options)
-       (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) _ (error! :malformed-payload))))
+       (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+         (error! (if (= :noncanonical (:reason (ex-data error)))
+                   :noncanonical-payload
+                   :malformed-payload)))))
 
 (defn- decode-payload [tag payload]
   (let [v (decode-bounded payload encoding-options)]
@@ -195,17 +222,27 @@
     (when-not (every? #(and (vector? %) (= 2 (count %))) pairs) (error! :malformed-payload))
     (when-not (= (count pairs) (count (set (map first pairs)))) (error! :malformed-payload))
     (let [context (into {} (map (fn [[key value]]
-                                 (when-not (contains? types key) (error! :unknown-parameter))
-                                 [key (decode-value (get types key) value)])) pairs)]
+                                  (when-not (contains? types key) (error! :unknown-parameter))
+                                  [key (decode-value (get types key) value)])) pairs)]
       (when-not (= payload (encode-context parameters context)) (error! :noncanonical-payload))
       context)))
 
+(defn canonical-host-value
+  "Rebuilds an already admitted, bounded context value with exact map keys and
+   canonical Booleans. Call only after checking types and collection bounds;
+   a host map comparator or boxed Boolean must not affect authorization."
+  [value]
+  (cond
+    (boolean? value) (boolean value)
+    (map? value) (reduce-kv (fn [m k v] (assoc m k (canonical-host-value v))) {} value)
+    (vector? value) (mapv canonical-host-value value)
+    :else value))
+
 (defn normalize-context [parameters context]
-  ;; Host values already have their portable representation. The encoder
-  ;; validates every type and aggregate wire bound; reading that freshly
-  ;; produced payload adds no admission check and needlessly rebuilds it.
+  ;; Validate every type and aggregate wire bound before rebuilding. Reading
+  ;; the freshly encoded payload would duplicate parsing and admission work.
   (encode-context parameters context)
-  context)
+  (canonical-host-value context))
 
 (defn normalize-value [type value]
   (get (normalize-context [["value" type]] {"value" value}) "value"))

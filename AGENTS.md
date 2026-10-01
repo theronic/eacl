@@ -47,10 +47,10 @@ Run a single test namespace:
 clj-nrepl-eval -p <port> "(require 'some.test-ns :reload) (clojure.test/run-tests 'some.test-ns)"
 ```
 
-Run the CI-equivalent battery (core, optional JVM Caveat, and three public backend module test roots, benchmark and
-formal-artifact suites excluded) on an nREPL started with the `:test` alias:
+Run the CI-equivalent battery (core, both optional Caveat evaluators, and three public backend module test roots,
+benchmark and formal-artifact suites excluded) on an nREPL started with the `:test` alias:
 ```
-clj-nrepl-eval -p <port> "(do (require '[cognitect.test-runner.api :as runner] :reload) (runner/test {:dirs [\"modules/eacl/test\" \"modules/eacl-caveats-jvm/test\" \"modules/eacl-datomic/test\" \"modules/eacl-datascript/test\" \"modules/eacl-datahike/test\" \"src-build\"] :excludes [:benchmark :formal-artifact]}))"
+clj-nrepl-eval -p <port> "(do (require '[cognitect.test-runner.api :as runner] :reload) (runner/test {:dirs [\"modules/eacl/test\" \"modules/eacl-caveats-jvm/test\" \"modules/eacl-caveats-portable/test\" \"modules/eacl-datomic/test\" \"modules/eacl-datascript/test\" \"modules/eacl-datahike/test\" \"src-build\"] :excludes [:benchmark :formal-artifact]}))"
 ```
 
 Heavy benchmark/load suites are tagged `^:benchmark` and live under each

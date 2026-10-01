@@ -152,9 +152,11 @@ no verified-release claim existed.
   the then-current default mode, while the positional arity and shared
   descriptor rejected the same value.
 - **Correction:** public map arities forward the raw value to the descriptor.
-  Only omission and nil default; false yields
+  The generic reader and snapshot wrappers also validate the descriptor before
+  protocol dispatch. Only omission and nil default; false yields
   `:eacl/unsupported-consistency`. Dafny models the public input distinction,
-  and one regression per backend checks the production boundary.
+  and regressions cover the bundled backends plus the shared extension
+  boundary.
 
 ### EACL-FORMAL-053 — unknown consistency descriptor fields
 
@@ -229,6 +231,298 @@ no verified-release claim existed.
   Boolean/count rendering retains batch size 64. Dafny, generated JVM/JS,
   portable CLJS, mutation, and reduced cached/cacheless Datomic controls cover
   the policy and public continuation sequence.
+
+### EACL-FORMAL-068 — host-equal public IDs crossed semantic identity boundaries
+
+- **Affected:** ordered batch checks, relationship writes, and public object
+  cleanup with custom external-ID codecs; the implicit native-EID fallback also
+  affected numeric public IDs.
+- **Impact:** a representation-distinct object could reuse another object's
+  memoized allow/deny decision, a relationship update could be discarded during
+  pre-resolution coalescing, public cleanup could target the wrong native
+  entity, and resolver infrastructure failure could be hidden as not-found.
+- **Root cause:** the formal abstraction began with typed semantic identity and
+  omitted unresolved host values. Clojure equality can equate values such as a
+  list and vector that a deterministic injective codec resolves differently.
+- **Correction:** public batch memoization admits only canonical identity
+  representations under the immutable/injective adapter contract; relationship
+  updates resolve before coalescing; public and native-EID deletion are separate
+  entry points; resolver failures propagate. `PublicIdentityBoundary.dfy`, two
+  executed mutants, and the shared backend regressions close the omitted
+  boundary.
+
+### EACL-FORMAL-069 — public request shapes could fail open
+
+- **Affected:** scalar reads, counts, schema reads, relationship revocation and
+  transaction planning, plus object cleanup on the shared client path.
+- **Impact:** a consistency typo could silently use the default consistency; a
+  reserved live-page request could be accepted but ignored; the backend-only
+  empty-schema escape hatch crossed the public boundary; a
+  misspelled expiry could create a permanent relationship; passing a bare
+  relationship record rather than the valid singleton collection
+  `[relationship]`, or passing a malformed plan, could report success with no
+  updates; and a nil-ID cleanup could report success with no work while a mixed
+  public/native object envelope could delete another entity's relationships.
+- **Root cause:** the formal abstraction began after open Clojure maps had
+  already been destructured. Unknown keys, collection shape, and mutually
+  exclusive identity selectors were therefore outside the model.
+- **Correction:** public requests and endpoints are closed before dispatch;
+  unsupported page-basis values and the backend-only empty-schema option are
+  rejected;
+  mutation batches must be explicit sequential collections; the single-write
+  helper rejects unknown fields; public and native object deletion cannot
+  share an envelope; shared client protocol methods
+  repeat mutation validation. `PublicRequestBoundary.dfy`, six executed
+  mutants, and public plus real-backend regressions close the boundary.
+
+### EACL-FORMAL-070 — snapshot protocol options could replace trusted identity resolution
+
+- **Affected:** retained snapshots on every shared-orchestration backend.
+- **Impact:** a direct protocol caller could replace the public-ID resolver and
+  make one user's authorization check run as another user. A real DataScript
+  witness changed Alice's denied check into Bob's grant.
+- **Root cause:** the public wrapper supplied an empty internal options map,
+  but the protocol method accepted arbitrary options and merged them over the
+  client runtime before snapshot selection.
+- **Correction:** the shared snapshot protocol accepts only an exactly empty
+  options map; consistency remains the sole caller choice. Trusted codecs,
+  clocks, caches, and security configuration are captured from the client.
+  `SnapshotOptionBoundary.dfy`, an executed mutant, and the real-backend
+  regression close the omitted boundary.
+
+### EACL-FORMAL-071 — boolean false was confused with an omitted value
+
+- **Affected:** relationship inspection and cursor resume for custom public-ID
+  codecs that admit boolean `false`; request evaluation, timeout, and
+  cancellation controls supplied as explicit `false`.
+- **Impact:** a relationship that continued to grant access could disappear
+  from a subject-filtered audit or a paginated inspection, interfering with
+  discovery and revocation. False execution controls could silently select
+  defaults or disable cancellation rather than being rejected.
+- **Root cause:** public validation used non-nil value presence, but later host
+  branches used Clojure truthiness. The formal identity and request models had
+  not represented this distinction.
+- **Correction:** every public identity branch now uses non-nil presence;
+  malformed false controls receive typed rejection. `PublicIdentityBoundary.dfy`
+  and `PublicRequestBoundary.dfy` model the counterexamples and corrected laws;
+  five executed mutants plus a real DataScript regression cover authorization,
+  inspection, relationship continuation, and authorization-result continuation.
+
+### EACL-FORMAL-072 — numeric public IDs crossed into the native-EID domain
+
+- **Affected:** applications whose custom identity codec admits numeric public
+  IDs, when using paginated relationship or authorization lookup APIs or
+  permission-tree expansion. String/UUID-only public-ID applications are not
+  affected.
+- **Impact:** an attacker able to choose public account ID `0` could make an
+  administrator's otherwise valid paginated relationship audit repeat earlier
+  pages and never reach later grants. That can obstruct discovery and
+  revocation. A numeric permission-tree root could also resolve as the wrong
+  database identity. The cursor is authenticated; the attacker does not forge
+  it—the chosen public ID reaches the vulnerable path during normal paging.
+- **Root cause:** one adapter callback served both public identities and
+  already-resolved native entity IDs. Its numeric fast path had no way to know
+  which trust domain supplied the value, and the formal identity model did not
+  represent that distinction.
+- **Correction:** the existing `:object-id->internal` operation now has one
+  meaning: apply the configured application-ID codec. EACL invokes it once at
+  request or cursor ingress, then sends the resolved EID through explicit
+  internal engine entry points without another conversion. No new adapter or
+  client option is required. `PublicIdentityBoundary.dfy` types the two stages
+  separately and proves both the old counterexample and the conversion-once
+  law; an executed mutant and a real DataScript three-page regression bind the
+  model to production.
+
+### EACL-FORMAL-073 — unsupported `subject#relation` input became a base object
+
+- **Affected:** applications that accept SpiceDB-shaped object references from
+  requests, migration code, or another policy service and pass those maps to
+  EACL. Ordinary documented EACL objects, whose `:relation` is nil, are not
+  affected.
+- **Impact:** EACL could grant a request for an unsupported userset such as
+  `user:grandmother-caregiver#member` whenever the different base object
+  `user:grandmother-caregiver` was authorized. The caller asked about semantics
+  EACL does not implement, but received the base object's answer instead of an
+  error. A malicious caller can exploit this when the surrounding application
+  lets them supply the forwarded object reference.
+- **Root cause:** public object validation admitted keyword `:relation` values,
+  while endpoint resolution deliberately used only `:type` and `:id`. The
+  documented unsupported feature was therefore erased at the trust boundary.
+- **Correction:** every public scalar, batch, lookup, scan, permission-tree,
+  mutation, and deletion boundary rejects a non-nil endpoint `:relation` before
+  dispatch. `PublicRequestBoundary.dfy` models both the old downgrade and the
+  fail-closed rule; an executed mutant and real DataScript regression bind it
+  to production.
+
+### EACL-FORMAL-074 — incomplete authorization demands reached readers
+
+- **Affected:** scalar permission checks, lookups, counts, permission-tree
+  expansion, relationship scans, and the generic batch wrapper. Bundled clients
+  usually rejected or denied these requests later, but third-party or remote
+  protocol readers received incomplete or partially validated shapes.
+- **Impact:** an application that builds a request map from attacker-controlled
+  optional fields could omit `:subject`, `:resource`, or `:permission`. EACL's
+  public wrapper would dispatch the incomplete demand. A reader that assigns a
+  default principal or wildcard meaning to the missing value could grant it;
+  bundled backends instead failed closed, but only after avoidable snapshot or
+  schema work.
+- **Root cause:** the closed-map validation modeled unknown keys but did not
+  require the operation's mandatory keys. The formal request model made the
+  same omission and therefore called an empty or incomplete known-key set
+  accepted.
+- **Correction:** each public read now requires its complete endpoint and
+  schema-name fields before reader dispatch. Batch entries, relationship-scan
+  anchors and authorization clauses, and nested lookup relationship clauses
+  receive their full shared validation at the same boundary.
+  `PublicRequestBoundary.dfy` proves incomplete known-key maps are rejected; an
+  executed mutant and protocol-level regressions bind that rule to production.
+
+### EACL-FORMAL-075 — nested relationship updates bypassed the shared wrapper
+
+- **Affected:** third-party or remote `IAuthorizationWriter` and
+  `IRelationshipPlanning` implementations reached through plural relationship
+  write or transaction-planning helpers. Bundled shared clients already
+  repeated nested validation.
+- **Impact:** a payload such as `:valid-until-mss` could cross the public wrapper
+  inside a nested relationship. A writer that ignored the unknown field could
+  create permanent access instead of the caller's intended expiry. Malformed
+  endpoints or unsupported subject relations could likewise reach that
+  implementation. Exploitation requires an application to expose relationship
+  mutation input to an attacker and use such an extension writer; the bundled
+  backends failed closed.
+- **Root cause:** the generic wrapper validated only that `:updates` was
+  sequential. Backend-neutral nested update validation happened later only in
+  the shared client implementation, while the formal mutation model treated
+  every sequential collection as valid.
+- **Correction:** relationship writes, preparation, and snapshot transaction
+  planning validate every nested operation, required endpoint, relation, and
+  qualifier before protocol dispatch. `PublicRequestBoundary.dfy` both requires
+  every mandatory nested field and distinguishes a valid sequential batch from
+  one containing malformed updates; an executed mutant and protocol-level
+  regression bind the rule to production.
+
+### EACL-FORMAL-076 — issued tokens and cursors had several accepted spellings
+
+- **Affected:** `eacl.secure-format/decode-canonical` and `b64url-decode` on CLJ
+  and CLJS, and through them Zed tokens, cache-entry envelopes, `eacl_c7_`
+  cursors, standalone `eacl_sd2.` page tokens, and stored canonical values, on
+  every backend.
+- **Impact:** an issued token or cursor could be respelled and still
+  authenticate, because authentication covers decoded values. The payload could
+  not be forged, but token and cursor strings were not unique. In the canonical
+  EDN layer, text appended inside a Zed token's envelope after an early `]` was
+  never read; commas, extra whitespace, another member order, list syntax,
+  `1N`, `+1`, `010`, `0x10`, string escapes, and metadata were also accepted,
+  and a character literal outside a string desynchronised the hidden-input
+  scanner, which then admitted a following discard, comment, or namespaced map.
+  In the Base64URL layer, `=` padding and nonzero unused bits in the last
+  character were accepted, and in JavaScript also whitespace. Cursors, which
+  the eacl-rust report recorded as unaffected, were malleable in their tag
+  segment.
+- **Correction:** each layer accepts only the canonical spelling. The EDN input
+  must equal the canonical rendering of the decoded value, or decoding fails
+  with `:noncanonical`, and the hidden-input scanner rejects metadata and
+  character literals outside strings. `b64url-decode` accepts only the
+  unpadded spelling `b64url-encode` emits and fails with `:malformed-base64`
+  otherwise.
+- **Migration:** none. EACL emits only canonical text and this change leaves
+  the renderer's output unchanged, so every value v8.0.0 stored and every token
+  or cursor it issued still decodes.
+
+### EACL-FORMAL-077 — page-request errors echoed the decrypted cursor
+
+- **Affected:** public `lookup-resources` and `lookup-subjects` on every
+  backend.
+- **Impact:** a request combining a valid cursor with a malformed page shape,
+  such as `{:first 1 :before cursor}`, failed with
+  `:eacl.pagination/invalid-page-request` whose data held the decrypted cursor
+  edge: internal coordinates, plan fingerprints and, on operator routes, cover
+  fingerprints and semantic scope. A lookup whose anchor does not resolve also
+  returned an empty page before its page keys were checked, so `{:first 0}`
+  was accepted for it.
+- **Correction:** both lookups validate the page keys of the caller's query,
+  with the same generated page decision, before snapshot selection and cursor
+  decoding. Error data echoes the caller's cursor strings.
+  `PageWindow.BoundaryValuesDoNotAffectNormalization` proves that the decision
+  depends only on boundary presence, so the engine's later check of the decoded
+  query agrees.
+- **Migration:** a request with both a malformed page shape and an invalid
+  cursor now reports the page shape first. A malformed page request for an
+  unknown anchor now fails instead of returning an empty page.
+
+### EACL-FORMAL-078 — `maximum-entries` did not bound validation work
+
+- **Affected:** `encode-canonical`, `canonicalize`, `capture-portable`, and the
+  digests built on them, on CLJ and CLJS.
+- **Impact:** availability. A collection larger than `:maximum-entries` was
+  walked completely before it was rejected, and an unbounded lazy sequence in
+  an application-supplied value never returned.
+- **Correction:** validation carries one running entry count through the whole
+  value and checks it before each value is examined, so it visits at most
+  `:maximum-entries` + 1 values.
+- **Migration:** a value that violates several bounds may now report
+  `:too-many-entries` where it previously reported the later violation.
+
+### EACL-FORMAL-079 — canonicalization merged members that render alike
+
+- **Affected:** `canonicalize` and `encode-canonical` on CLJ and CLJS.
+- **Impact:** a map or set holding a record and a map with the same fields
+  lost one member in `canonicalize`, while `encode-canonical` rendered both and
+  produced text that does not decode.
+- **Correction:** such a collection fails with `:duplicate-key` or
+  `:duplicate-member`. A record on its own still encodes as its field map;
+  that projection is intended, and identity boundaries that need the
+  distinction already reject records.
+- **Migration:** none for portable values.
+
+### EACL-FORMAL-080 — partial relationship scans ignored the qualifier component
+
+- **Affected:** `read-relationships` without `:subject/id` and `:resource/id`
+  over a Relation holding a caveated or expiring row, on every backend:
+  ordinary pages and the `:expiry-active` and `:authorization` windows.
+  Anchored reads and permission evaluation were unaffected.
+- **Impact:** omission, duplication, and availability. A continued page could
+  drop a row it had not returned or repeat one it had. A filtered window could
+  re-examine the same rows until its candidate window was exhausted and then
+  resume from the same position on every later page, so a walk never ended.
+- **Root cause:** partial scans read AVET values
+  `[p0 p1 p2 primary qualifier]`, which order one primary endpoint's rows by
+  qualifier (plain rows first) before owner. The cursor edge and its comparator
+  used only the primary and owner eids, and the seek positioned only by
+  primary.
+- **Correction:** `physical-compare` follows the index order (primary,
+  qualifier, owner); a qualified row's cursor edge records its qualifier eid;
+  each backend resumes at the boundary row's exact position
+  (`endpoint-pair/resume-bound`); and a scan whose rows do not advance strictly
+  in that order fails closed with `:eacl/backend-contract-violation`
+  `:strict-order`. Datalevin applies an AVE seek's entity component to every
+  datom it returns, not only to the first value, so its resumed partial scans
+  also dropped plain rows of later primary groups; it now positions inside the
+  boundary row's value group and continues from the adjacent value. Found by
+  the eacl-rust port (EACL-RS-004). A shared contract replays the minimized
+  walks, a plain cross-group walk, and a seeded sweep on every backend, and two
+  qualified production mutation controls cover the cursor and the comparator.
+
+### EACL-FORMAL-081 — permission trees failed on qualified relationships
+
+- **Affected:** `expand-permission-tree` on every backend whenever the
+  traversal scanned a Relation holding a caveated or expiring Relationship,
+  live or expired, in a leaf or in an arrow's source Relation.
+- **Impact:** availability. The request failed with
+  `:eacl.permission-tree/adapter-contract-violation`
+  `{:reason :adapter-operation-failed}`.
+- **Root cause:** the tree was the one v8 serving scan that did not request
+  qualified results. Each backend's endpoint scan rejects a stored value
+  carrying a qualifier reference with `:eacl/unsupported-qualifier`, which
+  `adapter-call!` redacted into a contract violation.
+- **Correction:** the tree scans compact qualified edges and lists every
+  stored Relationship. The leaf subject or arrow child node reached through a
+  qualified Relationship carries its `:caveat`, `:caveat-context` (omitted
+  when empty), and `:valid-until-ms`, decoded by the `read-relationships`
+  inspector. Nothing is evaluated, so the tree stays a function of the
+  selected basis, as its answer key already assumes. Decode faults are typed
+  and redacted. Known as PR206-F1 for Caveats; the eacl-rust port found the
+  expiring case (EACL-RS-005).
 
 ### EACL-FORMAL-085 — Datalevin Relation streams dropped rows after the first batch
 

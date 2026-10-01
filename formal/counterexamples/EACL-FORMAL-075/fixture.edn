@@ -1,0 +1,14 @@
+{:operation-family [:write-relationships :tx-relationships]
+ :attacker-controlled-update
+ {:operation :touch
+  :relationship
+  {:subject {:type :user :id "caregiver"}
+   :relation :viewer
+   :resource {:type :record :id "grandmother"}
+   :valid-until-mss 1000}}
+ :intended-semantics :temporary-access
+ :before
+ {:outer-envelope :sequential
+  :shared-wrapper :accepted
+  :extension-writer-dispatched true
+  :possible-extension-interpretation :permanent-access}}

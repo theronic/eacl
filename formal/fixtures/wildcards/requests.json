@@ -1,0 +1,553 @@
+[
+ {
+  "id": "check user:alice view area:a1",
+  "op": "check",
+  "subject": "user:alice",
+  "permission": "view",
+  "resource": "area:a1"
+ },
+ {
+  "id": "check user:alice enter area:a1",
+  "op": "check",
+  "subject": "user:alice",
+  "permission": "enter",
+  "resource": "area:a1"
+ },
+ {
+  "id": "check user:bob enter area:a1",
+  "op": "check",
+  "subject": "user:bob",
+  "permission": "enter",
+  "resource": "area:a1"
+ },
+ {
+  "id": "check user:carol enter area:a1",
+  "op": "check",
+  "subject": "user:carol",
+  "permission": "enter",
+  "resource": "area:a1"
+ },
+ {
+  "id": "check user:dave edit area:a1",
+  "op": "check",
+  "subject": "user:dave",
+  "permission": "edit",
+  "resource": "area:a1"
+ },
+ {
+  "id": "check user:alice edit area:a1",
+  "op": "check",
+  "subject": "user:alice",
+  "permission": "edit",
+  "resource": "area:a1"
+ },
+ {
+  "id": "check user:bob audit area:a1",
+  "op": "check",
+  "subject": "user:bob",
+  "permission": "audit",
+  "resource": "area:a1"
+ },
+ {
+  "id": "check user:carol audit area:a1",
+  "op": "check",
+  "subject": "user:carol",
+  "permission": "audit",
+  "resource": "area:a1"
+ },
+ {
+  "id": "check user:erin narrow area:a1",
+  "op": "check",
+  "subject": "user:erin",
+  "permission": "narrow",
+  "resource": "area:a1"
+ },
+ {
+  "id": "check user:alice narrow area:a1",
+  "op": "check",
+  "subject": "user:alice",
+  "permission": "narrow",
+  "resource": "area:a1"
+ },
+ {
+  "id": "check user:alice both area:a1",
+  "op": "check",
+  "subject": "user:alice",
+  "permission": "both",
+  "resource": "area:a1"
+ },
+ {
+  "id": "check user:alice nobody area:a1",
+  "op": "check",
+  "subject": "user:alice",
+  "permission": "nobody",
+  "resource": "area:a1"
+ },
+ {
+  "id": "check user:alice view area:a3",
+  "op": "check",
+  "subject": "user:alice",
+  "permission": "view",
+  "resource": "area:a3"
+ },
+ {
+  "id": "check team:red mingle area:a3",
+  "op": "check",
+  "subject": "team:red",
+  "permission": "mingle",
+  "resource": "area:a3"
+ },
+ {
+  "id": "check user:alice read doc:d2",
+  "op": "check",
+  "subject": "user:alice",
+  "permission": "read",
+  "resource": "doc:d2"
+ },
+ {
+  "id": "check user:alice read doc:d3",
+  "op": "check",
+  "subject": "user:alice",
+  "permission": "read",
+  "resource": "doc:d3"
+ },
+ {
+  "id": "check user:bob read doc:d3",
+  "op": "check",
+  "subject": "user:bob",
+  "permission": "read",
+  "resource": "doc:d3"
+ },
+ {
+  "id": "check user:alice peek doc:d0",
+  "op": "check",
+  "subject": "user:alice",
+  "permission": "peek",
+  "resource": "doc:d0"
+ },
+ {
+  "id": "check user:alice peek doc:d1",
+  "op": "check",
+  "subject": "user:alice",
+  "permission": "peek",
+  "resource": "doc:d1"
+ },
+ {
+  "id": "check user:carol read_clean doc:d1",
+  "op": "check",
+  "subject": "user:carol",
+  "permission": "read_clean",
+  "resource": "doc:d1"
+ },
+ {
+  "id": "check user:carol read_clean doc:d2",
+  "op": "check",
+  "subject": "user:carol",
+  "permission": "read_clean",
+  "resource": "doc:d2"
+ },
+ {
+  "id": "check user:alice read doc:d4",
+  "op": "check",
+  "subject": "user:alice",
+  "permission": "read",
+  "resource": "doc:d4"
+ },
+ {
+  "id": "check user:alice exit area:vault {\"carrying\":[\"lunch\"]}",
+  "op": "check",
+  "subject": "user:alice",
+  "permission": "exit",
+  "resource": "area:vault",
+  "context": {
+   "carrying": [
+    "lunch"
+   ]
+  }
+ },
+ {
+  "id": "check user:alice exit area:vault {\"carrying\":[\"launch-codes\"]}",
+  "op": "check",
+  "subject": "user:alice",
+  "permission": "exit",
+  "resource": "area:vault",
+  "context": {
+   "carrying": [
+    "launch-codes"
+   ]
+  }
+ },
+ {
+  "id": "check user:alice exit area:vault {\"carrying\":[\"badge\",\"customer-list\"]}",
+  "op": "check",
+  "subject": "user:alice",
+  "permission": "exit",
+  "resource": "area:vault",
+  "context": {
+   "carrying": [
+    "badge",
+    "customer-list"
+   ]
+  }
+ },
+ {
+  "id": "check user:frank guarded area:vault {\"carrying\":[],\"day\":\"monday\"}",
+  "op": "check",
+  "subject": "user:frank",
+  "permission": "guarded",
+  "resource": "area:vault",
+  "context": {
+   "carrying": [],
+   "day": "monday"
+  }
+ },
+ {
+  "id": "check user:frank guarded area:vault {\"carrying\":[],\"day\":\"sunday\"}",
+  "op": "check",
+  "subject": "user:frank",
+  "permission": "guarded",
+  "resource": "area:vault",
+  "context": {
+   "carrying": [],
+   "day": "sunday"
+  }
+ },
+ {
+  "id": "check user:frank guarded area:vault {\"carrying\":[]}",
+  "op": "check",
+  "subject": "user:frank",
+  "permission": "guarded",
+  "resource": "area:vault",
+  "context": {
+   "carrying": []
+  }
+ },
+ {
+  "id": "check user:bob guarded area:vault {\"carrying\":[],\"day\":\"sunday\"}",
+  "op": "check",
+  "subject": "user:bob",
+  "permission": "guarded",
+  "resource": "area:vault",
+  "context": {
+   "carrying": [],
+   "day": "sunday"
+  }
+ },
+ {
+  "id": "check user:alice guarded area:vault {\"carrying\":[]}",
+  "op": "check",
+  "subject": "user:alice",
+  "permission": "guarded",
+  "resource": "area:vault",
+  "context": {
+   "carrying": []
+  }
+ },
+ {
+  "id": "check user:* view area:a1",
+  "op": "check",
+  "subject": "user:*",
+  "permission": "view",
+  "resource": "area:a1"
+ },
+ {
+  "id": "lookup-resources user:alice view area",
+  "op": "lookup-resources",
+  "subject": "user:alice",
+  "permission": "view",
+  "resourceType": "area"
+ },
+ {
+  "id": "lookup-resources user:erin narrow area",
+  "op": "lookup-resources",
+  "subject": "user:erin",
+  "permission": "narrow",
+  "resourceType": "area"
+ },
+ {
+  "id": "lookup-resources user:alice read doc",
+  "op": "lookup-resources",
+  "subject": "user:alice",
+  "permission": "read",
+  "resourceType": "doc"
+ },
+ {
+  "id": "lookup-resources user:carol read_clean doc",
+  "op": "lookup-resources",
+  "subject": "user:carol",
+  "permission": "read_clean",
+  "resourceType": "doc"
+ },
+ {
+  "id": "lookup-resources user:alice exit area {\"carrying\":[]}",
+  "op": "lookup-resources",
+  "subject": "user:alice",
+  "permission": "exit",
+  "resourceType": "area",
+  "context": {
+   "carrying": []
+  }
+ },
+ {
+  "id": "lookup-resources user:alice exit area {\"carrying\":[\"launch-codes\"]}",
+  "op": "lookup-resources",
+  "subject": "user:alice",
+  "permission": "exit",
+  "resourceType": "area",
+  "context": {
+   "carrying": [
+    "launch-codes"
+   ]
+  }
+ },
+ {
+  "id": "lookup-resources user:frank guarded area {\"carrying\":[],\"day\":\"monday\"}",
+  "op": "lookup-resources",
+  "subject": "user:frank",
+  "permission": "guarded",
+  "resourceType": "area",
+  "context": {
+   "carrying": [],
+   "day": "monday"
+  }
+ },
+ {
+  "id": "lookup-resources user:frank guarded area {\"carrying\":[]}",
+  "op": "lookup-resources",
+  "subject": "user:frank",
+  "permission": "guarded",
+  "resourceType": "area",
+  "context": {
+   "carrying": []
+  }
+ },
+ {
+  "id": "lookup-resources user:* view area",
+  "op": "lookup-resources",
+  "subject": "user:*",
+  "permission": "view",
+  "resourceType": "area"
+ },
+ {
+  "id": "lookup-subjects area:a1 view user",
+  "op": "lookup-subjects",
+  "resource": "area:a1",
+  "permission": "view",
+  "subjectType": "user"
+ },
+ {
+  "id": "lookup-subjects area:a1 enter user",
+  "op": "lookup-subjects",
+  "resource": "area:a1",
+  "permission": "enter",
+  "subjectType": "user"
+ },
+ {
+  "id": "lookup-subjects area:a1 audit user",
+  "op": "lookup-subjects",
+  "resource": "area:a1",
+  "permission": "audit",
+  "subjectType": "user"
+ },
+ {
+  "id": "lookup-subjects area:a1 narrow user",
+  "op": "lookup-subjects",
+  "resource": "area:a1",
+  "permission": "narrow",
+  "subjectType": "user"
+ },
+ {
+  "id": "lookup-subjects area:a1 both user",
+  "op": "lookup-subjects",
+  "resource": "area:a1",
+  "permission": "both",
+  "subjectType": "user"
+ },
+ {
+  "id": "lookup-subjects area:a1 nobody user",
+  "op": "lookup-subjects",
+  "resource": "area:a1",
+  "permission": "nobody",
+  "subjectType": "user"
+ },
+ {
+  "id": "lookup-subjects area:a1 edit user",
+  "op": "lookup-subjects",
+  "resource": "area:a1",
+  "permission": "edit",
+  "subjectType": "user"
+ },
+ {
+  "id": "lookup-subjects area:a2 view user",
+  "op": "lookup-subjects",
+  "resource": "area:a2",
+  "permission": "view",
+  "subjectType": "user"
+ },
+ {
+  "id": "lookup-subjects area:a3 mingle team",
+  "op": "lookup-subjects",
+  "resource": "area:a3",
+  "permission": "mingle",
+  "subjectType": "team"
+ },
+ {
+  "id": "lookup-subjects doc:d2 read user",
+  "op": "lookup-subjects",
+  "resource": "doc:d2",
+  "permission": "read",
+  "subjectType": "user"
+ },
+ {
+  "id": "lookup-subjects doc:d1 read_clean user",
+  "op": "lookup-subjects",
+  "resource": "doc:d1",
+  "permission": "read_clean",
+  "subjectType": "user"
+ },
+ {
+  "id": "lookup-subjects doc:d3 read user",
+  "op": "lookup-subjects",
+  "resource": "doc:d3",
+  "permission": "read",
+  "subjectType": "user"
+ },
+ {
+  "id": "lookup-subjects area:vault exit user {\"carrying\":[]}",
+  "op": "lookup-subjects",
+  "resource": "area:vault",
+  "permission": "exit",
+  "subjectType": "user",
+  "context": {
+   "carrying": []
+  }
+ },
+ {
+  "id": "lookup-subjects area:vault exit user {\"carrying\":[\"launch-codes\"]}",
+  "op": "lookup-subjects",
+  "resource": "area:vault",
+  "permission": "exit",
+  "subjectType": "user",
+  "context": {
+   "carrying": [
+    "launch-codes"
+   ]
+  }
+ },
+ {
+  "id": "lookup-subjects area:vault guarded user {\"carrying\":[],\"day\":\"monday\"}",
+  "op": "lookup-subjects",
+  "resource": "area:vault",
+  "permission": "guarded",
+  "subjectType": "user",
+  "context": {
+   "carrying": [],
+   "day": "monday"
+  }
+ },
+ {
+  "id": "lookup-subjects area:vault guarded user {\"carrying\":[],\"day\":\"sunday\"}",
+  "op": "lookup-subjects",
+  "resource": "area:vault",
+  "permission": "guarded",
+  "subjectType": "user",
+  "context": {
+   "carrying": [],
+   "day": "sunday"
+  }
+ },
+ {
+  "id": "lookup-subjects area:vault guarded user {\"carrying\":[]}",
+  "op": "lookup-subjects",
+  "resource": "area:vault",
+  "permission": "guarded",
+  "subjectType": "user",
+  "context": {
+   "carrying": []
+  }
+ },
+ {
+  "id": "expand area:a1 viewer",
+  "op": "expand",
+  "resource": "area:a1",
+  "permission": "viewer"
+ },
+ {
+  "id": "expand area:a1 view",
+  "op": "expand",
+  "resource": "area:a1",
+  "permission": "view"
+ },
+ {
+  "id": "expand area:a1 enter",
+  "op": "expand",
+  "resource": "area:a1",
+  "permission": "enter"
+ },
+ {
+  "id": "expand area:a1 both",
+  "op": "expand",
+  "resource": "area:a1",
+  "permission": "both"
+ },
+ {
+  "id": "expand area:a3 mingle",
+  "op": "expand",
+  "resource": "area:a3",
+  "permission": "mingle"
+ },
+ {
+  "id": "expand doc:d0 peek",
+  "op": "expand",
+  "resource": "doc:d0",
+  "permission": "peek"
+ },
+ {
+  "id": "expand doc:d2 read",
+  "op": "expand",
+  "resource": "doc:d2",
+  "permission": "read"
+ },
+ {
+  "id": "read area relationships of user:*",
+  "op": "read",
+  "resourceType": "area",
+  "subjectType": "user",
+  "subjectId": "*"
+ },
+ {
+  "id": "read folder relationships",
+  "op": "read",
+  "resourceType": "folder"
+ },
+ {
+  "id": "write user:* where only user is allowed",
+  "op": "write",
+  "relationship": "area:a2#banned@user:*"
+ },
+ {
+  "id": "write user where only user:* is allowed",
+  "op": "write",
+  "relationship": "area:a2#wild@user:alice"
+ },
+ {
+  "id": "write bare user:* where only the Caveated branch is allowed",
+  "op": "write",
+  "relationship": "area:a2#anyone@user:*"
+ },
+ {
+  "id": "write user where only user:* with a Caveat is allowed",
+  "op": "write",
+  "relationship": "area:a2#anyone@user:alice[nothing_sensitive]"
+ },
+ {
+  "id": "write a * resource",
+  "op": "write",
+  "relationship": "area:*#viewer@user:alice"
+ },
+ {
+  "id": "schema with a wildcard on the left of an arrow",
+  "op": "write-schema",
+  "schema": "definition user {}\n\ndefinition folder {\n  relation parent: folder | folder:*\n  relation viewer: user\n  permission view = viewer + parent->view\n}\n"
+ }
+]

@@ -1,0 +1,8 @@
+{:trailing-input {:eacl/error :eacl.format/invalid :reason :noncanonical}
+ :alternative-spellings {:eacl/error :eacl.format/invalid :reason :noncanonical}
+ :hidden-input {:eacl/error :eacl.format/invalid :reason :malformed}
+ :base64url-respellings {:eacl/error :eacl.format/invalid :reason :malformed-base64}
+ :respelled-zed-token {:type :eacl/invalid-zed-token}
+ :respelled-cursor {:type :eacl.pagination/invalid-cursor}
+ :invariant
+ "Every decoding layer accepts only the canonical spelling of what it returns, so each authenticated value has exactly one accepted string."}

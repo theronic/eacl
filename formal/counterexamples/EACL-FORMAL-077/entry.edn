@@ -1,0 +1,16 @@
+{:id :EACL-FORMAL-077
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace "eacl-rust BUGS.md EACL-RS-006 (rs006-cursor-echo)"
+ :minimized-fixture "fixture.edn"
+ :impact :other
+ :affected-versions
+ ["v8.0.0 commit a698b3bdf15e61be9bfd1324d7d7c67dc82176be"]
+ :affected-backends [:shared]
+ :root-cause
+ "Lookup page keys were validated only inside the engine, on the internal query. By then relay/prepare-page-query had authenticated each :after and :before cursor and replaced it with its decrypted edge, so generated-page-error! copied that edge, with internal coordinates and plan fingerprints, into the data of every invalid-page-request error for a request that combined a valid cursor with a malformed page shape. Cursors are encrypted so that their contents stay private. The same late placement let a lookup whose anchor does not resolve return an empty page before its page keys were checked."
+ :fix
+ "lookup-resources and lookup-subjects validate the page keys of the caller's query with the same generated page decision before snapshot selection and cursor decoding, so errors carry the caller's opaque cursor strings. Page normalization reads only whether each boundary is present (PageWindow.BoundaryValuesDoNotAffectNormalization), so the engine's later check of the decoded query reaches the same decision."
+ :closing-evidence
+ ["eacl.datascript.contract-test/page-request-errors-echo-the-callers-cursor-strings-test (CLJ and CLJS)"
+  "formal/dafny/PageWindow.dfy BoundaryValuesDoNotAffectNormalization"]}

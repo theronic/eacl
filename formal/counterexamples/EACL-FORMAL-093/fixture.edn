@@ -1,0 +1,13 @@
+{:operation :validate-schema
+ :caveat-header "caveat c(x int)"
+ :bodies
+ [{:body "{ /* } */ x == 1 }" :before {:accepted true :stored-source " x == 1 "}}
+  {:body "{ /* c */ x == 1 }" :before {:type :eacl.caveat/invalid :reason :unsupported-operation :offset 1}}
+  {:body "{ /* a */ /* } */ x == 1 }" :before {:accepted true :stored-source " x == 1 "}}
+  {:body "{ /* } */ /* b */ x == 1 }" :before {:type :eacl.caveat/invalid :reason :unsupported-operation :offset 1}}
+  {:body "{ x == 1 /* } */ }" :before {:type :eacl.schema/parse-error}}
+  {:body "{ // } c\n x == 1 }" :before {:accepted true :stored-source " // } c\n x == 1 "}}]
+ :spicedb-v1.56.0
+ {:compiles "the body text from its first token to its last; a line end after a name, literal, ')', '}' or '*' is a token"
+  :accepts ["{ /* } */ x == 1 }" "{ /* c */ x == 1 }" "{ x == 1 /* c */ }" "{ x == // c\n 1\n}"]
+  :rejects ["{ x == /* c */ 1 }" "{\n x == 1 /* c */\n}"]}}

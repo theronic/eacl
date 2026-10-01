@@ -1,0 +1,9 @@
+{:viewer {:leaf [{:id "a" :valid-until-ms 5000} {:id "b"}]}
+ :view {:intermediate :union
+        :children [{:expanded-relation :viewer
+                    :leaf [{:id "a" :valid-until-ms 5000} {:id "b"}]}]}
+ :view-after-expiry :identical-to-view
+ :caveated-variant {:leaf [{:id "a" :caveat "c1"} {:id "b"}]}
+ :annotation-positions #{:leaf-subject :arrow-child-node}
+ :evaluated false
+ :check :has-permission}

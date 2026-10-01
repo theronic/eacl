@@ -1,0 +1,20 @@
+{:id :EACL-FORMAL-098
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace "eacl-diff clojure-campaign --seed 20261001, scenario s20261001-72; minimized to s20261001-72~min (829 -> 24 units)"
+ :minimized-fixture "fixture.edn"
+ :impact :false-deny
+ :affected-versions
+ ["v8.0 pre-release with operator delegation (PR #199 onward)"]
+ :affected-backends [:shared :datomic :datascript :datahike]
+ :root-cause
+ "The semantic DAG of an operator plan normalizes an intersection or union whose operands are one node to that node, so `manage = (viewer & viewer) + access` has the DAG of `viewer + access`. Delegation classified permissions by that DAG alone and took `manage` and `access` for union-only, but the union engine seals the stored expression, which keeps the intersection, and refuses both. Each delegated operand was then decided through `stable-plan`, which returned the operator plan itself, so a check denied a granted resource; lookups and counts sealed a flattened generator whose root was delegated and threw a host ClassCastException comparing a synthetic node name with the sorted delegated set."
+ :fix
+ "Sealing records `:folded-operator?` on an expression whose stored form has an intersection or exclusion that its DAG folded away, inside the plan fingerprint and only where it applies. `operator-plan/operator-permission?` counts such an expression as an operator permission, so the delegation, guarded-delegation and union-only analyses agree with the union engine: a permission is handed to its own union plan only when the union engine can seal it. The flattened generator's sealer answers an unknown synthetic node with a typed `:eacl.operator/invalid-cover` error rather than comparing incomparable keys."
+ :notes
+ "A regression of operator delegation: main a698b3bd and the eacl-rust port answer the scenario with a viewer grant correctly (has-permission for both checks, the project from `lookup manage`, 1 from `count access`; eacl-diff port-replay parity 5/5)."
+ :closing-evidence
+ ["eacl.operator.folded-operator-test/a-folded-operator-answers-exactly-like-its-unfolded-twin-test"
+  "eacl.operator.folded-operator-test/the-counterexample-grants-what-its-twin-grants-test"
+  "eacl.operator.plan-test/a-folded-operator-keeps-its-permission-an-operator-permission-test"
+  "eacl.formal.executed-mutation-controls/operator-delegation-takes-folded-operator-for-union-only-killed?"]}

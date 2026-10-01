@@ -13,6 +13,7 @@ const repositoryRoot = resolve(
 const sourcePaths = [
   "modules/eacl/src",
   "modules/eacl-caveats-jvm/src",
+  "modules/eacl-caveats-portable/src",
   "modules/eacl-datomic/src",
   "modules/eacl-datahike/src",
   "modules/eacl-datascript/src",
@@ -26,6 +27,8 @@ const roots = [
   "eacl.caveats.evaluator/require-matching!",
   "eacl.caveats.jvm/evaluator",
   "eacl.caveats.jvm/evaluate-definition",
+  "eacl.caveats.portable/evaluator",
+  "eacl.caveats.portable/evaluate-definition",
   "eacl.relationships.qualifier-integrity/proof-input",
   "eacl.relationships.qualifier-integrity/report",
   "eacl.relationships.qualifier-integrity/repair-pair!",

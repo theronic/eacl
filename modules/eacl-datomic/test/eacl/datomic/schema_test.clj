@@ -88,8 +88,8 @@
   "definition user {}
    definition document {
      relation reader: user
-     permission a = reader - b
-     permission b = a
+     permission aaa = reader - bbb
+     permission bbb = aaa
    }")
 
 (def schema-with-legacy-permissions
@@ -159,7 +159,8 @@
             (exception-data
              #(schema/write-schema! conn invalid-negative-cycle-schema))
             after-failure (d/db conn)]
-        (is (= :eacl.schema/unstratified-exclusion (:type data)))
+        (is (= :eacl.schema/unsupported-feature (:type data)))
+        (is (= [:unstratified-exclusion] (mapv :type (:issues data))))
         (is (= stable-generation
                (eacl.datomic.impl.indexed/schema-version after-failure)))
         (is (= stable-schema (schema/read-schema after-failure))))
@@ -366,7 +367,9 @@
                (:type (exception-data
                        #(schema/write-schema! conn bad-schema))))))))
 
-  (testing "arrow permission with invalid target is rejected"
+  (testing "arrow permission with a target no subject type has is rejected"
+    ;; SpiceDB does not check an arrow's target, so this is an unsupported
+    ;; feature rather than an invalid schema.
     (with-mem-conn [conn schema/v8-schema]
       (let [bad-schema "definition user {}
                         definition account {
@@ -376,7 +379,7 @@
                           relation account: account
                           permission view = account->nonexistent
                         }"]
-        (is (= :eacl.schema/expression-resolution-failed
+        (is (= :eacl.schema/unsupported-feature
                (:type (exception-data
                        #(schema/write-schema! conn bad-schema))))))))
 
@@ -694,9 +697,11 @@
                                         }"))]
     (testing "arrow targets are validated against ALL subject types, regardless of declaration order"
       ;; mgmt exists on user but not group: both orders must be rejected identically.
+      ;; SpiceDB accepts the arrow (group contributes nothing), so EACL reports
+      ;; an unsupported feature rather than an invalid schema.
       (doseq [types ["user | group" "group | user"]]
         (with-mem-conn [conn schema/v8-schema]
-          (is (= :eacl.schema/expression-resolution-failed
+          (is (= :eacl.schema/unsupported-feature
                  (:type
                   (exception-data
                    #(schema/write-schema! conn

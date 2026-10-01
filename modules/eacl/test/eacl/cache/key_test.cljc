@@ -80,3 +80,21 @@
                   (catch #?(:clj Throwable :cljs :default) error error))]
       (is (= :eacl/invalid-cache-key (:type (ex-data error)))
           (pr-str invalid)))))
+
+(deftest denotation-key-builder-equals-the-constructor
+  (let [shared (assoc (dissoc base-identity :semantic) :tier :denotation)
+        build (cache-key/exact-denotation-key-builder shared)
+        error-type (fn [f]
+                     (try (f) nil
+                          (catch #?(:clj Throwable :cljs :default) error
+                            (:type (ex-data error)))))]
+    (doseq [semantic [:semantic [:membership-point 1 "plan" :user 7 9] {:k [1 2]}]]
+      (is (= (cache-key/exact-denotation-key (assoc shared :semantic semantic))
+             (build semantic))))
+    (testing "the shared fields are validated once, when the builder is made"
+      (is (= :eacl/invalid-cache-key
+             (error-type #(cache-key/exact-denotation-key-builder (dissoc shared :abi)))))
+      (is (= :eacl/invalid-cache-key
+             (error-type #(cache-key/exact-denotation-key-builder (assoc shared :unknown 1))))))
+    (testing "each key still requires its semantic identity"
+      (is (= :eacl/invalid-cache-key (error-type #(build nil)))))))

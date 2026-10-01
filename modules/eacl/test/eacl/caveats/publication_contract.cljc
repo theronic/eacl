@@ -15,6 +15,37 @@
            (let [data (ex-data error) cause #?(:clj (.getCause ^Throwable error) :cljs (ex-cause error))]
              (if (and cause (not (:eacl/error data))) (recur cause) data))))))
 
+(defn- check-endpoint-existence!
+  "Writes decide endpoint existence from one fact, never by materializing an
+  endpoint: a subject or resource holding many relationships must not make a
+  write cost O(degree). An endpoint without facts is still rejected."
+  [{:keys [w native snapshot tx! relation subject resource]}]
+  (let [materialized (atom #{})
+        spy (assoc-in w [:native :entity]
+                      (fn [db eid] (swap! materialized conj eid) ((:entity native) db eid)))
+        identity [:user subject relation :doc resource]
+        plain (staged/plan-current spy :create identity nil)
+        batch (staged/plan-batch-current
+               spy (staged/prepare-batch! spy [{:operation :create :relationship identity}]) [])]
+    (is (seq (:tx-data plain)))
+    (is (seq (:tx-data batch)))
+    (is (not-any? @materialized [subject resource])
+        "endpoint existence reads no endpoint entity")
+    (is (contains? @materialized relation) "the Relation entity is still read")
+    (let [tempid ((:tempid native))
+          report (tx! [{:db/id tempid :eacl/id "publication/departed"}])
+          departed (get (:tempids report) tempid)]
+      (tx! [[:db/retractEntity departed]])
+      (is (false? ((:entity-exists? native) (snapshot) departed)))
+      (is (true? ((:entity-exists? native) (snapshot) subject)))
+      (is (= :missing-endpoint
+             (:reason (error-data #(staged/plan-current w :create [:user departed relation :doc resource] nil)))))
+      (is (= :missing-endpoint
+             (:reason (error-data #(staged/plan-current w :create [:user subject relation :doc departed] nil)))))
+      (is (= :missing-endpoint
+             (:reason (error-data #(staged/prepare-batch!
+                                    w [{:operation :create :relationship [:user departed relation :doc resource]}]))))))))
+
 (defn check-publication! [{:keys [write-schema! writer entid strategy interleave! allowance-stamps]}]
   (write-schema! persistence/first-schema)
   (let [w (writer) native (:native w) snapshot (:snapshot native) tx! (:transact! native)
@@ -131,6 +162,9 @@
           (is (= 1 (count (:qualifiers collected))))
           (is (= 1 (count (forward))) "orphan cleanup never retracts the attached qualifier"))
         (staged/write! w :delete identity nil))
+      (check-endpoint-existence!
+       {:w w :native native :snapshot snapshot :tx! tx! :relation relation
+        :subject subject :resource resource})
       (doseq [direction [:forward :reverse]]
         (staged/write! w :create identity {:valid-until-ms 7000})
         (let [qid (current-qid) before (proof)

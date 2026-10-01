@@ -9,11 +9,20 @@
    :maximum-entries (:context-total-entries values/limits)
    :maximum-depth 8})
 
-(deftype ^:private PreparedContext [value identity])
+(deftype ^:private PreparedContext [input value identity])
 
 (defn prepared? [context] (instance? PreparedContext context))
 (defn value [context] (.-value ^PreparedContext context))
 (defn identity [context] (.-identity ^PreparedContext context))
+
+(defn prepared-for?
+  "Whether this preparation belongs to the exact immutable input or its
+   canonical value. Never use map equality to recognize a prepared input."
+  [prepared input]
+  (and (prepared? prepared)
+       (or (identical? input (.-input ^PreparedContext prepared))
+           (identical? input (value prepared))
+           (and (map? input) (empty? input) (empty? (value prepared))))))
 
 (defn- string! [s]
   (when-not (string? s) (values/error! :context-type))
@@ -50,7 +59,7 @@
                   (+ size (if (= :timestamp expected) 3 1)))
                 (if (map? v) (inc (count v)) 1) items)))))
 
-(def ^:private empty-context (PreparedContext. {} (values/encode-bounded {} encoding-options)))
+(def ^:private empty-context (PreparedContext. {} {} (values/encode-bounded {} encoding-options)))
 
 (defn prepare
   "Validates all supplied fields before I/O or reuse. Declared parameter types
@@ -71,7 +80,52 @@
              (values/error! :resource-limit {:limit :context-size}))
            size))
        1 context)
-      (PreparedContext. context (values/encode-bounded context encoding-options)))))
+      (let [canonical (values/canonical-host-value context)]
+        (PreparedContext. context canonical (values/encode-bounded canonical encoding-options))))))
+
+(defn declared-parameter-index
+  "Indexes Caveat declarations (`{:name n :parameters [[p type] ...]}`) by
+   parameter: `{parameter {type #{caveat-name ...}}}`."
+  [declarations]
+  (reduce (fn [index {:keys [name parameters]}]
+            (reduce (fn [index [parameter type]]
+                      (update-in index [parameter type] (fnil conj (sorted-set)) name))
+                    index parameters))
+          {} declarations))
+
+(defn- admits-type?
+  "Whether `v` is a value of declared Caveat parameter `type`. Only a type
+   mismatch is decisive here; any other admission outcome is left to
+   evaluation."
+  [type v]
+  (try
+    (values/normalize-value type v)
+    true
+    (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+      (not= :context-type (:reason (ex-data error))))))
+
+(defn reject-ill-typed!
+  "Fail-fast admission of a prepared request context against the Caveats a
+   request can reach, indexed by `declared-parameter-index`. A supplied field
+   that at least one reachable Caveat declares is rejected when its value has
+   none of the types those Caveats declare for it: every evaluation of such a
+   Caveat would fault on it. A field no reachable Caveat declares is ignored,
+   and a value one declaration admits is accepted even if another rejects it.
+   Throws `:eacl.caveat/invalid` with `:reason :context-type`, the
+   `:parameter`, the declared types (`:expected`) and the declaring Caveats
+   (`:caveats`), for the first such field in parameter order."
+  [context index]
+  (let [supplied (value context)]
+    (when (and (seq supplied) (seq index))
+      (doseq [parameter (sort (keys index))
+              :when (contains? supplied parameter)
+              :let [v (get supplied parameter)
+                    types (get index parameter)]]
+        (when-not (some #(admits-type? % v) (keys types))
+          (values/error! :context-type
+                         {:parameter parameter
+                          :expected (vec (sort-by pr-str (keys types)))
+                          :caveats (vec (into (sorted-set) cat (vals types)))}))))))
 
 (defn project
   "Projects a validated request onto one admitted Caveat's parameter names."

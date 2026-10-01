@@ -285,7 +285,19 @@
             store context relationship-key (rendered-page 1))))
     (is (= {:published? true :reason :published}
            (cache/publish-rendered-page!
-            store context relationship-key (rendered-relationship-page 1))))))
+            store context relationship-key (rendered-relationship-page 1))))
+    (is (= {:published? false :reason :invalid-value}
+           (cache/publish-rendered-page!
+            store context lookup-key
+            (assoc-in (rendered-page 1)
+                      [:page :data 0 :relation]
+                      :member))))
+    (is (= {:published? false :reason :invalid-value}
+           (cache/publish-rendered-page!
+            store context relationship-key
+            (assoc-in (rendered-relationship-page 1)
+                      [:page :data 0 :subject :relation]
+                      :member))))))
 
 (deftest rendered-pages-reject-request-owned-metadata-test
   (let [store (cache/basis-cache {:max-entries 4})
@@ -515,6 +527,31 @@
               {:operation :expand-permission-tree :query {}}
               invalid))
             (pr-str invalid))))
+    (testing "qualified tree elements carry only canonical qualifier keys"
+      (let [annotated
+            (-> tree
+                (assoc-in [:intermediate :children 0 :leaf :subjects]
+                          [(assoc subject :caveat "enabled"
+                                  :caveat-context {"flag" true}
+                                  :valid-until-ms 5000)])
+                (assoc-in [:intermediate :children 1 :valid-until-ms] 7000))
+            subject-path [:intermediate :children 0 :leaf :subjects 0]]
+        (is (cache/completed-answer-value-valid?
+             :expand-permission-tree
+             {:operation :expand-permission-tree :query {}}
+             annotated))
+        (doseq [invalid
+                [(assoc-in annotated [:intermediate :children 1 :valid-until-ms] "7000")
+                 (update-in annotated subject-path dissoc :caveat)
+                 (assoc-in annotated (conj subject-path :caveat-context) {})
+                 (assoc-in annotated (conj subject-path :caveat) :enabled)
+                 (assoc-in annotated (conj subject-path :unexpected) true)]]
+          (is (false?
+               (cache/completed-answer-value-valid?
+                :expand-permission-tree
+                {:operation :expand-permission-tree :query {}}
+                invalid))
+              (pr-str invalid)))))
     (is (false?
          (cache/completed-answer-value-valid?
           :count-subjects unbounded {:count 7 :limit -1})))
@@ -1025,7 +1062,7 @@
               (cache/managed-source-identity
                (lineage default-lifecycle)
                default-fingerprint
-              :identity-v2)
+               :identity-v2)
               :managed-key-fn (constantly proof)}
              query (constantly :uncached))]
         (is (false? (:cached? miss)))

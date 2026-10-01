@@ -112,10 +112,10 @@
      relation gate_b: user
      relation banned: user
      relation parent: folder
-     permission a = seed_a + (parent->b & gate_a)
-     permission b = seed_b + (parent->a & gate_b)
-     permission view = a
-     permission allowed = a - banned
+     permission perm_a = seed_a + (parent->perm_b & gate_a)
+     permission perm_b = seed_b + (parent->perm_a & gate_b)
+     permission view = perm_a
+     permission allowed = perm_a - banned
    }")
 
 (def recursive-typed-collision-schema
@@ -395,14 +395,14 @@
                        :resource (oracle-entity resource)}))
                relationships)
          :permissions
-         {[:folder :a]
+         {[:folder :perm_a]
           [:union [:relation :seed_a]
-           [:intersection [:arrow :parent :b] [:relation :gate_a]]]
-          [:folder :b]
+           [:intersection [:arrow :parent :perm_b] [:relation :gate_a]]]
+          [:folder :perm_b]
           [:union [:relation :seed_b]
-           [:intersection [:arrow :parent :a] [:relation :gate_b]]]
+           [:intersection [:arrow :parent :perm_a] [:relation :gate_b]]]
           [:folder :allowed]
-          [:exclusion [:permission :a] [:relation :banned]]}}
+          [:exclusion [:permission :perm_a] [:relation :banned]]}}
         evaluated (oracle/evaluate-stratified snapshot)
         expected
         (mapv #(oracle/evaluated-check?
@@ -478,7 +478,7 @@
               :scope-identity :relation-arrow-reverse}))))))
 
 (deftest recursive-intersection-crosses-portable-word-boundary-test
-  (let [relation-names (mapv #(keyword (str "r" %)) (range 33))
+  (let [relation-names (mapv #(keyword (str "rel" %)) (range 33))
         schema-source
         (str "definition user {}\n"
              "definition folder {\n"

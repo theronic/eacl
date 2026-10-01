@@ -13,7 +13,7 @@
     (reset! state next-value)
     (mod next-value bound)))
 
-(def relation-names [:a :b :c :d])
+(def relation-names [:aaa :bbb :ccc :ddd])
 
 (defn- random-oracle-expression
   [state depth]
@@ -58,21 +58,21 @@
 (def oracle-snapshot
   {:objects (set (conj test-subjects test-resource))
    :relationships
-   #{{:resource test-resource :relation :a :subject [:user "u0"]}
-     {:resource test-resource :relation :a :subject [:user "u1"]}
-     {:resource test-resource :relation :b :subject [:user "u1"]}
-     {:resource test-resource :relation :b :subject [:user "u2"]}
-     {:resource test-resource :relation :c :subject [:user "u0"]}
-     {:resource test-resource :relation :c :subject [:user "u2"]}}
+   #{{:resource test-resource :relation :aaa :subject [:user "u0"]}
+     {:resource test-resource :relation :aaa :subject [:user "u1"]}
+     {:resource test-resource :relation :bbb :subject [:user "u1"]}
+     {:resource test-resource :relation :bbb :subject [:user "u2"]}
+     {:resource test-resource :relation :ccc :subject [:user "u0"]}
+     {:resource test-resource :relation :ccc :subject [:user "u2"]}}
    :permissions {}})
 
 (defn- schema-text [source]
   (str "definition user {}\n"
        "definition document {\n"
-       "relation a: user\n"
-       "relation b: user\n"
-       "relation c: user\n"
-       "relation d: user\n"
+       "relation aaa: user\n"
+       "relation bbb: user\n"
+       "relation ccc: user\n"
+       "relation ddd: user\n"
        "permission view = " source "\n"
        "}"))
 

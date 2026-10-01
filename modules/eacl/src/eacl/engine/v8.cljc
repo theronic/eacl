@@ -1,6 +1,9 @@
 (ns eacl.engine.v8
-  (:require [eacl.authorization.evidence :as evidence]
+  (:require [eacl.authorization.context :as caveat-context]
+            [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.qualification :as qualification]
             [eacl.authorization.result :as authorization-result]
+            [eacl.backend.entity-id :as entity-id]
             [eacl.backend.v8 :as backend]
             [eacl.cache.derived-schema :as derived-schema]
             [eacl.core :refer [spice-object]]
@@ -161,10 +164,29 @@
            (.warn js/console message (pr-str data)))))))
 
 (defn object-eid
-  "Resolves an external object id through the snapshot adapter."
+  "Converts one application object ID through the snapshot adapter."
   [snapshot id]
   (when (some? id)
-    (backend/invoke snapshot :object-id->internal id)))
+    (backend/object-id->internal snapshot id)))
+
+(defn- internal-object-eid
+  "Accepts an already-resolved backend ID without invoking the application-ID
+  codec a second time."
+  [id]
+  (when (some? id)
+    (when-not (entity-id/valid? id)
+      (throw
+       (ex-info
+        "The authorization engine received an invalid internal object ID."
+        {:type :eacl/invalid-internal-id
+         :eacl/error :eacl/invalid-internal-id
+         :value id})))
+    id))
+
+(defn- resolve-object
+  [snapshot object]
+  (when object
+    (update object :id #(object-eid snapshot %))))
 
 (defn- page-error!
   [message data]
@@ -434,6 +456,7 @@
   {:schema-version nil
    :request-local? true
    :parsed-schema (atom nil)
+   :authorization-schema (atom nil)
    :validation-catalog (atom nil)
    :expression-metrics (atom {})
    :sealed-plans (atom {})
@@ -478,6 +501,7 @@
   [artifact value]
   (case artifact
     :parsed-schema (map? value)
+    :authorization-schema (map? value)
     :validation-catalog (map? value)
     :expression-decodes (map? value)
     :sealed-plans (map? value)
@@ -566,6 +590,9 @@
         part #(derived-schema/artifact-partition store identity %)]
     {:schema-version schema-generation
      :parsed-schema (part :parsed-schema)
+     ;; The structural schema writes validate against; read requests keep
+     ;; theirs in `:parsed-schema`.
+     :authorization-schema (part :authorization-schema)
      :validation-catalog (part :validation-catalog)
      :expression-metrics (part :expression-decodes)
      :sealed-plans (part :sealed-plans)
@@ -792,6 +819,52 @@
             (throw error)))
         (throw error)))))
 
+(defn- filter-relation-eids
+  "The relation-definition eid of a relationship filter clause."
+  [db {:keys [resource-type relation subject-type]}]
+  (into []
+        (keep (fn [{:keys [e v]}] (when (= subject-type (nth v 2)) e)))
+        (relation-datoms db resource-type relation)))
+
+(defn caveat-parameter-index
+  "The parameters that the Caveats a request can reach declare,
+  `{parameter {type #{caveat-name}}}`: every Caveat that a Relation of the
+  permission's closure admits, plus those of an optional relationship
+  filter clause `{:resource-type :relation :subject-type}`, whose edges are
+  qualified too. A stamped client retains it with the schema generation.
+  Empty without a qualified request."
+  ([db resource-type permission-name]
+   (caveat-parameter-index db resource-type permission-name nil))
+  ([db resource-type permission-name filter-relation]
+   (if-let [request *qualification*]
+     (let [build #(caveat-context/declared-parameter-index
+                   (qualification/caveat-declarations
+                    request
+                    (cond-> (vec (permission-relationship-eids db resource-type permission-name))
+                      filter-relation (into (filter-relation-eids db filter-relation)))))]
+       (if (derived-cache-active?)
+         (memoized-map-derived!
+          (:sealed-plans *schema-cache*)
+          [::caveat-parameters resource-type permission-name filter-relation]
+          build)
+         (build)))
+     {})))
+
+(defn validate-caveat-context!
+  "Fail-fast admission of the qualified request's Caveat context against the
+  Caveats the request can reach (`caveat-parameter-index`,
+  `caveat-context/reject-ill-typed!`): a supplied field that a reachable
+  Caveat declares, but whose value fits none of its declared types, rejects
+  the request before evaluation. Free when the request supplies no context."
+  ([db resource-type permission-name]
+   (validate-caveat-context! db resource-type permission-name nil))
+  ([db resource-type permission-name filter-relation]
+   (when-let [request *qualification*]
+     (let [prepared (:prepared-context request)]
+       (when (seq (caveat-context/value prepared))
+         (caveat-context/reject-ill-typed!
+          prepared (caveat-parameter-index db resource-type permission-name filter-relation)))))))
+
 (defn- permission-query-dependencies
   [db [resource-type permission-name]]
   (->> (get-permission-paths db resource-type permission-name)
@@ -938,6 +1011,25 @@
    {:plan-version operator-plan/plan-version
     :fingerprint-domain operator-plan/fingerprint-domain
     :order-contract operator-plan/order-contract
+    ;; Recursive plans whose recursion lies inside union-only operands, or
+    ;; passes through linearly guarded operators, are generated by a
+    ;; delegated operand's own union plan, or else by the flattened
+    ;; generator over the union-only permissions' union plans.
+    :recursive-generator :flattened-guarded-generator-v1
+    ;; A permission is delegated to its own union plan only when its stored
+    ;; expression has no operator, including one its semantic DAG folded
+    ;; away (`viewer & viewer`): EACL-FORMAL-098.
+    :delegation-classification :stored-operators-v1
+    ;; Unions and intersections decide their operands in the sealed static
+    ;; cost order (`operator-plan/operand-order`), and a composition whose
+    ;; operands are both decisive keeps the later deadline: certificates of
+    ;; completed answers differ from those of the canonical order.
+    :operand-order :static-cost-v1
+    :certificate-rule :later-when-both-decide-v1
+    ;; Strong-Kleene faults: operand decisions, including reordered batched
+    ;; membership, are independent of evaluation order.
+    :qualified-membership :kleene-fault-operands-v3
+    :membership-subjects :typed-wildcard-variants-v1
     :versions
     {:cover operator-plan/cover-version
      :witness operator-plan/witness-version
@@ -1052,19 +1144,88 @@
       (:basis-identity *proof-frame*)
       {:selected-snapshot (backend/invoke db :snapshot-id)}))
 
+(defn- delegated-generator
+  "The union-only permission whose own sealed union plan generates a
+  recursive operator plan's candidates (`operator-plan/delegated-generator`),
+  or nil. Acyclic operator plans keep their least-path cover and its emission
+  witnesses."
+  [plan]
+  (when (operator-recursive/recursive-plan? plan)
+    (when-let [delegated (operator-plan/delegated-permissions plan)]
+      (operator-plan/delegated-generator plan (:root plan) delegated))))
+
 (defn- stable-cover-plan
   "Seals the operator cover once per (plan fingerprint, root) in the bound
   generation-owned cache instead of once per page. The sealed cover is
   closure-free schema-derived data (`sealed-plan/seal-plan` is pure with
   respect to relationship data), so generation-scoped reuse is sound; an
-  unbound raw engine call still seals per request without publishing."
+  unbound raw engine call still seals per request without publishing.
+
+  A recursive plan whose recursion lies inside union-only operands, or
+  passes through linearly guarded operators, has one of two generators:
+
+  - When its generator chain ends at a delegated union-only permission, that
+    permission's own sealed union plan: the stream the union engine produces
+    for a lookup of the operand itself.
+  - Otherwise, such as under a union root or for a guarded member, the
+    flattened generator (`operator-cover-plan/seal-generator`): one
+    synthetic union node per operator permission reached, over the
+    union-only permissions' own union plans.
+
+  Neither has synthetic nodes per expression node. The cover's fingerprint is
+  the one every recursive operator cursor authenticates, so a cursor minted
+  under another generator is rejected. Other plans keep the per-node cover."
+  [db plan]
+  (if-let [generator (delegated-generator plan)]
+    (stable-plan db generator)
+    (let [delegated (when (operator-recursive/recursive-plan? plan)
+                      (or (operator-plan/delegated-permissions plan)
+                          (:union-only (operator-plan/guarded-delegation plan))))
+          [key seal] (if delegated
+                       [[::operator-generator (:fingerprint plan) (:root plan)]
+                        #(operator-cover-plan/seal-generator db plan delegated)]
+                       [[::operator-cover (:fingerprint plan) (:root plan)]
+                        #(operator-cover-plan/seal-plan db plan)])]
+      (if-let [plans (:sealed-plans *schema-cache*)]
+        (memoized-map-derived! plans key seal)
+        (seal)))))
+
+(defn- operator-scope-digest
+  "`operator-cursor-scope/digest`, memoized in the bound generation-owned
+  cache. The digest is a pure function of the key: the operator plan
+  fingerprint authenticates every plan field the scope reads, the cover
+  fingerprint fixes the cover's root and semantic root, and the proof
+  identity and traversal are the remaining inputs. Canonicalizing the whole
+  plan otherwise costs milliseconds on every page request."
+  [plan cover-plan traversal proof-identity]
+  (let [compute #(operator-cursor-scope/digest
+                  plan cover-plan traversal proof-identity)]
+    (if-let [plans (:sealed-plans *schema-cache*)]
+      (:digest
+       (memoized-map-derived!
+        plans
+        [::operator-scope-digest (:fingerprint plan) (:fingerprint cover-plan)
+         traversal proof-identity]
+        #(hash-map :digest (compute))))
+      (compute))))
+
+(defn- stable-touch-plan
+  "The relaxed touch cover of an operator plan (see
+  `eacl.operator.cover-plan/seal-plan`), sealed once per plan fingerprint."
   [db plan]
   (if-let [plans (:sealed-plans *schema-cache*)]
     (memoized-map-derived!
      plans
-     [::operator-cover (:fingerprint plan) (:root plan)]
-     #(operator-cover-plan/seal-plan db plan))
-    (operator-cover-plan/seal-plan db plan)))
+     [::operator-touch-cover (:fingerprint plan) (:root plan)]
+     #(operator-cover-plan/seal-plan db plan (:root plan) {:relaxed? true}))
+    (operator-cover-plan/seal-plan db plan (:root plan) {:relaxed? true})))
+
+(defn- rule-subject-type
+  [rule]
+  (case (:rule rule)
+    :relation (:subject-type rule)
+    :arrow-relation (:target-subject-type rule)
+    nil))
 
 (defn- operator-edge
   [plan cover-plan traversal semantic-scope coords]
@@ -1668,18 +1829,18 @@
                      :asc progress
                      :desc (or last-selected progress))]
     (cond-> {:data (mapv :node selected)
-     :page-info
-     {:start-cursor start-cursor
-      :end-cursor end-cursor
-      :has-next-page?
-      (case direction
-        :asc (boolean (:more? result))
-        :desc (boolean bound))
-      :has-previous-page?
-      (case direction
-        :asc (boolean bound)
-        :desc (boolean (:more? result)))
-      :bounded? (boolean (:bounded? result))}}
+             :page-info
+             {:start-cursor start-cursor
+              :end-cursor end-cursor
+              :has-next-page?
+              (case direction
+                :asc (boolean (:more? result))
+                :desc (boolean bound))
+              :has-previous-page?
+              (case direction
+                :asc (boolean bound)
+                :desc (boolean (:more? result)))
+              :bounded? (boolean (:bounded? result))}}
       (and (or evidence-decisions? *qualification*)
            (= :detailed (or result-policy *lookup-result-policy*)))
       (assoc :result-evidence
@@ -1776,7 +1937,11 @@
       :cut-point! (stable-cut-point)
       :page-size page-size
       :qualification *qualification*
-      :result-policy *lookup-result-policy*
+      ;; A raw candidate stream keeps every possibly active decision, faults
+      ;; included: its consumer composes each one with a filter edge before
+      ;; applying the public policy (a conditional candidate whose filter
+      ;; faults must fail, not vanish).
+      :result-policy (if raw? :possible *lookup-result-policy*)
       :after (when (= :asc direction) edge)
       :before (when (= :desc direction) edge)
       :last-window? (and (= :desc direction) (nil? edge))
@@ -1785,10 +1950,166 @@
       :checkpoint-key checkpoint-key}
      (when raw? {:raw-candidates? true}))))
 
+(defn- by-subject
+  "Aligned decisions for `candidates`, one call of `decide` per subject:
+  `(decide subject-type subject-eid resource-eids)`."
+  [decide candidates]
+  (if-let [{:keys [subject-type subject-eid]} (first candidates)]
+    (if (every? #(and (= subject-type (:subject-type %))
+                      (= subject-eid (:subject-eid %)))
+                (rest candidates))
+      ;; Forward pages and point checks already have one subject. The
+      ;; oracle's values are aligned; grouping and indexing them again only
+      ;; allocates keys and maps for answers we can return directly.
+      (vec (decide subject-type subject-eid (mapv :resource-eid candidates)))
+      (let [decided
+            (into {}
+                  (map (fn [[[subject-type subject-eid] group]]
+                         (let [resource-eids (mapv :resource-eid group)]
+                           [[subject-type subject-eid]
+                            (zipmap resource-eids
+                                    (decide subject-type subject-eid resource-eids))])))
+                  (group-by (juxt :subject-type :subject-eid) candidates))]
+        (mapv #(get-in decided [[(:subject-type %) (:subject-eid %)] (:resource-eid %)])
+              candidates)))
+    []))
+
+(defn- delegated-operand-oracle
+  "The oracle for a delegated operator plan's operands
+  (`operator-plan/delegation`). Each union-only operand is decided through
+  its own sealed union plan, never re-derived by the operator machinery.
+
+  - `:batched` serves lookups and counts. Candidates that share one subject
+    (every forward page and count) go through `stable-route/check-many-eids`
+    with one request-scoped membership context, so holdings, intermediates,
+    and decided ancestors are read once per request. Faults compose with
+    strong-Kleene connectives, so the reordered search decides Caveated
+    operands too: a definite witness absorbs a fault, and a resource that
+    rests on a fault or a residual gets its exact point value.
+  - `:point` serves a single check, where the exact point check is already
+    the cheapest decision.
+
+  A guarded member (`operator-plan/guarded-delegation`) is decided in both
+  modes by the guarded membership search over its program, with a
+  request-scoped context. Its guards and witnesses ask this oracle for the
+  permissions they name. A resource the search defers gets the tabled
+  evaluator's exact value.
+
+  Returns the oracle's `:delegate`, its `:point-delegate` (which reproduces a
+  check's certificates), and the attempt counter of its routed read path. A
+  batched oracle also returns `:holdings`, `stable-route/subject-holdings`
+  over the request's membership context, so relation leaves decide many
+  candidates of one subject from one scan."
+  [db plan mode]
+  (let [{:keys [fetch-fn attempts]} (stable-fetch-fn db)
+        context (when (= :batched mode) (stable-route/membership-context))
+        guarded (:members (operator-plan/guarded-delegation plan))
+        guarded-context (when (seq guarded)
+                          (or context (stable-route/membership-context)))
+        options (merge (stable-limits)
+                       {:adapter db
+                        :fetch-fn fetch-fn
+                        :qualification *qualification*
+                        ;; A point visits few resources; a page amortizes a
+                        ;; larger holding slice.
+                        :holding-limit (if (= :point mode) 64 512)
+                        :cut-point! (stable-cut-point)})
+        point (fn [permission candidates]
+                (let [options (assoc options :plan (stable-plan db permission))]
+                  (mapv (fn [candidate]
+                          (stable-route/check-eids
+                           (assoc options
+                                  :subject-type (:subject-type candidate)
+                                  :subject-eid (:subject-eid candidate)
+                                  :resource-eid (:resource-eid candidate))))
+                        candidates)))
+        exact-point
+        ;; A batched membership decision may carry the widest witness's
+        ;; certificate. Conditional operator reconstruction needs the point
+        ;; check's first-witness certificate, so it uses the exact membership
+        ;; cache lane rather than the shared batched lane.
+        (fn [permission candidates]
+          (let [options (assoc options :plan (stable-plan db permission))]
+            (mapv (fn [candidate]
+                    (stable-route/check-eids
+                     (assoc options
+                            :exact-certificate? true
+                            :subject-type (:subject-type candidate)
+                            :subject-eid (:subject-eid candidate)
+                            :resource-eid (:resource-eid candidate))))
+                  candidates)))
+        tabled (fn [permission subject-type subject-eid resource-eid]
+                 ;; Guarded search defers conditional/faulting resources to
+                 ;; the tabled evaluator, whose recursive point cache already
+                 ;; contains only exact reconstructed decisions.
+                 (operator-recursive/check-cached-eids
+                  {:adapter db :plan (stable-plan db permission)
+                   :qualification *qualification*
+                   :subject-type subject-type :subject-eid subject-eid
+                   :resource-eid resource-eid :direction :forward
+                   :scope-identity (operator-snapshot-proof-identity db)
+                   :limits (recursive-operator-limits)
+                   :checkpoint? false}))
+        guarded-decide
+        (fn guarded-decide [permission subject-type subject-eid resource-eids]
+            (stable-route/check-many-eids
+             (assoc options
+                    :plan (if (contains? guarded permission)
+                            (operator-plan/guarded-program plan permission)
+                            (stable-plan db permission))
+                    :subject-type subject-type
+                    :subject-eid subject-eid
+                    :resource-eids resource-eids
+                    :context guarded-context
+                    :oracle (fn [target eid]
+                              (first (guarded-decide target subject-type subject-eid [eid])))
+                    :fallback (when (contains? guarded permission)
+                              (fn [eid] (tabled permission subject-type subject-eid eid))))))
+        guarded-delegate (fn [permission candidates]
+                           (by-subject #(guarded-decide permission %1 %2 %3) candidates))
+        union-delegate
+        (if context
+          (fn [permission candidates]
+            (let [{:keys [subject-type subject-eid]} (first candidates)]
+              (if (every? #(and (= subject-eid (:subject-eid %))
+                                     (= subject-type (:subject-type %)))
+                          candidates)
+                (stable-route/check-many-eids
+                 (assoc options
+                        :plan (stable-plan db permission)
+                        :subject-type subject-type
+                        :subject-eid subject-eid
+                        :resource-eids (mapv :resource-eid candidates)
+                        :context context))
+                (point permission candidates))))
+          point)
+        dispatch (fn [union-delegate]
+                   (if (seq guarded)
+                     (fn [permission candidates]
+                       (if (contains? guarded permission)
+                         (guarded-delegate permission candidates)
+                         (union-delegate permission candidates)))
+                     union-delegate))]
+    {:attempts attempts
+     :point-delegate
+     (fn [permission candidates]
+       (if (contains? guarded permission)
+         (mapv (fn [{:keys [subject-type subject-eid resource-eid]}]
+                 (tabled permission subject-type subject-eid resource-eid))
+               candidates)
+         (exact-point permission candidates)))
+     :holdings (when context
+                 (fn [subject-type subject-eid relation-eid resource-type]
+                   (stable-route/subject-holdings
+                    (assoc options :context context)
+                    subject-type subject-eid relation-eid resource-type)))
+     :delegate (dispatch union-delegate)}))
+
 (defn- recursive-batch-evaluator
   "The exact recursive operator decision for one aligned batch of cover
-  nodes, shared by recursive paging and counting."
-  [db plan traversal subject-type anchor-eid proof-identity]
+  nodes, shared by recursive paging and counting. `oracle`, when present, is
+  the union-operand oracle of a delegated plan."
+  [db plan traversal subject-type anchor-eid proof-identity oracle]
   (fn [nodes]
     (let [candidates
           (mapv (fn [node]
@@ -1809,9 +2130,41 @@
             :scope-identity proof-identity
             :qualification *qualification*
             :limits (recursive-operator-limits)
+            :delegate (:delegate oracle)
+            :point-delegate (:point-delegate oracle)
+            :holdings (:holdings oracle)
             ;; The engine reads only the decisions; skip the portable
             ;; checkpoint's sorts and digest.
             :checkpoint? false})))))))
+
+(defn- acyclic-batch-evaluator
+  "The exact acyclic operator decision for one aligned batch of cover nodes.
+  An acyclic plan has no delegated operands, so it takes no oracle."
+  [db plan traversal subject-type anchor-eid proof-identity _oracle]
+  (let [resource-type (first (:root plan))]
+    (fn [nodes]
+      (run-routed
+       (fn []
+         (operator-vector/check-cached-many-eids
+          {:adapter db
+           :plan plan
+           :qualification *qualification*
+           :scope-identity proof-identity
+           :candidates
+           (mapv (fn [node]
+                   {:direction traversal
+                    :subject-type subject-type
+                    :subject-eid (if (= :forward traversal) anchor-eid (:id node))
+                    :resource-type resource-type
+                    :resource-eid (if (= :forward traversal) (:id node) anchor-eid)})
+                 nodes)}))))))
+
+(defn- exact-batch-evaluator
+  [db plan traversal subject-type anchor-eid proof-identity oracle]
+  ((if (operator-recursive/recursive-plan? plan)
+     recursive-batch-evaluator
+     acyclic-batch-evaluator)
+   db plan traversal subject-type anchor-eid proof-identity oracle))
 
 (declare first-discovery-lookup-page)
 
@@ -1820,14 +2173,14 @@
    result-type anchor subject-type candidate-filter]
   (let [cover-plan (stable-cover-plan db plan)
         proof-identity (operator-snapshot-proof-identity db)
-        scope-delay (delay (operator-cursor-scope/digest
+        scope-delay (delay (operator-scope-digest
                             plan cover-plan traversal proof-identity))
         edge (fn [coords]
                (operator-edge plan cover-plan traversal
                               (force scope-delay) coords))
         _ (validate-operator-bound! plan cover-plan traversal
                                     scope-delay bound)
-        anchor-eid (object-eid db (:id anchor))]
+        anchor-eid (internal-object-eid (:id anchor))]
     (if (nil? anchor-eid)
       empty-bounded-page
       (let [accept? (:accept? candidate-filter)
@@ -1881,20 +2234,54 @@
                          (or last-selected progress))]
         (report-least-path-run! run)
         (with-emission-evidence
-        {:data (mapv :node items)
-         :page-info
-         {:start-cursor start-cursor
-          :end-cursor end-cursor
-          :has-next-page?
-          (if (= :asc direction)
-            (boolean (:has-more? run))
-            (boolean bound))
-          :has-previous-page?
-          (if (= :asc direction)
-            (boolean bound)
-            (boolean (:has-more? run)))
-          :bounded? (boolean (:bounded? run))}}
-         ordered)))))
+          {:data (mapv :node items)
+           :page-info
+           {:start-cursor start-cursor
+            :end-cursor end-cursor
+            :has-next-page?
+            (if (= :asc direction)
+              (boolean (:has-more? run))
+              (boolean bound))
+            :has-previous-page?
+            (if (= :asc direction)
+              (boolean bound)
+              (boolean (:has-more? run)))
+            :bounded? (boolean (:bounded? run))}}
+          ordered)))))
+
+(defn- union-point-evidence
+  "The point check's evidence of one union-only candidate: exactly
+  `check-evidence-eids` on a union plan."
+  [db plan traversal subject-type anchor-eid eid]
+  (let [{:keys [fetch-fn attempts]} (stable-fetch-fn db)
+        value (stable-route/check-eids
+               (merge (stable-limits)
+                      {:adapter db :fetch-fn fetch-fn :plan plan
+                       :qualification *qualification*
+                       :subject-type subject-type
+                       :subject-eid (if (= :forward traversal) anchor-eid eid)
+                       :resource-eid (if (= :forward traversal) eid anchor-eid)
+                       :cut-point! (stable-cut-point)}))]
+    (report-adapter-attempts! attempts)
+    value))
+
+(defn- conditional-evidence? [value]
+  (and (some? value) (not (boolean? (evidence/value value))) (not (evidence/fault? value))))
+
+(defn- point-certified-evidence
+  "A union-only lookup unions evidence at each node, its point check unions
+  whole paths at the root. Both certificates are sound, but a conditional
+  residual is public, so each conditional result of a detailed page carries
+  the point check's evidence, as delegated operator results already do."
+  [db plan traversal subject-type anchor-eid result-evidence]
+  (if (and *qualification* (= :detailed *lookup-result-policy*) (seq result-evidence))
+    (into {}
+          (map (fn [[eid value]]
+                 [eid (if (conditional-evidence? value)
+                        (union-point-evidence db plan traversal subject-type anchor-eid eid)
+                        value)]))
+          result-evidence)
+    result-evidence))
 
 (defn- least-path-lookup-page
   "Keyset pagination for an acyclic plan: ascending pages resume strictly
@@ -1904,7 +2291,7 @@
   [db plan traversal query {:keys [direction size bound]}
    result-type anchor subject-type]
   (validate-least-path-bound! plan traversal bound)
-  (let [anchor-eid (object-eid db (:id anchor))]
+  (let [anchor-eid (internal-object-eid (:id anchor))]
     (if (nil? anchor-eid)
       (page-response {:items [] :has-next? false
                       :has-previous? (boolean bound)})
@@ -1928,17 +2315,21 @@
                         ordered)]
         (report-least-path-run! run)
         (report-adapter-attempts! attempts)
-        (with-emission-evidence
-        (page-response
-         {:items items
-          :range-reusable? true
-          :has-next? (if descending?
-                       (boolean bound)
-                       (boolean (:has-more? run)))
-          :has-previous? (if descending?
-                           (boolean (:has-more? run))
-                           (boolean bound))})
-         ordered)))))
+        (let [page (with-emission-evidence
+                     (page-response
+                      {:items items
+                       :range-reusable? true
+                       :has-next? (if descending?
+                                    (boolean bound)
+                                    (boolean (:has-more? run)))
+                       :has-previous? (if descending?
+                                        (boolean (:has-more? run))
+                                        (boolean bound))})
+                     ordered)]
+          (cond-> page
+            (contains? page :result-evidence)
+            (update :result-evidence
+                    #(point-certified-evidence db plan traversal subject-type anchor-eid %))))))))
 
 (defn- structural-cover-fetch
   "Enumerates the positive structural cover from the same compact scan/cache.
@@ -1965,7 +2356,7 @@
                      (= :desc direction)
                      (nil? bound))
             (complete-evaluation-required! query))
-        anchor-eid (object-eid db (:id anchor))]
+        anchor-eid (internal-object-eid (:id anchor))]
     (if (nil? anchor-eid)
       empty-bounded-page
       (let [{:keys [fetch-fn attempts]}
@@ -1975,54 +2366,83 @@
                        fetch-fn)
             cache (when-not least-path?
                     (when cache-fn (cache-fn)))
-            checkpoints (stable-checkpoints cache)
-            checkpoint-key
-            (when checkpoints
-              (checkpoint-key plan traversal subject-type anchor-eid
-               (checkpoint-series-size query size)))
+            series (checkpoint-series-size query size)
+            shared-checkpoints (stable-checkpoints cache)
+            shared-key (when shared-checkpoints
+                         (checkpoint-key plan traversal subject-type
+                                         anchor-eid series))
+            ;; A route that streams one page's candidates in several chunks
+            ;; supplies a request-local store. It never outlives this
+            ;; request's single selected basis, so a key without the lineage
+            ;; and frame is exact; chunk k+1 resumes chunk k instead of
+            ;; replaying the stream from its start.
+            local-checkpoints (when-not least-path?
+                                (::request-checkpoints candidate-filter))
+            [checkpoints checkpoint-key]
+            (cond
+              shared-key [shared-checkpoints shared-key]
+              local-checkpoints
+              [local-checkpoints
+               [::request-local (:fingerprint plan) traversal subject-type
+                anchor-eid series]])
+            point-evidence
+            #(union-point-evidence db plan traversal subject-type anchor-eid %)
+            point-certified
+            ;; See `point-certified-evidence`: a conditional item of a
+            ;; detailed page carries the point check's evidence.
+            (fn [items]
+              (if (and *qualification*
+                       (= :detailed (or (:result-policy candidate-filter) *lookup-result-policy*)))
+                (mapv (fn [{:keys [evidence] :as item}]
+                        (if (conditional-evidence? evidence)
+                          (assoc item :evidence (point-evidence (get-in item [:node :id])))
+                          item))
+                      items)
+                items))
             fetch-exclusive
             (fn [candidate-bound limit]
               (binding [*qualification* (when-not (:structural-cover? candidate-filter) *qualification*)]
-              (if least-path?
-                (let [run-options (least-path-run-options
-                                   plan fetch-fn traversal subject-type
-                                   anchor-eid limit direction candidate-bound
-                                   true)
-                      run (run-routed
-                           candidate-bound
-                           #(run-least-path-page run-options traversal))
-                      items
-                      (mapv
-                       (fn [{:keys [value coords evidence]}]
-                         (cond-> {:node (spice-object result-type value)
-                                  :cursor (least-path-edge plan traversal coords)}
-                           (some? evidence) (assoc :evidence evidence)))
-                       (:emissions run))]
-                  (report-least-path-run! run)
+                (if least-path?
+                  (let [run-options (least-path-run-options
+                                     plan fetch-fn traversal subject-type
+                                     anchor-eid limit direction candidate-bound
+                                     true)
+                        run (run-routed
+                             candidate-bound
+                             #(run-least-path-page run-options traversal))
+                        items
+                        (mapv
+                         (fn [{:keys [value coords evidence]}]
+                           (cond-> {:node (spice-object result-type value)
+                                    :cursor (least-path-edge plan traversal coords)}
+                             (some? evidence) (assoc :evidence evidence)))
+                         (:emissions run))]
+                    (report-least-path-run! run)
                   ;; Raw descending least-path emissions are already in
                   ;; examination order.
-                  items)
-                (let [result
-                      (run-routed
-                       candidate-bound
-                       (fn []
-                         (stable-page/edge-page
-                          (stable-edge-page-options
-                           db plan fetch-fn traversal subject-type anchor-eid
-                           limit direction candidate-bound checkpoints
-                           checkpoint-key true))))
-                      items
-                      (cond->> (stable-items plan traversal result-type
-                                            (:start-ordinal result) (:eids result))
-                        *qualification*
-                        (mapv (fn [item]
-                                (let [value (get (:result-evidence result) (get-in item [:node :id]) true)]
-                                  (cond-> item (not (true? value)) (assoc :evidence value))))))]
+                    (point-certified items))
+                  (let [result
+                        (run-routed
+                         candidate-bound
+                         (fn []
+                           (stable-page/edge-page
+                            (stable-edge-page-options
+                             db plan fetch-fn traversal subject-type anchor-eid
+                             limit direction candidate-bound checkpoints
+                             checkpoint-key true))))
+                        items
+                        (cond->> (stable-items plan traversal result-type
+                                               (:start-ordinal result) (:eids result))
+                          *qualification*
+                          (mapv (fn [item]
+                                  (let [value (get (:result-evidence result) (get-in item [:node :id]) true)]
+                                    (cond-> item (not (true? value)) (assoc :evidence value))))))]
                   ;; Stable-page returns canonical order for both directions;
                   ;; filtering examines backward windows in reverse order.
-                  (if (= :desc direction)
-                    (vec (reverse items))
-                    items)))))
+                    (let [items (point-certified items)]
+                      (if (= :desc direction)
+                        (vec (reverse items))
+                        items))))))
             page
             (execute-filtered-lookup-window
              result-type page-req
@@ -2031,16 +2451,7 @@
                ;; A filtered cursor carries a structural inclusive sentinel.
                ;; If its evidence was not retained, recover the complete root
                ;; decision at this same selected basis before exposing it.
-               (assoc :inclusive-evidence-fn
-                      (fn [eid]
-                        (stable-route/check-eids
-                         (merge (stable-limits)
-                                {:adapter db :fetch-fn fetch-fn :plan plan
-                                 :qualification *qualification*
-                                 :subject-type subject-type
-                                 :subject-eid (if (= :forward traversal) anchor-eid eid)
-                                 :resource-eid (if (= :forward traversal) eid anchor-eid)
-                                 :cut-point! (stable-cut-point)})))))
+               (assoc :inclusive-evidence-fn point-evidence))
              fetch-exclusive)]
         (report-adapter-attempts! attempts)
         page))))
@@ -2049,12 +2460,18 @@
   "Enumerates the sealed recursive cover and evaluates exact recursive
   operator membership in bounded aligned vectors. The public cursor advances
   only through the cover edge actually examined; physical predicate batching
-  is never cursor progress."
+  is never cursor progress.
+
+  `cover-plan` and `evaluator` default to the positive cover and the
+  recursive evaluator; the wildcard touch route supplies the touch cover and
+  the plan's exact evaluator."
   [db plan traversal query {:keys [bound] :as page-req} cache-fn
-   result-type anchor subject-type candidate-filter]
-  (let [cover-plan (stable-cover-plan db plan)
+   result-type anchor subject-type candidate-filter
+   & {:keys [cover-plan evaluator]
+      :or {evaluator recursive-batch-evaluator}}]
+  (let [cover-plan (or cover-plan (stable-cover-plan db plan))
         proof-identity (operator-snapshot-proof-identity db)
-        scope-delay (delay (operator-cursor-scope/digest
+        scope-delay (delay (operator-scope-digest
                             plan cover-plan traversal proof-identity))
         recursive-edge (fn [cover-edge]
                          (recursive-operator-edge
@@ -2062,15 +2479,17 @@
                           (force scope-delay) cover-edge))
         _ (validate-recursive-operator-bound!
            plan cover-plan traversal scope-delay bound)
-        anchor-eid (object-eid db (:id anchor))]
+        anchor-eid (internal-object-eid (:id anchor))]
     (if (nil? anchor-eid)
       empty-bounded-page
       (let [external-accept? (:accept? candidate-filter)
             external-accept-evidence (:accept-evidence candidate-filter)
             external-accept-many? (:accept-many? candidate-filter)
+            oracle (when (operator-plan/delegation plan)
+                     (delegated-operand-oracle db plan :batched))
             recursive-decisions
-            (recursive-batch-evaluator
-             db plan traversal subject-type anchor-eid proof-identity)
+            (evaluator
+             db plan traversal subject-type anchor-eid proof-identity oracle)
             evaluate-batch
             (fn [nodes]
               (let [decisions (recursive-decisions nodes)
@@ -2104,7 +2523,10 @@
               :structural-cover? (some? *qualification*)
               :evidence-decisions? (some? *qualification*)
               :result-policy (authorization-result/result-policy query)
-              :accept-many? evaluate-batch})]
+              :accept-many? evaluate-batch
+              ;; The cover streams this page's candidates in chunks.
+              ::request-checkpoints (stable-page/make-checkpoint-store)})]
+        (report-adapter-attempts! (:attempts oracle))
         (update
          cover-page :page-info
          (fn [page-info]
@@ -2112,6 +2534,127 @@
             (fn [result field]
               (update result field #(when % (recursive-edge %))))
             page-info [:start-cursor :end-cursor])))))))
+
+(defn- wildcard-touch-route?
+  "Use the touch cover only when the positive structural cover actually
+  reaches a wildcard on this resource. Merely declaring T:* must not turn
+  a small concrete lookup into a scan of every negative operand.
+
+  This probe ignores qualifiers and exact operator predicates: a wildcard
+  denied by the full expression can still grant a concrete subject through
+  a nested exclusion. Structural reachability is conservative and stable
+  across Caveat context and expiry changes at the same relationship basis."
+  [db plan traversal subject-type anchor]
+  (when (= :reverse traversal)
+    (let [cover-plan (stable-cover-plan db plan)
+          wildcard-eid
+          (some (fn [rule]
+                  (when (= subject-type (rule-subject-type rule))
+                    (:wildcard-eid rule)))
+                (:rules cover-plan))]
+      (when-let [resource-eid (when wildcard-eid (internal-object-eid (:id anchor)))]
+        (let [{:keys [fetch-fn attempts]} (stable-fetch-fn db)
+              reachable?
+              (binding [*qualification* nil]
+                (run-routed
+                 (fn []
+                   ;; A routing probe over the structural cover, not an
+                   ;; authorization answer: the uncached search keeps its
+                   ;; qualifier-blind value out of the client's decision
+                   ;; store, where `check-eids` would publish it.
+                   (stable-route/derives-from-node?
+                    (merge (stable-limits)
+                           {:adapter db
+                            :fetch-fn (structural-cover-fetch fetch-fn)
+                            :plan cover-plan
+                            :subject-type subject-type
+                            :subject-eid wildcard-eid
+                            :resource-eid resource-eid
+                            :wildcards? false
+                            :cut-point! (stable-cut-point)})))))]
+          (report-adapter-attempts! attempts)
+          (boolean reachable?))))))
+
+(defn- wildcard-excluded?
+  "A subject's permission is the union of its own entry and, unless the
+  wildcard entry excludes it, the wildcard entry's. A touch-cover subject
+  without a definite grant is excluded under every result policy: a
+  conditional subject keeps its own conditional entry, and the wildcard's
+  grant must not complete it. A faulting subject is excluded too: the
+  wildcard entry does not grant it, and its own candidate fails the walk
+  when a page consumes it."
+  [decision]
+  (not (evidence/has? decision)))
+
+(defn- wildcard-exclusions
+  "The touch-cover subjects the wildcard entry does not grant: every subject
+  holding a tuple in the permission's relation closure whose exact decision
+  is not a definite grant. A subject outside the touch cover has exactly the
+  wildcard's memberships."
+  [db touch-plan evaluate subject-type anchor-eid wildcard-eid]
+  (let [{:keys [fetch-fn attempts]} (stable-fetch-fn db)
+        finished
+        (binding [*qualification* nil]
+          (run-routed
+           (fn []
+             (stable-reducer/run-reverse
+              (merge (stable-limits)
+                     {:adapter db
+                      :fetch-fn (structural-cover-fetch fetch-fn)
+                      :plan touch-plan
+                      :subject-type subject-type
+                      :resource-eid anchor-eid
+                      :target stable-reducer/exhaustion-target
+                      :result-sink :collect
+                      :cut-point! (stable-cut-point)})))))
+        candidates (filterv #(not= wildcard-eid %) (:results finished))
+        decisions (into []
+                        (mapcat (fn [chunk]
+                                  (evaluate (mapv #(spice-object subject-type %) chunk))))
+                        (partition-all operator-batch-schedule/maximum-width candidates))]
+    (report-adapter-attempts! attempts)
+    ;; The touch subjects are this walk's own candidates: a faulting decision
+    ;; is excluded here and fails only the page that consumes its candidate.
+    (into []
+          (keep (fn [[eid decision]]
+                  (when (wildcard-excluded? decision)
+                    (spice-object subject-type eid))))
+          (map vector candidates decisions))))
+
+(defn- wildcard-touch-lookup-page
+  "Reverse lookup of an operator permission that can grant through a
+  wildcard subject: candidates are the touch cover's subjects, each decided
+  by the exact operator evaluator. When the wildcard subject is granted, its
+  entry lists the touch subjects it excludes."
+  [db plan traversal query page-req cache-fn result-type anchor subject-type
+   candidate-filter]
+  (let [touch-plan (stable-touch-plan db plan)
+        page (recursive-operator-lookup-page
+              db plan traversal query page-req cache-fn result-type anchor
+              subject-type candidate-filter
+              :cover-plan touch-plan
+              :evaluator exact-batch-evaluator)
+        wildcard-eid (some :wildcard-eid (:rules touch-plan))
+        wildcard-entry? #(and (some? wildcard-eid) (= wildcard-eid (:id %)))]
+    (if (some wildcard-entry? (:data page))
+      (let [anchor-eid (internal-object-eid (:id anchor))
+            oracle (when (operator-plan/delegation plan)
+                     (delegated-operand-oracle db plan :batched))
+            evaluate (exact-batch-evaluator
+                      db plan traversal subject-type anchor-eid
+                      (operator-snapshot-proof-identity db) oracle)
+            excluded (wildcard-exclusions db touch-plan evaluate subject-type
+                                          anchor-eid wildcard-eid)]
+        (report-adapter-attempts! (:attempts oracle))
+        (if (seq excluded)
+          (update page :data
+                  (fn [objects]
+                    (mapv #(if (wildcard-entry? %)
+                             (assoc % :excluded-subjects excluded)
+                             %)
+                          objects)))
+          page))
+      page)))
 
 (defn- stable-lookup-page
   "`cache-fn` is a thunk producing the continuation cache (or nil): the
@@ -2137,10 +2680,18 @@
       (let [root-node (permission-query-node root-type (:permission query))
             plan (stable-plan db root-node)]
         (if (operator-plan/operator-plan? plan)
-          (if (operator-recursive/recursive-plan? plan)
+          (cond
+            (wildcard-touch-route? db plan traversal subject-type anchor)
+            (wildcard-touch-lookup-page
+             db plan traversal query page-req cache-fn result-type anchor
+             subject-type candidate-filter)
+
+            (operator-recursive/recursive-plan? plan)
             (recursive-operator-lookup-page
              db plan traversal query page-req cache-fn result-type anchor
              subject-type candidate-filter)
+
+            :else
             (operator-lookup-page
              db plan traversal page-req result-type anchor subject-type
              candidate-filter))
@@ -2169,7 +2720,7 @@
                      (nil? bound))
             (complete-evaluation-required! query))
         _ (validate-stable-bound! plan traversal bound)
-        anchor-eid (object-eid db (:id anchor))
+        anchor-eid (internal-object-eid (:id anchor))
         {:keys [fetch-fn attempts]} (stable-fetch-fn db)
         result (run-routed
                 bound
@@ -2180,24 +2731,28 @@
                     size direction bound checkpoints
                     (when checkpoints
                       (checkpoint-key plan traversal subject-type anchor-eid
-               (checkpoint-series-size query size)))
+                                      (checkpoint-series-size query size)))
                     false))))]
     (report-adapter-attempts! attempts)
     (cond-> (page-response
-     {:items (stable-items plan traversal result-type
-                           (:start-ordinal result) (:eids result))
-      :range-reusable? true
-      :has-next? (:has-next? result)
-      :has-previous? (:has-previous? result)})
+             {:items (stable-items plan traversal result-type
+                                   (:start-ordinal result) (:eids result))
+              :range-reusable? true
+              :has-next? (:has-next? result)
+              :has-previous? (:has-previous? result)})
       (and *qualification* (= :detailed *lookup-result-policy*))
-      (assoc :result-evidence (:result-evidence result)))))
+      (assoc :result-evidence
+             (point-certified-evidence db plan traversal subject-type anchor-eid
+                                       (:result-evidence result))))))
 
-(defn check-evidence
+(defn ^:no-doc check-evidence-eids
+  "Checks a permission using object maps whose IDs are already resolved
+  backend entity IDs. This path never invokes the application-ID codec."
   [db subject permission resource]
   (let [subject-type (:type subject)
-        subject-eid (object-eid db (:id subject))
+        subject-eid (internal-object-eid (:id subject))
         resource-type (:type resource)
-        resource-eid (object-eid db (:id resource))
+        resource-eid (internal-object-eid (:id resource))
         defined-root?
         (and subject-eid
              resource-eid
@@ -2211,16 +2766,23 @@
            (fn []
              (let [scope-identity (operator-snapshot-proof-identity db)]
                (if (operator-recursive/recursive-plan? plan)
-                 (operator-recursive/check-cached-eids
-                  {:adapter db :plan plan
-                   :qualification *qualification*
-                   :subject-type subject-type
-                   :subject-eid subject-eid
-                   :resource-eid resource-eid
-                   :direction :forward
-                   :scope-identity scope-identity
-                   :limits (recursive-operator-limits)
-                   :checkpoint? false})
+                 (let [oracle (when (operator-plan/delegation plan)
+                                (delegated-operand-oracle db plan :point))
+                       decision
+                       (operator-recursive/check-cached-eids
+                        {:adapter db :plan plan
+                         :qualification *qualification*
+                         :subject-type subject-type
+                         :subject-eid subject-eid
+                         :resource-eid resource-eid
+                         :direction :forward
+                         :scope-identity scope-identity
+                         :limits (recursive-operator-limits)
+                         :delegate (:delegate oracle)
+                         :point-delegate (:point-delegate oracle)
+                         :checkpoint? false})]
+                   (report-adapter-attempts! (:attempts oracle))
+                   decision)
                  (first
                   (operator-vector/check-cached-many-eids
                    {:adapter db :plan plan
@@ -2250,17 +2812,32 @@
             allowed?)))
       false)))
 
+(defn check-evidence
+  "Checks a permission after converting each application object ID exactly
+  once through the adapter's configured codec."
+  [db subject permission resource]
+  (check-evidence-eids db
+                       (resolve-object db subject)
+                       permission
+                       (resolve-object db resource)))
+
+(defn ^:no-doc can-eids?
+  [db subject permission resource]
+  (evidence/has?
+   (evidence/throw-if-fault!
+    (check-evidence-eids db subject permission resource))))
+
 (defn can? [db subject permission resource]
   (evidence/has?
    (evidence/throw-if-fault! (check-evidence db subject permission resource))))
 
-(defn lookup-resources
+(defn ^:no-doc lookup-resources-eids
   "Stable-discovery forward pagination.
 
-  Raw-impl callers must hold one DB value for a whole exact-snapshot walk; the
-  public client authenticates and scopes cursor state before it reaches here."
+  The query subject ID is already resolved. Raw-impl callers should use
+  `lookup-resources`, which performs the one application-ID conversion."
   ([db query]
-   (lookup-resources db query nil))
+   (lookup-resources-eids db query nil))
   ([db query {:keys [continuation-cache continuation-cache-fn
                      candidate-filter]}]
    ;; Deferred: an acyclic (least-path) plan never touches continuation
@@ -2271,11 +2848,21 @@
      (binding [*lookup-result-policy* (authorization-result/result-policy query)]
        (project-lookup-page (stable-lookup-page db :forward query cache-fn candidate-filter))))))
 
-(defn lookup-subjects
-  "Stable-discovery reverse pagination; cursors are only valid against the
-  minting db basis."
+(defn lookup-resources
+  "Stable-discovery forward pagination over application object IDs."
   ([db query]
-   (lookup-subjects db query nil))
+   (lookup-resources db query nil))
+  ([db query options]
+   (lookup-resources-eids
+    db
+    (update query :subject #(resolve-object db %))
+    options)))
+
+(defn ^:no-doc lookup-subjects-eids
+  "Stable-discovery reverse pagination; cursors are only valid against the
+  minting db basis. The query resource ID is already resolved."
+  ([db query]
+   (lookup-subjects-eids db query nil))
   ([db query {:keys [continuation-cache continuation-cache-fn
                      candidate-filter]}]
    (when (:subject/relation query)
@@ -2289,6 +2876,16 @@
                                (continuation-cache-fn))))]
      (binding [*lookup-result-policy* (authorization-result/result-policy query)]
        (project-lookup-page (stable-lookup-page db :reverse query cache-fn candidate-filter))))))
+
+(defn lookup-subjects
+  "Stable-discovery reverse pagination over application object IDs."
+  ([db query]
+   (lookup-subjects db query nil))
+  ([db query options]
+   (lookup-subjects-eids
+    db
+    (update query :resource #(resolve-object db %))
+    options)))
 
 (def ^:private count-pagination-keys
   [:cursor :limit :first :last :before :after])
@@ -2334,70 +2931,88 @@
   and anchor resolution happen once per count instead of once per page.
   Budget semantics match the paged path: each iteration is one page run
   with its own reducer budgets, under the same per-page deadline check."
-  [db plan traversal query result-type anchor subject-type count-limit]
-  (let [cover-plan (stable-cover-plan db plan)
+  [db plan traversal query result-type anchor subject-type count-limit
+   & {:keys [cover-plan evaluator]
+      :or {evaluator recursive-batch-evaluator}}]
+  (let [cover-plan (or cover-plan (stable-cover-plan db plan))
         proof-identity (operator-snapshot-proof-identity db)
-        anchor-eid (object-eid db (:id anchor))
+        anchor-eid (internal-object-eid (:id anchor))
         continuation-cache (stable-page/make-checkpoint-store)
         cache-fn (constantly continuation-cache)
-        evaluate-batch (recursive-batch-evaluator
+        oracle (when (operator-plan/delegation plan)
+                 (delegated-operand-oracle db plan :batched))
+        evaluate-batch (evaluator
                         db plan traversal subject-type anchor-eid
-                        proof-identity)
+                        proof-identity oracle)
         target (when (some? count-limit) (inc count-limit))
         policy (authorization-result/result-policy query)]
     (if (nil? anchor-eid)
       {:count 0 :truncated? false}
-      (loop [cover-bound nil
-             accumulated 0
-             categories (when (= :detailed policy)
-                          {:definite-count 0 :conditional-count 0})]
-        (execution/check! execution/*contract*
-                          :operator-recursive/count-page
-                          {:count accumulated})
-        (let [remaining (when target (- target accumulated))
-              page-size (if remaining
-                          (min operator-batch-schedule/maximum-width remaining)
-                          operator-batch-schedule/maximum-width)
-              page
-              (filtered-lookup-page
-               db cover-plan traversal query
-               {:direction :asc :size page-size :bound cover-bound}
-               cache-fn result-type anchor subject-type
-               {:candidate-window operator-lookup/default-candidate-window
-                :maximum-batch-width operator-batch-schedule/maximum-width
-                :structural-cover? (some? *qualification*)
-                :evidence-decisions? (some? *qualification*)
-                :result-policy policy
-                :accept-many? evaluate-batch})
-              next-count (+ accumulated (count (:data page)))
-              categories
-              (count-page-categories categories page
-                                     (when (some? count-limit)
-                                       (- count-limit accumulated)))
-              more? (get-in page [:page-info :has-next-page?])
-              next-bound (get-in page [:page-info :end-cursor])]
-          (cond
-            (and target (>= next-count target))
-            (merge {:count count-limit :truncated? true} categories)
+      (let [counted
+            (loop [cover-bound nil
+                   accumulated 0
+                   categories (when (= :detailed policy)
+                                {:definite-count 0 :conditional-count 0})]
+              (execution/check! execution/*contract*
+                                :operator-recursive/count-page
+                                {:count accumulated})
+              (let [remaining (when target (- target accumulated))
+                    page-size (if remaining
+                                (min operator-batch-schedule/maximum-width remaining)
+                                operator-batch-schedule/maximum-width)
+                    page
+                    (filtered-lookup-page
+                     db cover-plan traversal query
+                     {:direction :asc :size page-size :bound cover-bound}
+                     cache-fn result-type anchor subject-type
+                     {:candidate-window operator-lookup/default-candidate-window
+                      :maximum-batch-width operator-batch-schedule/maximum-width
+                      :structural-cover? (some? *qualification*)
+                      :evidence-decisions? (some? *qualification*)
+                      :result-policy policy
+                      :accept-many? evaluate-batch
+                      ::request-checkpoints continuation-cache})
+                    next-count (+ accumulated (count (:data page)))
+                    categories
+                    (count-page-categories categories page
+                                           (when (some? count-limit)
+                                             (- count-limit accumulated)))
+                    more? (get-in page [:page-info :has-next-page?])
+                    next-bound (get-in page [:page-info :end-cursor])]
+                (cond
+                  (and target (>= next-count target))
+                  (merge {:count count-limit :truncated? true} categories)
 
-            more?
-            (do
-              (when-not next-bound
-                (page-error!
-                 "Recursive count continuation made no cursor progress."
-                 {:type :eacl.page/invalid-cursor
-                  :eacl/error :eacl.page/invalid-cursor}))
-              (recur next-bound next-count categories))
+                  more?
+                  (do
+                    (when-not next-bound
+                      (page-error!
+                       "Recursive count continuation made no cursor progress."
+                       {:type :eacl.page/invalid-cursor
+                        :eacl/error :eacl.page/invalid-cursor}))
+                    (recur next-bound next-count categories))
 
-            :else
-            (merge {:count next-count :truncated? false} categories)))))))
+                  :else
+                  (merge {:count next-count :truncated? false} categories))))]
+        (report-adapter-attempts! (:attempts oracle))
+        counted))))
 
 (defn- operator-count
   [db plan traversal query anchor subject-type result-type count-limit]
-  (if-let [anchor-eid (object-eid db (:id anchor))]
-    (if (operator-recursive/recursive-plan? plan)
+  (if-let [anchor-eid (internal-object-eid (:id anchor))]
+    (cond
+      ;; Counts the entries lookup-subjects returns: the wildcard entry once.
+      (wildcard-touch-route? db plan traversal subject-type anchor)
+      (recursive-operator-count
+       db plan traversal query result-type anchor subject-type count-limit
+       :cover-plan (stable-touch-plan db plan)
+       :evaluator exact-batch-evaluator)
+
+      (operator-recursive/recursive-plan? plan)
       (recursive-operator-count
        db plan traversal query result-type anchor subject-type count-limit)
+
+      :else
       (select-keys
        (run-routed
         (fn []
@@ -2454,7 +3069,7 @@
                           :count-limit limit}))))
      limit policy)))
 
-(defn count-resources
+(defn ^:no-doc count-resources-eids
   [db {:keys [subject] :as query}]
   (reject-count-pagination-keys! "count-resources" query)
   (count-route db query
@@ -2463,10 +3078,15 @@
                 :anchor subject
                 :subject-type (:type subject)
                 :result-type (:resource/type query)
-                :stable-count-fn stable-route/count-resources
-                :anchor-id-key :subject-id}))
+                :stable-count-fn stable-route/count-resources-eids
+                :anchor-id-key :subject-eid}))
 
-(defn count-subjects
+(defn count-resources
+  [db query]
+  (count-resources-eids
+   db (update query :subject #(resolve-object db %))))
+
+(defn ^:no-doc count-subjects-eids
   [db {:keys [resource] :as query}]
   (reject-count-pagination-keys! "count-subjects" query)
   (when (:subject/relation query)
@@ -2479,5 +3099,10 @@
                 :anchor resource
                 :subject-type (:subject/type query)
                 :result-type (:subject/type query)
-                :stable-count-fn stable-route/count-subjects
-                :anchor-id-key :resource-id}))
+                :stable-count-fn stable-route/count-subjects-eids
+                :anchor-id-key :resource-eid}))
+
+(defn count-subjects
+  [db query]
+  (count-subjects-eids
+   db (update query :resource #(resolve-object db %))))

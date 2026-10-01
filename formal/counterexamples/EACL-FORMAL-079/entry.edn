@@ -1,0 +1,16 @@
+{:id :EACL-FORMAL-079
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace "eacl-rust BUGS.md EACL-RS-105"
+ :minimized-fixture "fixture.edn"
+ :impact :other
+ :affected-versions
+ ["v8.0.0 commit a698b3bdf15e61be9bfd1324d7d7c67dc82176be"]
+ :affected-backends [:shared]
+ :root-cause
+ "The canonical codec encodes a record as its field map, so a record and an equal-field map are one portable value; identity boundaries that care already reject records. One map or set could still hold both, because Clojure treats them as distinct. canonicalize then kept only one of them, since its comparator orders by rendering, while encode-canonical rendered both and produced text that decode-canonical rejects as a duplicate key."
+ :fix
+ "canonicalize and encode-canonical reject a map or set whose distinct members project to one portable value, with :duplicate-key or :duplicate-member, instead of dropping a member or emitting undecodable text."
+ :closing-evidence
+ ["eacl.secure-format-test/records-project-to-maps-and-colliding-members-are-rejected-test (CLJ and CLJS)"
+  "eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test (:uuid-comparator-collision)"]}

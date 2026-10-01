@@ -105,13 +105,17 @@
            (:dimension (error-data #(seekable/page (assoc-in base [:traversal-limits :max-commands] 1))))))))
 
 (deftest malformed-heads-fault-instead-of-becoming-absent
+  ;; A malformed head is a Kleene unknown carried as the emission's evidence,
+  ;; never absence: the generator decides nothing, and only a consumed root
+  ;; decision that depends on it fails.
   (let [{:keys [conn user docs] :as env} (fixture)
         relation (ds/entid (ds/db conn) [:eacl.relation/resource-type+relation-name+subject-type [:doc :reader :user]])
         qid (edge/qualifier-id (impl/direct-edge (ds/db conn) :user user relation :doc (first docs)))]
     (ds/transact! conn [[:db.fn/retractEntity qid]])
-    (let [db (ds/db conn) env (assoc env :db db :adapter (backend/basis-adapter db {}))]
-      (is (= :eacl.authorization/evaluation-failure
-             (:type (error-data #(seekable/page (options env :both 100 {} :asc)))))))))
+    (let [db (ds/db conn) env (assoc env :db db :adapter (backend/basis-adapter db {}))
+          page (seekable/page (options env :both 100 {} :asc))]
+      (is (some #(and (= (first docs) (:value %)) (evidence/fault? (:evidence %)))
+                (:emissions page))))))
 
 (deftest lookup-and-count-project-exact-generator-evidence-without-rechecking
   (let [env (fixture)]

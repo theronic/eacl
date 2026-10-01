@@ -1,0 +1,49 @@
+caveat nothing_sensitive(carrying list<string>) {
+  !("launch-codes" in carrying) && !("customer-list" in carrying)
+}
+
+caveat is_weekday(day string) {
+  day != "saturday" && day != "sunday"
+}
+
+definition user {}
+
+definition team {
+  relation member: user | user:*
+}
+
+definition area {
+  relation viewer: user | user:*
+  relation banned: user | user with is_weekday
+  relation allowed: user
+  relation editor: user
+  relation wild: user:*
+  relation guest: team | team:*
+  relation anyone: user:* with nothing_sensitive
+  permission view = viewer
+  permission enter = viewer - banned
+  permission edit = viewer & editor
+  permission audit = (viewer - banned) + editor
+  permission narrow = (viewer - banned) - (wild - allowed)
+  permission both = viewer & wild
+  permission nobody = viewer - wild
+  permission mingle = guest
+  permission exit = anyone
+  permission guarded = anyone - banned
+}
+
+definition folder {
+  relation parent: folder
+  relation viewer: user | user:*
+  relation banned: user
+  permission view = viewer + parent->view
+  permission clean_view = view - banned
+}
+
+definition doc {
+  relation folder: folder
+  relation reader: user | user:*
+  permission read = reader + folder->view
+  permission peek = folder->viewer
+  permission read_clean = folder->clean_view
+}

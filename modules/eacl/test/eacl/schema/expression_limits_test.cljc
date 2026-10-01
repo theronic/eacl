@@ -1,8 +1,11 @@
 (ns eacl.schema.expression-limits-test
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is testing]]
+            [clojure.string :as str]
             [eacl.schema.expression :as expression]
             [eacl.schema.expression-limits :as limits]
+            [eacl.schema.expression-policy :as policy]
+            [eacl.schema.expression-resolver :as resolver]
             [eacl.secure-format :as secure]
             [eacl.spicedb.parser :as parser]))
 
@@ -109,3 +112,28 @@
                (error-data
                  #(parser/parse-schema schema
                     {:maximum-schema-source-bytes (dec bytes)}))))))))
+
+(deftest encoded-byte-limit-precedes-codec-ceilings-test
+  ;; A 13 KB schema whose one permission resolves to arrows over a 256-type
+  ;; relation. Its canonical payload exceeds the codec's own 1 MiB size and
+  ;; 262,144-entry ceilings, which used to escape as :eacl.format/invalid
+  ;; before the default 131,072-byte comparison could run.
+  (let [types (mapv #(str "t" (when (< % 100) "0") (when (< % 10) "0") %) (range 256))
+        schema (fn [permission]
+                 (str (str/join "\n" (map #(str "definition " % " {\n relation xxx: user\n}") types))
+                      "\ndefinition user {}\ndefinition doc {\n relation rrr: " (str/join " | " types)
+                      "\n permission ppp = " permission "\n}"))
+        maximum (:maximum-expression-bytes policy/per-permission-limits)]
+    (doseq [[label permission]
+            [["beyond the codec size ceiling" (str/join " + " (repeat 128 "rrr->xxx"))]
+             ["beyond the codec entry ceiling" (str/join " + " (repeat 128 "(rrr->xxx + rrr->xxx)"))]
+             ["within the codec ceilings" (str/join " + " (repeat 8 "rrr->xxx"))]]]
+      (testing label
+        (let [data (error-data #(resolver/validate-schema (schema permission)))]
+          (is (= {:type :eacl.schema/expression-limit
+                  :dimension :encoded-byte-size
+                  :maximum maximum}
+                 (select-keys data [:type :dimension :maximum])))
+          (is (and (integer? (:actual data)) (< maximum (:actual data)))))))
+    (is (map? (resolver/validate-schema (schema (str/join " + " (repeat 7 "rrr->xxx")))))
+        "an expression within the byte limit is admitted")))

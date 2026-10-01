@@ -97,11 +97,13 @@
                     ({:a a :b b} (get (:qid-roles env) qid)) (some? value)))]
     (drain (options env permission traversal direction width) traversal direction)))
 
+(def ^:private fault (evidence/fault :test/failure :invalid))
+
 (deftest qualified-unions-keep-native-order-and-complete-node-evidence
   (let [env (fixture)]
     (doseq [permission [:direct :delegated :via :inherited]
             traversal [:forward :reverse] direction [:asc :desc] width [1 2]
-            a [false true values/x values/y] b [false true values/x values/y]]
+            a [false true values/x values/y fault] b [false true values/x values/y fault]]
       (let [actual (evaluate env permission traversal direction width a b)
             names (if (= traversal :forward) ["d0" "d1" "d2"] ["u0" "u1"])
             expected (into {} (keep (fn [name]
@@ -143,10 +145,34 @@
              (try (evaluate env :direct :forward :asc 3 values/x values/y) nil
                   (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
                     (:reason (ex-data error)))))))
-    (is (= :eacl.authorization/evaluation-failure
-           (try (evaluate env :direct :forward :asc 1 (evidence/fault :test/failure :invalid) true) nil
-                (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
-                  (:type (ex-data error))))))))
+    ;; A raw candidate stream carries a faulting decision as evidence; a
+    ;; grant through another alternative absorbs it (u0 holds d0 through
+    ;; both relations).
+    (let [rows (evaluate env :direct :forward :asc 1 fault true)
+          by-value (into {} (map (juxt :value :evidence)) rows)]
+      (is (true? (evidence/value (get by-value (get-in env [:ids "d0"])))))
+      (is (evidence/fault? (get by-value (get-in env [:ids "d2"])))))
+    ;; A public page of size n consumes its first n + 1 candidates (the
+    ;; sentinel included) and fails exactly when the faulting candidate is
+    ;; among them.
+    (let [order (mapv :value (evaluate env :direct :forward :asc 1 fault true))
+          position (.indexOf order (get-in env [:ids "d2"]))
+          public (fn [size]
+                   (with-redefs [qualification/qualify
+                                 (fn [_ _ value]
+                                   (if-let [qid (edge/qualifier-id value)]
+                                     ({:a fault :b true} (get (:qid-roles env) qid)) (some? value)))]
+                     (try (mapv :value (:emissions (least-path/forward-page
+                                                    (assoc (options env :direct :forward :asc size)
+                                                           :raw-candidates? false :page-size size
+                                                           :result-policy :definite))))
+                          (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+                            (:type (ex-data error))))))]
+      (is (= 3 (count order)))
+      (doseq [size [1 2 3]]
+        (if (<= position size)
+          (is (= :eacl.authorization/evaluation-failure (public size)))
+          (is (= (subvec order 0 size) (public size))))))))
 
 (deftest expired-union-paths-do-not-claim-an-earlier-coordinate
   (let [env (fixture)]

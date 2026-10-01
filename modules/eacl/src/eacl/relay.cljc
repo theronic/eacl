@@ -390,8 +390,8 @@
   (if (exact-integer/exact? value)
     value
     (let [decoded #?(:clj (when (and (string? value) (<= (count value) 20))
-                           (try (Long/parseLong value)
-                                (catch NumberFormatException _ nil)))
+                            (try (Long/parseLong value)
+                                 (catch NumberFormatException _ nil)))
                      :cljs nil)]
       ;; Decimal strings are reserved for nonportable int64 coordinates.
       ;; JS backends cannot use these native IDs: reject before numeric coercion.
@@ -402,6 +402,10 @@
         (invalid-cursor! "Relay cursor coordinate is malformed or outside the host integer range."
                          {:reason :invalid-coordinate} nil)))))
 
+(defn ^:no-doc edge-id-present?
+  [value]
+  (some? value))
+
 (defn- transform-edge-ids
   ;; :stable-edge edges carry only the boundary :result-eid; engine
   ;; checkpoints live exclusively in the private continuation store and never
@@ -410,7 +414,7 @@
   (case (:kind edge)
     :stable-edge
     (cond-> edge
-      (:result-eid edge) (update :result-eid f))
+      (edge-id-present? (:result-eid edge)) (update :result-eid f))
 
     ;; Least-path coordinates retain native identity: they interleave
     ;; rule ordinals with eids of several types (no single external
@@ -431,9 +435,14 @@
     (update edge :cover-edge #(transform-edge-ids coordinate-f coordinate-f %))
 
     :relationship-index
-    (-> edge
-        (update :subject-id f)
-        (update :resource-id f))
+    ;; A qualifier is not an object and has no external identity. Its native
+    ;; eid orders one endpoint's rows in a partial scan. Replacing it is a
+    ;; write to the relation, which changes the cursor's dependency proof, so
+    ;; the eid is stable on every basis that accepts the cursor.
+    (cond-> (-> edge
+                (update :subject-id f)
+                (update :resource-id f))
+      (contains? edge :qualifier-id) (update :qualifier-id coordinate-f))
 
     edge))
 
@@ -846,79 +855,79 @@
               initial
               (continuation-decision opts current envelope)]
           (case initial
-        :snapshot-unavailable
-        (do
-          (ensure-cursor-satisfies-request! opts envelope)
+            :snapshot-unavailable
+            (do
+              (ensure-cursor-satisfies-request! opts envelope)
           ;; Target dispatch precedes backend capability dispatch. A Snapshot
           ;; never owns selection authority, so a proof mismatch is a basis
           ;; conflict even on a current-only backend.
-          (when-not (and (= :acl (:authorization-target-kind opts))
+              (when-not (and (= :acl (:authorization-target-kind opts))
+                             *acl-cursor-recovery-source*)
+                (snapshot-cursor-conflict!))
+              (when-not (exact-selection-capable?
                          *acl-cursor-recovery-source*)
-            (snapshot-cursor-conflict!))
-          (when-not (exact-selection-capable?
-                     *acl-cursor-recovery-source*)
-            (stale-context!
-             "The backend cannot reconstruct the cursor's changed frame."
-             :frame-changed))
-          (let [source *acl-cursor-recovery-source*
-                revision
-                {:revision
-                 (get-in envelope [:native-revision :revision])
-                 :exact-locator
-                 (get-in envelope [:native-revision :exact-locator])}
-                _ (execution/check!
-                   (:execution-contract opts)
-                   :cursor-exact-selection)
-                selected
-                (source/acquire!
-                 source :exact revision (:timeout-ms opts))]
-            (try
-              (let [exact
-                    (source/adapter selected)
-                    _
-                    (execution/check!
-                     (:execution-contract opts)
-                     :cursor-exact-selected)
-                    _
-                    (when-not exact
+                (stale-context!
+                 "The backend cannot reconstruct the cursor's changed frame."
+                 :frame-changed))
+              (let [source *acl-cursor-recovery-source*
+                    revision
+                    {:revision
+                     (get-in envelope [:native-revision :revision])
+                     :exact-locator
+                     (get-in envelope [:native-revision :exact-locator])}
+                    _ (execution/check!
+                       (:execution-contract opts)
+                       :cursor-exact-selection)
+                    selected
+                    (source/acquire!
+                     source :exact revision (:timeout-ms opts))]
+                (try
+                  (let [exact
+                        (source/adapter selected)
+                        _
+                        (execution/check!
+                         (:execution-contract opts)
+                         :cursor-exact-selected)
+                        _
+                        (when-not exact
+                          (throw
+                           (ex-info
+                            "The cursor's exact snapshot is no longer retained."
+                            {:type :eacl.consistency/snapshot-expired
+                             :eacl/error
+                             :eacl.consistency/snapshot-expired})))
+                        exact-context
+                        (exact-selection-context
+                         exact (source/semantic-identity selected))]
+                    (when-not (exact-selection-matches-cursor?
+                               exact-context envelope)
                       (throw
                        (ex-info
-                        "The cursor's exact snapshot is no longer retained."
-                        {:type :eacl.consistency/snapshot-expired
-                         :eacl/error
-                         :eacl.consistency/snapshot-expired})))
-                    exact-context
-                    (exact-selection-context
-                     exact (source/semantic-identity selected))]
-                (when-not (exact-selection-matches-cursor?
-                           exact-context envelope)
-                  (throw
-                   (ex-info
-                    "The cursor exact locator resolved to another immutable basis."
-                    {:type :eacl.consistency/history-divergence
-                     :eacl/error :eacl.consistency/history-divergence
-                     :cursor-native-revision (:native-revision envelope)
-                     :selected-native-revision
-                     (:native-revision exact-context)})))
-                {:adapter exact
-                 :selected-snapshot selected
+                        "The cursor exact locator resolved to another immutable basis."
+                        {:type :eacl.consistency/history-divergence
+                         :eacl/error :eacl.consistency/history-divergence
+                         :cursor-native-revision (:native-revision envelope)
+                         :selected-native-revision
+                         (:native-revision exact-context)})))
+                    {:adapter exact
+                     :selected-snapshot selected
                  ;; Exact selection proves that this is the cursor's original
                  ;; immutable basis. Preserve its authenticated context when
                  ;; minting the next page cursor: acceptance and re-minting do
                  ;; not read an unavailable historical proof frame.
-                 :continuation-context
-                 (envelope-dependency-context envelope)})
-              (catch #?(:clj Throwable :cljs :default) error
-                (when selected
-                  (source/release! selected))
-                (throw error)))))
+                     :continuation-context
+                     (envelope-dependency-context envelope)})
+                  (catch #?(:clj Throwable :cljs :default) error
+                    (when selected
+                      (source/release! selected))
+                    (throw error)))))
 
-        (do
-          (apply-continuation-decision!
-           adapter current envelope initial)
-          (ensure-cursor-satisfies-request! opts envelope)
-          {:adapter adapter
-           :continuation-context current})))))))
+            (do
+              (apply-continuation-decision!
+               adapter current envelope initial)
+              (ensure-cursor-satisfies-request! opts envelope)
+              {:adapter adapter
+               :continuation-context current})))))))
 
 (defn select-continuation-adapter
   "Uses an equal current proof or a verified exact historical fallback."
@@ -943,8 +952,7 @@
         (transform-edge-ids
          (fn [object-id]
            (let [internal-id
-                 (backend/invoke
-                  adapter :object-id->internal object-id)]
+                 (backend/object-id->internal adapter object-id)]
              (when (nil? internal-id)
                (vreset! missing? true))
              internal-id))
@@ -1151,7 +1159,10 @@
         objects (if detailed? (mapv :object (:data page)) (:data page))
         identities
         (resolve-external-identities!
-         adapter opts operation (map :id objects))
+         adapter opts operation
+         (concat (map :id objects)
+                 ;; A wildcard entry's exclusions render with the page.
+                 (mapcat #(map :id (:excluded-subjects %)) objects)))
         page-info
         (reduce
          (fn [page-info field]
@@ -1197,8 +1208,12 @@
          {:data
           (mapv
            (fn [item]
-             (let [{:keys [type id]} (if detailed? (:object item) item)
-                   object (spice-object type (get identities id))]
+             (let [{:keys [type id excluded-subjects]} (if detailed? (:object item) item)
+                   object (cond-> (spice-object type (get identities id))
+                            (some? excluded-subjects)
+                            (assoc :excluded-subjects
+                                   (mapv #(spice-object (:type %) (get identities (:id %)))
+                                         excluded-subjects)))]
                (if detailed? (assoc item :object object) object)))
            (:data page))
           :page-info page-info})]

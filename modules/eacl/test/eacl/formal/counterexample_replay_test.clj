@@ -140,8 +140,62 @@
     eacl.engine.stable-reducer-test/frozen-baseline-denotation-differential-test
     :EACL-FORMAL-067
     eacl.datomic.recursive-cache-test/recursive-page-order-is-stable-across-scan-wave-boundaries-test
+    :EACL-FORMAL-068
+    eacl.datascript.contract-test/representation-sensitive-identities-do-not-alias-batch-decisions-or-writes-test
+    :EACL-FORMAL-069
+    eacl.datascript.contract-test/public-request-shapes-fail-closed-before-datascript-mutation-test
+    :EACL-FORMAL-070
+    eacl.datascript.contract-test/public-request-shapes-fail-closed-before-datascript-mutation-test
+    :EACL-FORMAL-071
+    eacl.datascript.contract-test/false-valued-public-identities-remain-present-across-inspection-test
+    :EACL-FORMAL-072
+    eacl.datascript.contract-test/numeric-public-identities-never-become-native-cursor-eids-test
+    :EACL-FORMAL-073
+    eacl.datascript.contract-test/unsupported-subject-relations-never-degrade-to-base-objects-test
+    :EACL-FORMAL-074
+    eacl.core-test/missing-public-read-keys-fail-before-dispatch-test
+    :EACL-FORMAL-075
+    eacl.core-test/nested-relationship-mutations-fail-before-protocol-dispatch-test
+    :EACL-FORMAL-076
+    eacl.datascript.contract-test/zed-tokens-accept-only-their-issued-spelling-test
+    :EACL-FORMAL-077
+    eacl.datascript.contract-test/page-request-errors-echo-the-callers-cursor-strings-test
+    :EACL-FORMAL-078
+    eacl.secure-format-test/validation-work-is-bounded-by-maximum-entries-test
+    :EACL-FORMAL-079
+    eacl.secure-format-test/records-project-to-maps-and-colliding-members-are-rejected-test
+    :EACL-FORMAL-080
+    eacl.datascript.qualified-write-test/partial-relationship-walks-over-qualified-rows-are-total-and-terminate
+    :EACL-FORMAL-081
+    eacl.datascript.qualified-write-test/eacl-rs-005-expansions-list-expiring-and-caveated-relationships
+    :EACL-FORMAL-082
+    eacl.datascript.kleene-fault-test/a-faulting-edge-that-reaches-no-resource-never-fails-a-walk
+    :EACL-FORMAL-083
+    eacl.datascript.kleene-fault-test/a-filter-edge-composes-with-every-possible-decision
+    :EACL-FORMAL-084
+    eacl.datascript.kleene-fault-test/a-definite-operand-absorbs-a-faulting-one-on-every-route-in-any-order
     :EACL-FORMAL-085
-    eacl.datalevin.qualified-write-test/removing-a-caveat-sees-relationships-past-the-first-native-batch})
+    eacl.datalevin.qualified-write-test/removing-a-caveat-sees-relationships-past-the-first-native-batch
+    :EACL-FORMAL-090
+    eacl.caveats.plan-test/member-literals-are-admitted-like-string-literals
+    :EACL-FORMAL-091
+    eacl.schema.expression-limits-test/encoded-byte-limit-precedes-codec-ceilings-test
+    :EACL-FORMAL-092
+    eacl.schema.expression-resolver-test/declaration-errors-follow-source-order-test
+    :EACL-FORMAL-093
+    eacl.caveats.definition-test/caveat-source-is-the-spicedb-cel-expression
+    :EACL-FORMAL-094
+    eacl.datascript.qualified-schema-test/removing-a-relation-with-qualified-relationships-reports-relation-in-use
+    :EACL-FORMAL-095
+    eacl.spicedb.compatibility-corpus-test/semicolon-terminators-test
+    :EACL-FORMAL-096
+    eacl.spicedb.compatibility-corpus-test/continuation-lines-test
+    :EACL-FORMAL-097
+    eacl.spicedb.compatibility-corpus-test/glued-keywords-test
+    :EACL-FORMAL-098
+    eacl.operator.folded-operator-test/a-folded-operator-answers-exactly-like-its-unfolded-twin-test
+    :EACL-FORMAL-099
+    eacl.datomic.self-counterexample-test/self-counterexample-replays-on-datomic-test})
 
 (def ^:private modules-outside-ci
   "Namespace prefixes of modules that CI cannot install. eacl-datalevin needs a

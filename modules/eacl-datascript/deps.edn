@@ -11,8 +11,12 @@
                                io.github.cognitect-labs/test-runner {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
                   :exec-fn cognitect.test-runner.api/test
                   :exec-args {:dirs ["test" "../eacl/test"]}}
-           :cljs-test {:extra-paths ["test" "../eacl/test"]
-                       :extra-deps {org.clojure/clojurescript {:mvn/version "1.12.42"}}
+           ;; The runner also compiles the portable Caveat evaluator's tests,
+           ;; which inline the JVM module's shared Caveat corpus.
+           :cljs-test {:extra-paths ["test" "../eacl/test" "../eacl-caveats-portable/test"
+                                     "../eacl-caveats-jvm/test"]
+                       :extra-deps {org.clojure/clojurescript {:mvn/version "1.12.42"}
+                                    dev.eacl/eacl-caveats-portable {:local/root "../eacl-caveats-portable"}}
                        :main-opts ["-m" "cljs.main"
                                    "-t" "node"
                                    "-O" "none"

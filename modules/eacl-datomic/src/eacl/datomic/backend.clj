@@ -6,7 +6,8 @@
             [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.datomic.db :as ddb]
-            [eacl.schema.expression-persistence :as expression-persistence])
+            [eacl.schema.expression-persistence :as expression-persistence]
+            [eacl.schema.wildcard :as wildcard])
   (:import [java.util.concurrent Future]))
 
 (def adapter-capabilities
@@ -279,12 +280,19 @@
 
 (defn- relation-defs
   [db resource-type relation-name]
-  (mapv (fn [datom]
-          {:relation-id (:e datom)
-           :resource-type resource-type
-           :relation-name relation-name
-           :subject-type (nth (:v datom) 2)})
-        (ddb/relation-datoms db resource-type relation-name)))
+  (let [wildcard-attribute? (some? (d/entid db wildcard/unqualified-attribute))
+        wildcard-eid (delay (d/entid db wildcard/lookup-ref))]
+    (mapv (fn [datom]
+            (cond-> {:relation-id (:e datom)
+                     :resource-type resource-type
+                     :relation-name relation-name
+                     :subject-type (nth (:v datom) 2)}
+              ;; A `T:*` branch derives through the wildcard subject entity.
+              (and wildcard-attribute?
+                   (seq (d/datoms db :eavt (:e datom) wildcard/unqualified-attribute))
+                   @wildcard-eid)
+              (assoc :wildcard-eid @wildcard-eid)))
+          (ddb/relation-datoms db resource-type relation-name))))
 
 (defn- permission-defs
   [db resource-type permission-name]
@@ -350,16 +358,13 @@
        :schema-generation (fn [] (certified-schema-generation db))
        :object-id->internal
        (fn [object-id]
-         ;; Shared orchestration uses internal numeric eids in cache-normalized
-         ;; engine requests, while permission-tree expansion resolves a public
-         ;; id directly through this operation. Preserve Datomic's historical
-         ;; numeric-eid convention before invoking the configurable public-id
-         ;; resolver; otherwise an already-resolved eid is encoded a second
-         ;; time (for example as [:eacl/id 1759]) and every point/list read
-         ;; becomes a false negative.
-         (if (number? object-id)
-           (d/entid db object-id)
-           ((or object-id->entid ddb/object-eid) db object-id)))
+         (if object-id->entid
+           (object-id->entid db object-id)
+           ;; Raw compatibility adapters still resolve application IDs by the
+           ;; stored EACL identity attribute. Numeric values are data here,
+           ;; never an implicit request to use a native Datomic entity ID.
+           (when (d/entid db :eacl/id)
+             (d/entid db [:eacl/id object-id]))))
        :internal-id->object (fn [internal-id] (external-id db internal-id))
        :relation-defs
        (fn [resource-type relation-name]

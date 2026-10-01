@@ -39,6 +39,20 @@
     (.getThreadAllocatedBytes
      ^ThreadMXBean bean (.getId (Thread/currentThread)))))
 
+(def ^:private default-cpu-bean
+  (delay (let [bean (ManagementFactory/getThreadMXBean)]
+           (when (.isCurrentThreadCpuTimeSupported bean)
+             (when-not (.isThreadCpuTimeEnabled bean)
+               (.setThreadCpuTimeEnabled bean true))
+             bean))))
+
+(defn- current-thread-cpu-nanos
+  "CPU time of the calling thread, or nil where the JVM does not measure it.
+  On a shared machine it excludes the time the thread waits to be scheduled."
+  []
+  (when-let [bean @default-cpu-bean]
+    (.getCurrentThreadCpuTime ^java.lang.management.ThreadMXBean bean)))
+
 (defn environment
   []
   {:os (System/getProperty "os.name")
@@ -153,14 +167,17 @@
   "Runs every arm once per iteration, reversing arm order on odd iterations.
 
   Options support injected clocks/allocation readers for deterministic tests.
-  Absolute ceilings are keyed by `[os architecture java-major]`; paired
-  comparisons remain applicable on every host."
+  `:cpu-time` reads the calling thread's CPU nanoseconds (default: the JVM's
+  thread CPU clock); when it returns numbers, every arm also gets a `:cpu-us`
+  summary. Absolute ceilings are keyed by `[os architecture java-major]`;
+  paired comparisons remain applicable on every host."
   [{:as options
     :keys [arms warmups samples comparisons absolute-ceilings
-           nano-time allocated-bytes environment]
+           nano-time cpu-time allocated-bytes environment]
     :or {comparisons []
          absolute-ceilings {}
          nano-time #(System/nanoTime)
+         cpu-time current-thread-cpu-nanos
          allocated-bytes current-thread-allocated-bytes}}]
   (require-run-shape! options)
   (let [environment (or environment (eacl.bench.paired/environment))
@@ -169,6 +186,7 @@
          (into {}
                (map (fn [[arm _]]
                       [arm {:latency-us []
+                            :cpu-us []
                             :allocated-bytes []
                             :checksums []}]))
                arms))]
@@ -176,13 +194,18 @@
       (let [ordered-arms (if (odd? iteration) (rseq arms) arms)]
         (doseq [[arm f] ordered-arms]
           (let [allocated-before (allocated-bytes)
+                cpu-before (cpu-time)
                 started (nano-time)
                 value (f iteration)
                 elapsed (- (nano-time) started)
+                cpu-after (cpu-time)
                 allocated-after (allocated-bytes)]
             (when (>= iteration warmups)
               (swap! observations update-in [arm :latency-us]
                      conj (/ (double elapsed) 1000.0))
+              (when (and cpu-before cpu-after)
+                (swap! observations update-in [arm :cpu-us]
+                       conj (/ (double (- cpu-after cpu-before)) 1000.0)))
               (swap! observations update-in [arm :checksums] conj (hash value))
               (when (and allocated-before allocated-after)
                 (swap! observations update-in [arm :allocated-bytes]
@@ -197,6 +220,8 @@
                       :warmups warmups
                       :latency-us (summary (:latency-us observation))
                       :checksums (:checksums observation)}
+                      (seq (:cpu-us observation))
+                      (assoc :cpu-us (summary (:cpu-us observation)))
                       (seq (:allocated-bytes observation))
                       (assoc :allocated-bytes
                              (summary (:allocated-bytes observation))))]))

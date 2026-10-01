@@ -144,9 +144,13 @@
         (is (= (evidence/combine :union x y) result))
         (is (= [(second groups)] @calls))
         (with-redefs [backend/scan-invoker (fn [& _] (fn [& _] (throw (ex-info "Decisive seed needs no scan" {}))))]
-          (is (= true (scalar/check-eids (assoc-in options [:arrow-witness :evidence] true))))
-          (let [fault (evidence/fault :eacl.qualifier/invalid :missing)]
-            (is (= fault (scalar/check-eids (assoc-in options [:arrow-witness :evidence] fault))))))
+          (is (= true (scalar/check-eids (assoc-in options [:arrow-witness :evidence] true)))))
+        ;; A faulting seed is a lower bound, not a decision: the remaining
+        ;; binding is still examined and composes with it pointwise.
+        (let [fault (evidence/fault :eacl.qualifier/invalid :missing)]
+          (is (= (evidence/combine :union fault y)
+                 (with-redefs [qualification/qualify (resolver qids semantic)]
+                   (scalar/check-eids (assoc-in options [:arrow-witness :evidence] fault))))))
         (is (= :arrow-witness-scope
                (:reason (errors/error-data #(scalar/check-eids (assoc-in options [:arrow-witness :point 3] 999))))))
         (is (= :arrow-witness-scope

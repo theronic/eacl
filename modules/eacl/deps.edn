@@ -7,8 +7,7 @@
         ;; metadata deliberately does not encode Git dependencies.
         com.github.theronic/cljs-cache
         {:git/url "https://github.com/theronic/cljs-cache.git"
-         :git/sha "4143cc036446a47f0c6dfd9f8dde90363835051c"}
-        instaparse/instaparse {:mvn/version "1.5.0"}}
+         :git/sha "4143cc036446a47f0c6dfd9f8dde90363835051c"}}
  :aliases {:build {:extra-paths ["."]
                    :ns-default build
                    :extra-deps {eacl/build-tools {:local/root "../../src-build"}}}

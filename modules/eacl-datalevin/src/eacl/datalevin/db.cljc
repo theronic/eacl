@@ -192,7 +192,13 @@
 
 (defn avet-endpoint-prefix
   "Endpoint datoms across entities for an exact three-component value prefix,
-  using a complete five-component AVET seek bound."
+  using a complete five-component AVET seek bound.
+
+  A resumed scan names the boundary row by `cursor-eid`, `cursor-qualifier`,
+  and `cursor-entity` (its owner). The scan then starts exactly at that row in
+  either direction (see `endpoint-pair/resume-bound` and
+  `resumed-ave-datoms`), so the native limit needs only one extra row for the
+  boundary that portable cursor logic drops."
   ([db attr prefix]
    (avet-endpoint-prefix db attr prefix nil :asc
                          maximum-unpaged-scan-results))
@@ -204,19 +210,27 @@
   ([db attr prefix cursor-eid cursor-entity direction native-limit]
    (avet-endpoint-prefix db attr prefix cursor-eid cursor-entity direction native-limit false))
   ([db attr prefix cursor-eid cursor-entity direction native-limit include-qualifier?]
+   (avet-endpoint-prefix db attr prefix cursor-eid nil cursor-entity direction native-limit include-qualifier?))
+  ([db attr prefix cursor-eid cursor-qualifier cursor-entity direction native-limit include-qualifier?]
    (if-not (and (endpoint-pair/valid-prefix? prefix)
                 (#{:asc :desc} direction)
                 (or (nil? cursor-entity) (nat-int? cursor-entity))
+                (or (nil? cursor-qualifier) (nat-int? cursor-qualifier))
                 (pos-int? native-limit))
      []
      (let [tail  (or cursor-eid
                      (if (= :desc direction) max-eid min-eid))
-           bound (endpoint-pair/seek-bound prefix tail direction max-eid)
-           scan  (if (= :desc direction)
-                   (ds/rseek-datoms
-                    db :ave attr bound cursor-entity (inc native-limit))
-                   (ds/seek-datoms
-                    db :ave attr bound cursor-entity (inc native-limit)))]
+           resume? (and (some? cursor-eid) (some? cursor-entity))
+           scan  (if resume?
+                   (resumed-ave-datoms
+                    db attr
+                    (endpoint-pair/resume-bound
+                     prefix cursor-eid cursor-qualifier direction max-eid)
+                    cursor-entity direction (inc native-limit) max-eid)
+                   (let [bound (endpoint-pair/seek-bound prefix tail direction max-eid)]
+                     (if (= :desc direction)
+                       (ds/rseek-datoms db :ave attr bound nil (inc native-limit))
+                       (ds/seek-datoms db :ave attr bound nil (inc native-limit)))))]
        (into [] (take native-limit)
              (endpoint-pair/checked-datoms
               (take-while
@@ -249,6 +263,17 @@
                            (step (peek chunk))))))))]
     (step nil)))
 
+(defn entity-exists?
+  "Whether `eid` has any datom. The seek reads one datom; when `eid` has
+  none it lands on a later entity's datom."
+  [database eid]
+  (= eid (:e (first (ds/seek-datoms database :eav eid nil nil 1)))))
+
+(defn entity-eacl-id
+  "The entity's `:eacl/id`, reading at most one datom."
+  [database eid]
+  (:v (first (ds/datoms database :eav eid :eacl/id))))
+
 (defn entity-facts [database eid]
   (mapv (fn [datom] [(:a datom) (:v datom) (:tx datom)]) (ds/datoms database :eav eid)))
 
@@ -256,5 +281,5 @@
   (let [rows (entity-facts database eid)]
     (when (seq rows)
       (reduce (fn [result [a v]]
-                (if (= :eacl.relation/caveats a) (update result a (fnil conj #{}) v) (assoc result a v)))
+                (if (#{:eacl.relation/caveats :eacl.relation/wildcard-caveats} a) (update result a (fnil conj #{}) v) (assoc result a v)))
               {:db/id eid} rows))))

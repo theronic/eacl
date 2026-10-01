@@ -25,6 +25,10 @@ does not authenticate.
   prefix. Its key ID is authenticated even when two IDs name identical roots.
 - Cache-entry and causal-token namespaces use the generic authenticated
   envelope with distinct domains and prefixes.
+- `eacl.secure-format/b64url-decode` accepts only the unpadded spelling that
+  `b64url-encode` emits, and `decode-canonical` accepts only canonical text.
+  The bytes a tag covers are therefore a function of the received string, and
+  each authenticated value has exactly one accepted token or cursor string.
 
 **Evidence.**
 
@@ -34,6 +38,12 @@ does not authenticate.
   authenticator failure at public boundaries.
 - `authenticated-cross-runtime-vectors-test` replays literal compact cursor
   frames and cache envelopes in CLJ and CLJS.
+- `authenticated-envelopes-accept-only-their-issued-spelling-test` and
+  `encrypted-cursors-accept-only-their-issued-spelling-test` reject every
+  single-bit change to a token, cursor, or envelope, appended text, padding,
+  unused-bit and EDN respellings. The DataScript
+  `zed-tokens-accept-only-their-issued-spelling-test` replays the public
+  token tamper and Base64URL respelling retained as `EACL-FORMAL-076`.
 
 **Residual trust.** HMAC-SHA-256, platform byte conversion, key secrecy, and
 forgery resistance remain trusted.
@@ -47,7 +57,15 @@ representation, and distinct accepted values do not share that representation.
 
 - `eacl.secure-format/validate-value` admits only nil, booleans, strings,
   keywords, safe integers, maps, sets, and sequential values within configured
-  size, depth, and entry bounds.
+  size, depth, and entry bounds. One running entry count is checked before
+  each value is examined, so validation stops after `maximum-entries` + 1
+  values even for an unbounded lazy sequence.
+- Accepted values are portable EDN values: a record encodes as its field map,
+  a list or seq as a vector, and a sorted map or set in canonical order. A map
+  or set whose distinct members project to one value fails with `:duplicate-key`
+  or `:duplicate-member` instead of losing a member. Identity boundaries that
+  must distinguish representations reject them separately
+  (`eacl.cache/cursor-cache-data?`, object-ID admission).
 - `eacl.secure-format/portable-render` explicitly renders scalar and collection
   syntax, fully qualified keyword keys, ordering, delimiters, and string
   escapes without using a host collection printer.
@@ -59,7 +77,11 @@ representation, and distinct accepted values do not share that representation.
   on an entire plan; external wire admission bounds remain unchanged.
 - `eacl.secure-format/decode-canonical` normalizes host-reader failures and
   rejects unsupported values, duplicate fields, unknown tags, unknown
-  top-level fields, unsafe integers, and hostile bounds.
+  top-level fields, unsafe integers, and hostile bounds. It returns a value
+  only when the input equals that value's canonical rendering, so trailing
+  input and every other reader spelling fail with `:noncanonical`, and its
+  hidden-input scanner rejects comments, metadata, character literals, and
+  dispatch forms outside strings before the host reader runs.
 
 **Evidence.**
 
@@ -74,6 +96,13 @@ representation, and distinct accepted values do not share that representation.
   cursor and cache outputs and current-format JVM cursor readability.
 - Counterexamples `EACL-FORMAL-006` and `EACL-FORMAL-007` retain the two
   host-runtime discrepancies found while testing this assumption.
+- `decode-canonical-admits-only-the-canonical-spelling-test` covers trailing
+  input, alternative spellings, hidden reader syntax, and the
+  decode/encode round trip; `validation-work-is-bounded-by-maximum-entries-test`
+  and `records-project-to-maps-and-colliding-members-are-rejected-test` cover
+  the entry bound and the record projection. Counterexamples
+  `EACL-FORMAL-076`, `EACL-FORMAL-078`, and `EACL-FORMAL-079` retain the
+  defects they close.
 
 **Residual trust.** Correctness of the explicit CLJC renderer, EDN readers,
 UTF-8 conversion, and runtimes is supported by differential tests, not proved.

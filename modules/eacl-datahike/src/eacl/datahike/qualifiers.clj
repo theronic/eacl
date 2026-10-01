@@ -35,7 +35,9 @@
 (defn read-api
   "Read-only native inputs; constructing this map never prepares or writes a store."
   []
-  {:backend :datahike :entity entity :facts facts :rows db/relationship-identity-datoms
+  {:backend :datahike :entity entity :entity-exists? native-db/entity-exists?
+   :eacl-id native-db/entity-eacl-id :facts facts
+   :rows db/relationship-identity-datoms
    :source backend/database-source-scope :generation schema/current-schema-generation
    :all-rows (fn [database attribute] (when (db/entid database attribute) (d/datoms database {:index :aevt :components [attribute]})))
    :fact-rows (fn [database eid] (d/datoms database {:index :eavt :components [eid]}))

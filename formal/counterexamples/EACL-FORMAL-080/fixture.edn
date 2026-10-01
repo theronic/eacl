@@ -1,0 +1,34 @@
+{:operation :read-relationships
+ :backend :datascript
+ :schema "definition user {}\ndefinition org {\n  relation child: org\n  relation viewer: user\n  permission see = viewer\n}\n"
+ :objects-in-eid-order ["c" "f" "u"]
+ :clock-ms 2000000
+ :relationships
+ [{:subject {:type :org :id "f"} :relation :child :resource {:type :org :id "c"}
+   :valid-until-ms 9000000}
+  {:subject {:type :org :id "f"} :relation :child :resource {:type :org :id "f"}}]
+ :physical-order
+ {:index :avet-reverse
+  :rows [[:primary "f" :qualifier nil :owner "f"]
+         [:primary "f" :qualifier :qualified :owner "c"]]
+  :owner-order ["c" "f"]}
+ :walks
+ [{:id :plain
+   :request {:resource/type :org :resource/relation :child}
+   :page-sizes [1]}
+  {:id :expiry-active
+   :request {:resource/type :org :resource/relation :child
+             :relationship-state :expiry-active}
+   :page-sizes [1]}
+  {:id :authorization
+   :request {:resource/type :org :resource/relation :child
+             :authorization {:subject {:type :user :id "u"}
+                             :permission :see :on :resource}}
+   :page-sizes [1]}]
+ :before
+ {:plain {:pages [[["f" :child "f"]] []] :missing [["f" :child "c"]]}
+  :expiry-active {:pages :repeats-forever :page [["f" :child "f"]]
+                  :has-next-page? true}
+  :authorization {:pages :repeats-forever :page []
+                  :bounded? true :has-next-page? true
+                  :examined-per-page 10000}}}

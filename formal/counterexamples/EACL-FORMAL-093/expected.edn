@@ -1,0 +1,12 @@
+{:stored-source :spicedb-cel-expression
+ :results
+ [{:body "{ /* } */ x == 1 }" :accepted true :stored-source "x == 1"}
+  {:body "{ /* c */ x == 1 }" :accepted true :stored-source "x == 1"}
+  {:body "{ /* a */ /* } */ x == 1 }" :accepted true :stored-source "x == 1"}
+  {:body "{ /* } */ /* b */ x == 1 }" :accepted true :stored-source "x == 1"}
+  {:body "{ x == 1 /* } */ }" :accepted true :stored-source "x == 1"}
+  {:body "{ // } c\n x == 1 }" :accepted true :stored-source "x == 1"}
+  {:body "{ x == /* c */ 1 }" :type :eacl.caveat/invalid :reason :syntax-error}
+  {:body "{\n x == 1 /* c */\n}" :type :eacl.caveat/invalid :reason :syntax-error}]
+ :source-span "the stored expression"
+ :comment-before-the-opening-brace :schema-whitespace}

@@ -44,9 +44,72 @@ means `(a - b) - c`. Use parentheses when the grouping might surprise a reader.
 Permissions can refer to other permissions recursively. A positive cycle
 alone grants nothing; there must be a relationship that provides a grant.
 
-A cycle cannot depend on its own exclusion result. EACL rejects such a schema
-with `:eacl.schema/unstratified-exclusion` and keeps the previous schema.
-For example, `permission view = reader - view` is invalid.
+A cycle cannot depend on its own exclusion result. SpiceDB accepts such a
+schema, so EACL rejects it as `:eacl.schema/unsupported-feature` with an
+`:unstratified-exclusion` issue naming the negative edge and the cycle, and
+keeps the previous schema. For example, EACL does not support
+`permission view = reader - view`.
+
+An intersection or exclusion whose operands recurse only through unions costs
+about what its operands cost:
+
+```zed
+permission read_account = reader + parent->read_account
+permission delete_granted = deleter + parent->delete_granted
+permission delete = delete_granted & read_account
+```
+
+EACL decides each operand the way it decides that operand on its own, and it
+generates `delete`'s candidates with the traversal a lookup of one operand
+uses. This holds when relationships expire, too. An operand whose only
+witnesses expire is decided in a few passes, one per distinct expiry it
+meets, and the grant is certified until the last of those witnesses
+expires.
+
+Qualified operands, Caveated ones included, use the same batched search.
+Faults compose with strong-Kleene logic (see
+[Faults](caveats.md#faults)): a definite witness absorbs a faulting branch
+and a fault never decides, so the answer does not depend on the order in
+which the search finds witnesses. A resource whose search meets a fault or a
+conditional residual without a definite witness, or evidence that could let
+access appear later, is decided by the exact point evaluator instead.
+
+The same holds when the operator sits under a union, or when a union is an
+intersection's anchor:
+
+```zed
+permission delete_top = deleter + (delete_granted & read_account)
+```
+
+EACL generates `delete_top`'s candidates from `deleter` and from
+`delete_granted`'s own traversal. It decides `deleter` for a whole page from
+the subject's `deleter` grants, read once per request.
+
+A permission that recurses through the operator itself costs about what its
+union twin costs, as long as the recursion is linearly guarded:
+
+```zed
+permission inherited = reader + (parent->inherited & eligible)
+```
+
+Linearly guarded means each intersection in the recursion has one recursive
+operand, and its other operands are relations, arrows, or permissions outside
+the recursion. An exclusion's subtracted operand qualifies the same way.
+EACL follows `parent->inherited` only where `eligible` holds, so it decides
+`inherited` with the same memoized search as `reader + parent->inherited`.
+
+A subtracted operand that expires or is caveated could let access appear
+later, so EACL decides that resource exactly instead. The same holds for a
+permission the recursion consults whose answer can change at a deadline,
+such as another guarded permission that subtracts an expiring grant. Other recursion
+through an operator uses stratified recursive evaluation, which costs more
+per result. Examples are an intersection with two recursive operands, or an
+operand that is itself an intersection or exclusion.
+
+Guarded members whose closure declares Caveats are searched the same way; a
+resource that rests on a residual or a fault gets the tabled evaluator's exact
+value. Wildcard variants retain their own subject holdings and guards,
+including wildcard bans on the right side of an exclusion.
 
 EACL supports one-hop arrows. A target permission can contain another arrow,
 but a directly chained expression such as `a->b->c` is not supported.
@@ -54,8 +117,19 @@ but a directly chained expression such as `a->b->c` is not supported.
 Other unsupported forms are:
 
 - `.all()` intersection arrows.
-- Wildcard subjects and `subject#relation` subject sets.
+- `subject#relation` subject sets.
 - `nil` and `self` permission operands.
+
+## Wildcard subjects
+
+A relation may allow every subject of a type (`relation viewer: user | user:*`).
+A wildcard relationship makes every user a member of that relation, so the
+operators above apply to it like any other membership: `viewer - banned`
+withholds the permission from banned users, and `viewer & editor` grants it
+to editors. A relation that holds a wildcard cannot be the left side of an
+arrow. `lookup-subjects` returns the wildcard as the subject `*` and lists the
+subjects that an intersection or exclusion withholds it from under
+`:excluded-subjects`. See [Wildcard Subjects](../README.md#wildcard-subjects).
 
 [Caveats and expiration](caveats.md) can qualify relationships used by these
 expressions. An expired ban can restore access, just as an expired grant can

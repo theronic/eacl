@@ -10,6 +10,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
             [eacl.cache :as shared-cache]
+            [eacl.cache.standard-lru :as lru]
             [eacl.core :as eacl :refer [->Relationship spice-object]]
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
@@ -163,19 +164,23 @@ definition doc {
           decode expression/decode
           normalize-limits expression-policy/normalize-client-limits
           allowed?
-          (with-redefs
-            [expression/decode
-             (fn [& args]
-               ;; The one-argument entry delegates through the public
-               ;; two-argument var, so count the actual codec invocation only.
-               (when (= 2 (count args))
-                 (swap! payload-decodes inc))
-               (apply decode args))
-             expression-policy/normalize-client-limits
-             (fn [limits]
-               (swap! limit-normalizations inc)
-               (normalize-limits limits))]
-            (impl/can? db alice :view doc))]
+          ;; An empty process-wide decode memo: this test counts the decodes
+          ;; one request performs, not ones an earlier client completed.
+          (binding [expression-persistence/*content-decodes* (lru/store 16)]
+            (with-redefs
+              [expression/decode
+               (fn [& args]
+                 ;; The one-argument entry delegates through the public
+                 ;; two-argument var, so count the actual codec invocation
+                 ;; only.
+                 (when (= 2 (count args))
+                   (swap! payload-decodes inc))
+                 (apply decode args))
+               expression-policy/normalize-client-limits
+               (fn [limits]
+                 (swap! limit-normalizations inc)
+                 (normalize-limits limits))]
+              (impl/can? db alice :view doc)))]
       (is (true? allowed?) "instrumentation preserves the decision")
       (is (= 2 @payload-decodes)
           "the two immutable permission entities decode once each per request")

@@ -51,6 +51,14 @@
                                 (original op (if (:fault a) (m/value #{}) a)
                                           (if (:fault b) (m/value #{}) b)))]
          (not= :failure (m/kind u (m/compose :exclusion (m/value u) (m/fault :invalid))))))
+     :fault-dominates-absorber
+     (let [original m/compose]
+       ;; The superseded strict policy: any fault faults the whole result.
+       (with-redefs [m/compose (fn [op a b]
+                                (if (or (m/faulted? u a) (m/faulted? u b))
+                                  (m/fault :dominant)
+                                  (original op a b)))]
+         (not= :has (m/kind u (m/compose :union (m/value u) (m/fault :invalid))))))
      :maximum-instead-of-minimum-horizon
      (with-redefs [m/meet (fn [a b] (if (and a b) (max a b) (or a b)))]
        (not (contract/certificate-contract? :intersection q (assoc q :expiry 110) 90 100 #{})))
@@ -97,11 +105,14 @@
            first-step (m/recursive-step u base rules initial)
            full (m/fixed-point u base rules 10)]
        (and (= (update-vals first-step :value) (update-vals initial :value))
-            (not= (get-in first-step [0 :end]) (get-in full [:values 0 :end]))))}))
+            (not= (get-in first-step [0 :end]) (get-in full [:values 0 :end]))))
+     :earlier-deadline-when-both-decide
+     (with-redefs [m/later m/meet]
+       (not= 3 (:end (m/combine u :union (m/evidence (m/value u) 1) (m/evidence (m/value u) 3)))))}))
 
 (deftest all-registered-controls-are-executed-and-killed
   (let [registered (:controls (edn/read-string (slurp "formal/qualified/mutations.edn")))
         results (run-controls)]
-    (is (= 17 (count registered)))
+    (is (= 19 (count registered)))
     (is (= (set registered) (set (keys results))))
     (doseq [[id killed?] results] (is (true? killed?) (name id)))))

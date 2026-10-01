@@ -1,0 +1,11 @@
+{:write-schema!
+ {:type :eacl.schema/relation-in-use
+  :relation [:doc :viewer :user]
+  :count-after-each-write [1 2 3 4]}
+ :stored-schema-unchanged true
+ :with-schema-retain-inert
+ [{:type :eacl.speculative/retained-orphan-relationships
+   :relation [:relation :doc :viewer :user]
+   :present? true}]
+ :after-deleting-every-relationship :relation-removed
+ :backends {:datascript :fixed :datalevin :fixed :datomic :unaffected :datahike :unaffected}}

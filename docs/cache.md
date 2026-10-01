@@ -21,6 +21,16 @@ permissions. Time-dependent answers also have a validity interval: reaching a
 share's deadline makes an old answer unusable even if it remains in memory.
 See [expiration](caveats.md#expiring-access).
 
+Besides completed answers, a client keeps the decisions its evaluation makes
+along the way: for each candidate resource, whether the subject holds an
+operator permission such as `a & b`, and whether it holds each operand the
+operator combines. A later request on the same client and database version
+reuses them. A check of `a` after a lookup of `a & b`, a lookup of
+`a & c`, or a check of `a & b` itself then skips the work already done.
+A time-dependent decision is reused only while its validity interval admits
+the later request's time, and only under the same caveat context.
+`:cache? false` neither reads nor stores these decisions.
+
 ## Capacity and page retention
 
 Pass cache configuration to your backend's `make-client`:
@@ -33,11 +43,14 @@ Pass cache configuration to your backend's `make-client`:
 | Option | Meaning |
 | --- | --- |
 | `:max-entries` | Capacity for each completed-answer, rendered-page, continuation, and cursor store; default 1,024. |
-| `:denotation-max-entries` | Capacity for cached Boolean sub-results used during evaluation. |
+| `:denotation-max-entries` | Capacity for decisions made during evaluation; default 4,096. |
 | `:telemetry?` | Whether to collect cache counters; default `true`. |
 
 Capacities are positive entry counts, not byte limits or one combined memory
-budget. A large result takes more memory than a small one. Pages of up to
+budget. A lookup of an operator permission over N candidate resources stores
+up to N decisions for the permission and N for each operand it decides, so a
+walk of `a & b` over 2,000 resources needs about 6,000 entries to be reused in
+full. Evicted decisions are recomputed. A large result takes more memory than a small one. Pages of up to
 1,000 results can be cached; larger pages are returned normally but are not
 retained as completed pages.
 
@@ -159,9 +172,13 @@ available. Use them only when your application authenticates and size-bounds
 stored bytes before decoding them. Prefer the authenticated APIs above when
 EACL should handle that boundary.
 
-Exports contain completed answers and Boolean sub-results. They omit database
-values, rendered pages, traversal state, cursor state, metrics, and private
-cache bookkeeping. Snapshot v1 is not accepted.
+Exports contain completed answers and the decisions made during evaluation,
+each time-dependent one with its validity interval. They omit database values,
+rendered pages, traversal state, cursor state, metrics, and private cache
+bookkeeping. Snapshot v1 is not accepted. A client restoring another client's
+snapshot reuses its entries only when both select the same database version
+and, with custom ID converters, declare the same stable `:adapter-fingerprint`
+(see [coherence and recovery](#coherence-and-recovery)).
 
 `cache-content-revision` is a process-local hint that exported content may have
 changed. It can advance without a portable change; compare exports if you need

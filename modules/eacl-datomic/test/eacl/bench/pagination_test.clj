@@ -305,7 +305,7 @@
                    :first 25}
             targets
             [[:recursive-engine
-              #'engine/lookup-resources]
+              #'engine/lookup-resources-eids]
              [:checkpoint-lookup
               (ns-resolve 'eacl.engine.stable-page 'checkpoint-hit)]
              [:checkpoint-store

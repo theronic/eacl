@@ -76,6 +76,12 @@
       (format-error! :invalid-unicode {})))
 
 (defn- hidden-reader-input?
+  "True when `value` uses reader syntax that canonical text never contains
+  outside a string: comments, metadata, character literals, and dispatch
+  forms other than sets and canonical UUIDs. Comments, metadata, and discards
+  hide input from the decoded value. A character literal such as `\\\"` also
+  looks like a string delimiter to this scanner, so it must be rejected before
+  the scanner and the host reader disagree about where strings are."
   [value]
   (loop [index 0
          in-string? false
@@ -100,7 +106,8 @@
             (= 34 code)
             (recur (inc index) true false)
 
-            (= 59 code)
+            ;; `;` comment, `^` metadata, `\` character literal.
+            (or (= 59 code) (= 94 code) (= 92 code))
             true
 
             (= 35 code)
@@ -165,18 +172,40 @@
 
 (declare portable-render)
 
+(defn- require-distinct-renderings!
+  "Rejects equal adjacent renderings in a sorted collection. They come from
+  distinct members that project to one portable value, such as a record and
+  a map with the same fields. Rendering both would produce text that does not
+  decode, and keeping one would silently drop the other."
+  [reason rendering sorted]
+  (loop [previous nil
+         remaining (seq sorted)]
+    (when remaining
+      (let [current (rendering (first remaining))]
+        (when (= previous current)
+          (format-error! reason {}))
+        (recur current (next remaining))))))
+
 (defn- render-map
   [value]
-  (str
-   "{"
-   (str/join
-    ", "
-    (map
-     (fn [[rendered-key v]]
-       (str rendered-key " " (portable-render v)))
-     (sort-by first
-              (map (fn [[k v]] [(portable-render k) v]) value))))
-   "}"))
+  (let [entries (sort-by first
+                         (map (fn [[k v]] [(portable-render k) v]) value))]
+    (require-distinct-renderings! :duplicate-key first entries)
+    (str
+     "{"
+     (str/join
+      ", "
+      (map
+       (fn [[rendered-key v]]
+         (str rendered-key " " (portable-render v)))
+       entries))
+     "}")))
+
+(defn- render-set
+  [value]
+  (let [members (sort (map portable-render value))]
+    (require-distinct-renderings! :duplicate-member identity members)
+    (str "#{" (str/join " " members) "}")))
 
 (defn- portable-render
   [value]
@@ -187,37 +216,60 @@
     (string? value) (render-string value)
     (uuid/value? value) (str "#uuid \"" (uuid/text (uuid/capture value)) "\"")
     (keyword? value)
-    (str ":" (when-let [keyword-namespace (namespace value)]
-               (str keyword-namespace "/"))
-         (name value))
+    ;; `:namespace/name`, the keyword's own printed form: the JVM caches
+    ;; it on the keyword and ClojureScript keeps the qualified name.
+    #?(:clj (str value)
+       :cljs (str ":" (.-fqn ^Keyword value)))
     (integer? value) (str value)
     (map? value) (render-map value)
-    (set? value)
-    (str "#{" (str/join " " (sort (map portable-render value))) "}")
+    (set? value) (render-set value)
     (sequential? value)
     (str "[" (str/join " " (map portable-render value)) "]")))
 
-(def ^:private ordinary-keyword-component
-  ;; A deliberately conservative EDN subset. Fast-path only spellings whose
-  ;; printed namespace/name split is self-evident; unusual legal keywords keep
-  ;; the exact reader round-trip below.
-  #"[A-Za-z_*!?$%&=<>.+-][A-Za-z0-9_*!?$%&=<>.+-]*")
+(defn- ordinary-keyword-code?
+  "One code unit of the conservative EDN subset
+  `[A-Za-z_*!?$%&=<>.+-][A-Za-z0-9_*!?$%&=<>.+-]*`: a letter or one of the
+  thirteen symbol characters anywhere, a digit anywhere but first."
+  [code first?]
+  (or (and (<= 65 code) (<= code 90))
+      (and (<= 97 code) (<= code 122))
+      (and (not first?) (<= 48 code) (<= code 57))
+      (case code
+        (33 36 37 38 42 43 45 46 60 61 62 63 95) true
+        false)))
+
+(defn- ordinary-keyword-component?
+  "A deliberately conservative EDN subset. Fast-path only spellings whose
+  printed namespace/name split is self-evident; unusual legal keywords keep
+  the exact reader round-trip in `unambiguous-keyword?`."
+  [text]
+  (let [length (count text)]
+    (and (pos? length)
+         (loop [index 0]
+           (cond
+             (= index length) true
+             (ordinary-keyword-code? (long (string-code-unit-at text index))
+                                     (zero? index))
+             (recur (inc index))
+             :else false)))))
 
 (defn- ordinary-keyword?
   [value]
   (let [keyword-namespace (namespace value)]
-    (and (re-matches ordinary-keyword-component (name value))
+    (and (ordinary-keyword-component? (name value))
          (or (nil? keyword-namespace)
-             (re-matches ordinary-keyword-component keyword-namespace)))))
+             (ordinary-keyword-component? keyword-namespace)))))
 
 (defn- unambiguous-keyword?
+  "An ordinary keyword's components are ASCII, hence well-formed, so it
+  needs neither the Unicode scans nor the reader round-trip."
   [value]
-  (and
-   (well-formed-unicode? (name value))
-   (or (nil? (namespace value))
-       (well-formed-unicode? (namespace value)))
-   (or
-    (ordinary-keyword? value)
+  (or
+   (ordinary-keyword? value)
+   (and
+    (well-formed-unicode? (name value))
+    (or (nil? (namespace value))
+        (well-formed-unicode? (namespace value)))
     (try
       (= value (edn/read-string (portable-render value)))
       (catch #?(:clj Exception :cljs :default) _
@@ -238,75 +290,66 @@
        :cljs (compare (.-fqn ^Keyword left) (.-fqn ^Keyword right)))
     (compare (portable-render left) (portable-render right))))
 
-(declare validate-value)
-
-(defn- validate-map
-  [value depth limits]
-  (reduce-kv
-   (fn [entries k v]
-     (+ entries
-        (validate-value k (inc depth) limits)
-        (validate-value v (inc depth) limits)))
-   1
-   value))
-
 (defn- validate-value
-  [value depth {:keys [maximum-depth maximum-entries allow-uuids?] :as limits}]
+  "Validates `value` and returns `seen` plus the number of values it holds.
+
+  Every value, scalar or collection, is one entry. The running total is
+  checked before each value is examined, so validation visits at most
+  `maximum-entries` + 1 values: a huge collection, or an unbounded lazy
+  sequence, fails with `:too-many-entries` instead of being walked first."
+  [value depth seen {:keys [maximum-depth maximum-entries allow-uuids?] :as limits}]
   (when (> depth maximum-depth)
     (format-error! :too-deep {:maximum-depth maximum-depth}))
-  (let [entries
-        (cond
-          (or (nil? value)
-              (boolean? value))
-          1
-
-          (string? value)
-          (if (well-formed-unicode? value)
-            1
-            (format-error! :invalid-unicode {}))
-
-          (and (not (false? allow-uuids?)) (uuid/value? value))
-          1
-
-          (keyword? value)
-          (if (unambiguous-keyword? value)
-            1
-            (format-error! :ambiguous-keyword
-                           {:value (portable-render value)}))
-
-          (integer? value)
-          (if (exact-integer/exact? value)
-            1
-            (format-error! :integer-out-of-range
-                           {:value value
-                            :minimum minimum-safe-integer
-                            :maximum maximum-safe-integer}))
-
-          (map? value)
-          (validate-map value depth
-                        limits)
-
-          (set? value)
-          (reduce
-           (fn [n item]
-             (+ n (validate-value item (inc depth)
-                                  limits)))
-           1 value)
-
-          (or (vector? value) (sequential? value))
-          (reduce
-           (fn [n item]
-             (+ n (validate-value item (inc depth)
-                                  limits)))
-           1 value)
-
-          :else
-          (format-error! :unsupported-value
-                         {:value-type (str (type value))}))]
-    (when (> entries maximum-entries)
+  (let [seen (inc seen)]
+    (when (> seen maximum-entries)
       (format-error! :too-many-entries
                      {:maximum-entries maximum-entries}))
-    entries))
+    (cond
+      (or (nil? value)
+          (boolean? value))
+      seen
+
+      (string? value)
+      (if (well-formed-unicode? value)
+        seen
+        (format-error! :invalid-unicode {}))
+
+      (and (not (false? allow-uuids?)) (uuid/value? value))
+      seen
+
+      (keyword? value)
+      (if (unambiguous-keyword? value)
+        seen
+        (format-error! :ambiguous-keyword
+                       {:value (portable-render value)}))
+
+      (integer? value)
+      (if (exact-integer/exact? value)
+        seen
+        (format-error! :integer-out-of-range
+                       {:value value
+                        :minimum minimum-safe-integer
+                        :maximum maximum-safe-integer}))
+
+      (map? value)
+      (reduce-kv
+       (fn [seen k v]
+         (validate-value v (inc depth)
+                         (validate-value k (inc depth) seen limits)
+                         limits))
+       seen
+       value)
+
+      (or (set? value) (sequential? value))
+      (reduce
+       (fn [seen item]
+         (validate-value item (inc depth) seen limits))
+       seen
+       value)
+
+      :else
+      (format-error! :unsupported-value
+                     {:value-type (str (type value))}))))
 
 (defn canonicalize
   "Validates and canonicalizes portable EDN without changing collection types."
@@ -318,19 +361,27 @@
    (let [limits {:allow-uuids? allow-uuids?
                  :maximum-depth maximum-depth
                  :maximum-entries maximum-entries}]
-     (validate-value value 0 limits)
+     (validate-value value 0 0 limits)
      (letfn [(canonical [item]
                (cond
+                 ;; Records project to plain maps. Distinct members that
+                 ;; project to one value would merge in the sorted copy.
                  (map? item)
-                 (into (sorted-map-by canonical-comparator)
-                       (map (fn [[k v]]
-                              [(canonical k) (canonical v)]))
-                       item)
+                 (let [result (into (sorted-map-by canonical-comparator)
+                                    (map (fn [[k v]]
+                                           [(canonical k) (canonical v)]))
+                                    item)]
+                   (when-not (= (count result) (count item))
+                     (format-error! :duplicate-key {}))
+                   result)
 
                  (set? item)
-                 (into (sorted-set-by canonical-comparator)
-                       (map canonical)
-                       item)
+                 (let [result (into (sorted-set-by canonical-comparator)
+                                    (map canonical)
+                                    item)]
+                   (when-not (= (count result) (count item))
+                     (format-error! :duplicate-member {}))
+                   result)
 
                  (sequential? item)
                  (mapv canonical item)
@@ -344,8 +395,8 @@
   "Validates portable data and owns mutable UUID leaves. Already owned plain
   persistent collections can be shared; this does not promise sorted output."
   [value limits]
-  (validate-value value 0 (merge {:maximum-depth default-maximum-depth
-                                 :maximum-entries default-maximum-entries} limits))
+  (validate-value value 0 0 (merge {:maximum-depth default-maximum-depth
+                                    :maximum-entries default-maximum-entries} limits))
   (letfn [(needs-capture? [item]
             (or (some? (meta item)) (record? item) (sorted? item)
                 (and (sequential? item) (not (vector? item)))
@@ -370,7 +421,7 @@
    ;; copy first repeated every traversal (and repeatedly rendered comparator
    ;; keys) without changing a byte of output. Validate once, then render the
    ;; original value directly.
-   (validate-value value 0
+   (validate-value value 0 0
                    {:allow-uuids? allow-uuids?
                     :maximum-depth (or maximum-depth default-maximum-depth)
                     :maximum-entries
@@ -381,7 +432,14 @@
      encoded)))
 
 (defn decode-canonical
-  "Reads bounded portable EDN and optionally enforces a top-level key allowlist."
+  "Reads bounded portable EDN and optionally enforces a top-level key allowlist.
+
+  Only the canonical spelling decodes: `encoded` must equal the
+  `encode-canonical` text of the value it denotes. Text after the first form,
+  extra whitespace or commas, another member order, and any other reader
+  spelling of an equal value fail with `:noncanonical`. Each accepted value
+  therefore has exactly one accepted string, so bytes that a caller compares,
+  caches, or authenticates are the bytes that were decoded."
   ([encoded]
    (decode-canonical encoded {}))
   ([encoded {:keys [maximum-size allowed-keys] :as limits
@@ -420,6 +478,11 @@
                          :actual-keys
                          (when (map? canonical)
                            (set (keys canonical)))}))
+       ;; The reader stops after the first complete form and accepts many
+       ;; spellings of one value. Comparing against the canonical rendering
+       ;; rejects trailing input and every alternative spelling at once.
+       (when-not (= encoded (portable-render canonical))
+         (format-error! :noncanonical {}))
        canonical)
      (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo) e
        (if (= :eacl.format/invalid (:type (ex-data e)))
@@ -595,8 +658,72 @@
            (str/replace "/" "_")
            (str/replace #"=+$" "")))))
 
-(defn b64url-decode
+(defn- b64url-value
+  "The six-bit value of one Base64URL character code, or -1."
+  [code]
+  (cond
+    (and (<= 65 code) (<= code 90)) (- code 65)
+    (and (<= 97 code) (<= code 122)) (- code 71)
+    (and (<= 48 code) (<= code 57)) (+ code 4)
+    (= 45 code) 62
+    (= 95 code) 63
+    :else -1))
+
+(defn- b64url-alphabet?
+  "True when every character of the string `encoded` is in the Base64URL
+  alphabet. The JVM scan uses primitive locals: it runs on every token,
+  cursor, and cache-entry decode."
   [encoded]
+  #?(:clj
+     (let [^String text encoded
+           length (.length text)]
+       (loop [index 0]
+         (if (== index length)
+           true
+           (let [code (int (.charAt text index))]
+             (if (or (and (>= code 65) (<= code 90))
+                     (and (>= code 97) (<= code 122))
+                     (and (>= code 48) (<= code 57))
+                     (== code 45)
+                     (== code 95))
+               (recur (unchecked-inc index))
+               false)))))
+     :cljs
+     (let [length (.-length encoded)]
+       (loop [index 0]
+         (if (== index length)
+           true
+           (if (neg? (b64url-value (.charCodeAt encoded index)))
+             false
+             (recur (inc index))))))))
+
+(defn- canonical-b64url?
+  "True only for the unpadded Base64URL spelling that `b64url-encode` emits:
+  URL-alphabet characters, a length that ends on a byte boundary, and zero
+  unused low bits in the last character (RFC 4648 sections 3.5 and 5)."
+  [encoded]
+  (and (string? encoded)
+       (let [length (count encoded)
+             remainder (mod length 4)]
+         (and (not= 1 remainder)
+              (b64url-alphabet? encoded)
+              (or (zero? remainder)
+                  (zero? (bit-and
+                          (b64url-value
+                           (string-code-unit-at encoded (dec length)))
+                          (if (= 2 remainder) 0x0F 0x03))))))))
+
+(defn b64url-decode
+  "Decodes the unpadded Base64URL spelling that `b64url-encode` emits.
+
+  Host decoders also accept padding, nonzero unused bits in the last
+  character and, in JavaScript, whitespace, so several strings decode to the
+  same bytes. Those spellings fail with `:malformed-base64`: each byte string
+  has exactly one accepted encoding, and an authenticated string cannot be
+  respelled without failing to decode."
+  [encoded]
+  (when-not (canonical-b64url? encoded)
+    (format-error! :malformed-base64 {}))
   (try
     #?(:clj
        (mapv #(bit-and (int %) 255)
@@ -638,6 +765,59 @@
    (sha-256
     (str domain "\n" (encode-canonical value)))))
 
+(defn- host-utf8
+  "`utf8-bytes` in the host's own byte container (a byte array on the JVM, a
+  JS array in ClojureScript), with the same well-formedness check."
+  [value]
+  (let [value (str value)]
+    (when-not (well-formed-unicode? value)
+      (format-error! :invalid-unicode {}))
+    #?(:clj (.getBytes ^String value StandardCharsets/UTF_8)
+       :cljs (gcrypt/stringToUtf8ByteArray value))))
+
+(defn- framed
+  "One record's bytes behind their length as four big-endian bytes, in the
+  host's byte container."
+  [bytes]
+  #?(:clj
+     (let [^bytes bytes bytes
+           length (alength bytes)
+           framed (byte-array (+ 4 length))]
+       (aset framed 0 (unchecked-byte (bit-shift-right length 24)))
+       (aset framed 1 (unchecked-byte (bit-shift-right length 16)))
+       (aset framed 2 (unchecked-byte (bit-shift-right length 8)))
+       (aset framed 3 (unchecked-byte length))
+       (System/arraycopy bytes 0 framed 4 length)
+       framed)
+     :cljs
+     (let [length (.-length bytes)]
+       (.concat #js [(bit-and (bit-shift-right length 24) 255)
+                     (bit-and (bit-shift-right length 16) 255)
+                     (bit-and (bit-shift-right length 8) 255)
+                     (bit-and length 255)]
+                bytes))))
+
+(defn- absorb!
+  [digest framed]
+  #?(:clj (.update ^MessageDigest digest ^bytes framed)
+     :cljs (.update digest framed)))
+
+(defn- framed-digest
+  "A SHA-256 state that has absorbed the length-framed domain."
+  [domain]
+  (when-not (and (string? domain) (not-empty domain))
+    (format-error! :invalid-domain {:domain domain}))
+  (let [digest #?(:clj (MessageDigest/getInstance "SHA-256")
+                  :cljs (goog.crypt.Sha256.))]
+    (absorb! digest (framed (host-utf8 domain)))
+    digest))
+
+(defn- finish-digest
+  [digest]
+  (b64url-encode
+   #?(:clj (.digest ^MessageDigest digest)
+      :cljs (vec (.digest digest)))))
+
 (defn canonical-records-digest
   "Domain-separated digest of an ordered, potentially large record sequence.
 
@@ -647,57 +827,97 @@
   content. Record order is part of the digest contract; callers must sort
   semantically unordered inputs before calling this function."
   [domain records]
-  (when-not (and (string? domain) (not-empty domain))
-    (format-error! :invalid-domain {:domain domain}))
-  (let [digest #?(:clj (MessageDigest/getInstance "SHA-256")
-                  :cljs (goog.crypt.Sha256.))
-        update-bytes!
-        (fn [bytes]
-          (let [length (count bytes)
-                prefix [(bit-and (bit-shift-right length 24) 255)
-                        (bit-and (bit-shift-right length 16) 255)
-                        (bit-and (bit-shift-right length 8) 255)
-                        (bit-and length 255)]]
-            #?(:clj
-               (do
-                 (.update ^MessageDigest digest
-                          (byte-array (map unchecked-byte prefix)))
-                 (.update ^MessageDigest digest
-                          (byte-array (map unchecked-byte bytes))))
-               :cljs
-               (do
-                 (.update digest (clj->js prefix))
-                 (.update digest (clj->js bytes))))))]
-    (update-bytes! (utf8-bytes domain))
+  (let [digest (framed-digest domain)]
     (doseq [record records]
-      (update-bytes! (utf8-bytes (encode-canonical record))))
-    (b64url-encode
-     #?(:clj
-        (mapv #(bit-and (int %) 255)
-              (.digest ^MessageDigest digest))
-        :cljs
-        (vec (.digest digest))))))
+      (absorb! digest (framed (host-utf8 (encode-canonical record)))))
+    (finish-digest digest)))
+
+(defn- host-map []
+  #?(:clj (java.util.HashMap.) :cljs (js/Map.)))
+
+(defn- host-get [memo key]
+  #?(:clj (.get ^java.util.HashMap memo key) :cljs (.get memo key)))
+
+(defn- host-put! [memo key value]
+  #?(:clj (.put ^java.util.HashMap memo key value) :cljs (.set memo key value))
+  value)
+
+(defn- canonical-array
+  "`values` as an array in ascending order of `order-key`."
+  [values order-key]
+  (let [array (to-array values)]
+    (when (< 1 (alength array))
+      (let [by-key (fn [left right] (compare (order-key left) (order-key right)))]
+        #?(:clj (java.util.Arrays/sort ^objects array ^java.util.Comparator by-key)
+           :cljs (.sort array by-key))))
+    array))
 
 (defn canonical-tree-digest
   "Digests already admitted compiler data without encoding a whole aggregate.
    Container tags and arities preserve structure; map keys and set members
    retain canonical order. Scalar records still use the bounded wire codec.
-   This is not a replacement for admission limits on untrusted input."
+   This is not a replacement for admission limits on untrusted input.
+
+   The digest is the records digest of the tree's pre-order record sequence:
+   `[:map n]`, `[:set n]` or `[:sequence n]` before a container's children
+   (a map's keys and set members in canonical order, each key followed by its
+   value) and `[:value v]` for every other value. The records are streamed
+   into the digest instead of being built first, and each distinct record is
+   encoded and framed once per digest. A container orders its members by
+   their canonical encodings; a keyword's encoding is its printed form, so
+   keywords order without encoding. Every leaf, keys included, is still
+   validated by the codec when its own record is encoded."
   [domain value]
-  (letfn [(records [value]
-            (cond
-              (map? value)
-              (cons [:map (count value)]
-                    (mapcat (fn [key]
-                              (concat (records key) (records (get value key))))
-                            (sort-by encode-canonical (keys value))))
-              (set? value)
-              (cons [:set (count value)]
-                    (mapcat records (sort-by encode-canonical value)))
-              (sequential? value)
-              (cons [:sequence (count value)] (mapcat records value))
-              :else [[:value value]]))]
-    (canonical-records-digest domain (records value))))
+  (let [digest (framed-digest domain)
+        leaves (host-map)
+        headers (host-map)
+        encodings (host-map)
+        leaf! (fn [value]
+                (absorb!
+                 digest
+                 (if-some [bytes (host-get leaves value)]
+                   bytes
+                   (host-put! leaves value
+                              (framed (host-utf8 (encode-canonical [:value value])))))))
+        ;; `[kind n]` for a container arity renders as exactly this text and
+        ;; always satisfies the codec's bounds.
+        header! (fn [tag kind n]
+                  (let [key (+ (* 4 n) tag)]
+                    (absorb!
+                     digest
+                     (if-some [bytes (host-get headers key)]
+                       bytes
+                       (host-put! headers key
+                                  (framed (host-utf8 (str "[" kind " " n "]"))))))))
+        order-key (fn [value]
+                    (if (keyword? value)
+                      (portable-render value)
+                      (if-some [encoded (host-get encodings value)]
+                        encoded
+                        (host-put! encodings value (encode-canonical value)))))]
+    (letfn [(walk! [value]
+              (cond
+                (map? value)
+                (let [^objects ordered (canonical-array (keys value) order-key)]
+                  (header! 0 ":map" (count value))
+                  (dotimes [index (alength ordered)]
+                    (let [key (aget ordered index)]
+                      (walk! key)
+                      (walk! (get value key)))))
+
+                (set? value)
+                (let [^objects ordered (canonical-array value order-key)]
+                  (header! 1 ":set" (count value))
+                  (dotimes [index (alength ordered)]
+                    (walk! (aget ordered index))))
+
+                (sequential? value)
+                (do (header! 2 ":sequence" (count value))
+                    (reduce (fn [_ item] (walk! item) nil) nil value))
+
+                :else (leaf! value)))]
+      (walk! value))
+    (finish-digest digest)))
 
 (defn ^:no-doc capture-keyring
   "Captures at most once for a protected operation. Static codec options are
@@ -760,6 +980,13 @@
           (utf8-bytes (encode-canonical envelope options))))))
 
 (defn ^:no-doc decode-authenticated-envelope
+  "Authenticates and decodes a token from `encode-authenticated`.
+
+  The tag covers the canonical `{:v :kid :payload}` text. Both Base64URL
+  layers and the envelope decode only in their canonical spelling, so that
+  text is a function of the received token and the received token is the
+  only string that carries it: a token cannot be respelled and still
+  authenticate."
   [{:keys [domain prefix payload-keys maximum-size] :as options} token]
   (when-not (and (string? token)
                  (<= (count token)

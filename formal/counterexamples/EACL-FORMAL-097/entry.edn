@@ -1,0 +1,18 @@
+{:id :EACL-FORMAL-097
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace "eacl-rust/EACL-RS-003/glued-keyword"
+ :minimized-fixture "fixture.edn"
+ :impact :other
+ :affected-versions
+ ["v8.0.0 commit a698b3bdf15e61be9bfd1324d7d7c67dc82176be"]
+ :affected-backends [:shared]
+ :root-cause
+ "The Instaparse grammar matched keywords as string literals with no word boundary, so 'relationviewer: user' parsed as the keyword 'relation' followed by the name 'viewer'. EACL accepted schemas SpiceDB v1.56.0 rejects, and stored a relation the author never declared."
+ :fix
+ "Lex names as SpiceDB does: a word is a maximal run of '_', letters and digits, and it is a keyword only when the whole word is one. A keyword glued to a name is one identifier, so 'relationviewer: user' is a parse error and 'nilviewer' is an undefined reference, as in SpiceDB."
+ :closing-evidence
+ ["eacl.spicedb.compatibility-corpus-test/glued-keywords-test"
+  "eacl.spicedb.compatibility-corpus-test/spicedb-verdicts-test"]
+ :notes
+ "Found by the eacl-rust port (BUGS.md EACL-RS-003), verified against main a698b3bd and SpiceDB v1.56.0."}
