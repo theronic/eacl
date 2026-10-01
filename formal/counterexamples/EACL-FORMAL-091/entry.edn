@@ -1,0 +1,18 @@
+{:id :EACL-FORMAL-091
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace "eacl-rust/EACL-RS-107/default-limits-codec-ceiling"
+ :minimized-fixture "fixture.edn"
+ :impact :other
+ :affected-versions
+ ["v8.0.0 commit a698b3bdf15e61be9bfd1324d7d7c67dc82176be"]
+ :affected-backends [:shared]
+ :root-cause
+ "check-expression-bytes! measured a permission's payload by rendering it through expression/encode, which applies the canonical codec's 262,144-entry and 1 MiB ceilings before the typed comparison with :maximum-expression-bytes (131,072 by default). A permission whose resolved arrows or relations span many subject types exceeded a codec ceiling first, so schema admission raised :eacl.format/invalid :too-large or :too-many-entries instead of :eacl.schema/expression-limit :encoded-byte-size, with default limits."
+ :fix
+ "Measure the payload with expression/encoded-byte-size, the exact UTF-8 size of the canonical encoding computed without rendering or codec ceilings, so the typed limit decides and reports the exact actual size."
+ :closing-evidence
+ ["eacl.schema.expression-limits-test/encoded-byte-limit-precedes-codec-ceilings-test"
+  "eacl.schema.expression-test/encoded-byte-size-matches-the-canonical-encoding-test"]
+ :notes
+ "Found by the eacl-rust port (BUGS.md EACL-RS-107), verified against main a698b3bd."}

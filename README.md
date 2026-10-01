@@ -1461,10 +1461,13 @@ ceilings:
 
 The profile applies to schema reads and writes performed by that client. It is
 also accepted by direct schema writers and the explicit Datomic v7-to-v8
-permission migration. Two Peers may deliberately use different profiles: a
-stricter Peer can reject a schema accepted by a looser Peer, but schemas
-accepted by both have identical permission meaning. The profile is never
-written to the database and never coordinates Peers.
+permission migration. A permission whose canonical payload is larger than
+`:maximum-expression-bytes` fails with `:eacl.schema/expression-limit
+{:dimension :encoded-byte-size :maximum m :actual n}`, however large it is.
+Two Peers may deliberately use different profiles: a stricter Peer can reject
+a schema accepted by a looser Peer, but schemas accepted by both have identical
+permission meaning. The profile is never written to the database and never
+coordinates Peers.
 
 All backends issue non-expiring cursors by default. Configure a positive
 `:cursor-ttl-seconds` only when the application deliberately wants a maximum

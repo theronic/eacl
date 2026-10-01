@@ -236,6 +236,41 @@
    (secure/encode-canonical (canonicalize value)
                             (bounded-codec-options options))))
 
+(defn- keyword-byte-size [value]
+  (+ 1
+     (if-let [keyword-namespace (namespace value)]
+       (inc (secure/utf8-size keyword-namespace))
+       0)
+     (secure/utf8-size (name value))))
+
+(defn- rendered-byte-size
+  "UTF-8 bytes of the canonical rendering of one value from the closed v1
+   domain: maps with keyword keys, vectors, keywords and Booleans."
+  [value]
+  (cond
+    (keyword? value) (keyword-byte-size value)
+    (true? value) 4
+    (false? value) 5
+    ;; {k v, k v}: a space inside each entry, ", " between entries.
+    (map? value)
+    (reduce-kv (fn [total k v] (+ total (rendered-byte-size k) 1 (rendered-byte-size v)))
+               (+ 2 (* 2 (max 0 (dec (count value)))))
+               value)
+    ;; [a b c]
+    (vector? value)
+    (reduce (fn [total item] (+ total (rendered-byte-size item)))
+            (+ 2 (max 0 (dec (count value))))
+            value)
+    :else (invalid! :unencodable-value {:value-type (str (type value))})))
+
+(defn encoded-byte-size
+  "Returns the UTF-8 byte count of `(encode value)` without rendering it.
+   Unlike `encode`, it does not apply the codec's size and entry ceilings, so
+   admission can compare an expression larger than the codec accepts with its
+   own byte limit and report that typed limit."
+  [value]
+  (rendered-byte-size (canonicalize value)))
+
 (defn decode
   "Decodes only canonical v1 values. Noncanonical spelling, unknown fields,
    unknown tags, and malformed values fail closed."

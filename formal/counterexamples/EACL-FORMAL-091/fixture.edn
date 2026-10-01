@@ -1,0 +1,23 @@
+{:operation :validate-schema
+ :limits :default
+ :maximum-expression-bytes 131072
+ :codec-ceilings {:maximum-size 1048576 :maximum-entries 262144}
+ :cases
+ [{:schema-shape
+   {:subject-types {:count 256 :name "t<i>" :relation "x: user"}
+    :relation "doc#r: t0 | … | t255"
+    :permission "p = r->x + … (128 arrows)"
+    :source-bytes 12258}
+   :before {:type :eacl.format/invalid :reason :too-large :maximum-size 1048576}}
+  {:schema-shape
+   {:subject-types {:count 256 :name "t<i>" :relation "x: user"}
+    :relation "doc#r: t0 | … | t255"
+    :permission "p = (r->x + r->x) + … (128 groups)"
+    :source-bytes 13410}
+   :before {:type :eacl.format/invalid :reason :too-many-entries :maximum-entries 262144}}
+  {:schema-shape
+   {:subject-types {:count 256 :name "t<i>x…(1400 × x)" :defined? false}
+    :relation "doc#r: t0x… | … | t255x…"
+    :permission "p = r + r + r"
+    :source-bytes 360156}
+   :before {:type :eacl.format/invalid :reason :too-large :maximum-size 1048576}}]}

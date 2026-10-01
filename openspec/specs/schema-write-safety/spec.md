@@ -1,7 +1,7 @@
 # schema-write-safety Specification
 
 ## Purpose
-TBD - created by archiving change fix-audit-root-causes. Update Purpose after archive.
+Defines how `write-schema!` admits and replaces a schema without side effects on failure: parse and declaration errors, reference validation, admission limits, and guards against destructive or orphaning changes.
 ## Requirements
 ### Requirement: Unparseable schema is rejected without side effects
 `write-schema!` SHALL throw an `ex-info` with `:type :eacl.schema/parse-error` (including the instaparse failure detail) when the schema string does not parse, and SHALL NOT transact any changes. `->eacl-schema` SHALL throw when handed an instaparse failure object and SHALL never coerce a failed parse into an empty schema.
@@ -73,3 +73,9 @@ Permission expressions using parentheses around union operands (e.g. `permission
 - **WHEN** a schema contains `permission p = (a + b)->c`
 - **THEN** a typed validation error explains parenthesized arrow bases are unsupported, and no `AssertionError` escapes
 
+### Requirement: Permission expression size is a typed admission limit
+Schema admission SHALL measure each permission's canonical expression payload exactly, without applying the canonical codec's own size and entry ceilings, and SHALL reject a payload larger than `:maximum-expression-bytes` with `:eacl.schema/expression-limit` carrying `:dimension :encoded-byte-size`, `:maximum`, and the exact `:actual` byte count.
+
+#### Scenario: Payload beyond the codec ceiling under default limits
+- **WHEN** a permission's arrows resolve over 256 subject types, so that its canonical payload exceeds 1 MiB or 262,144 codec entries
+- **THEN** validation throws `:eacl.schema/expression-limit` with `:dimension :encoded-byte-size` and `:maximum 131072`, not `:eacl.format/invalid`

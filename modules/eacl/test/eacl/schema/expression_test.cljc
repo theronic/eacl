@@ -99,3 +99,19 @@
            (error-reason
              #(expression/decode
                 (str (expression/encode complete-expression) " ")))))))
+
+(deftest encoded-byte-size-matches-the-canonical-encoding-test
+  (is (= (count (secure/utf8-bytes (expression/encode complete-expression)))
+         (expression/encoded-byte-size complete-expression)))
+  (testing "a payload beyond the codec ceiling is still measured exactly"
+    (let [leaf (expression/relation :reader (mapv #(keyword (str "t" % (apply str (repeat 64 "x"))))
+                                                  (range 256)))
+          wide (expression/expression
+                :document :view
+                (expression/union (vec (repeat 64 (assoc leaf :grouped? true)))))
+          leaf-size (expression/encoded-byte-size
+                     (expression/expression :document :view leaf))]
+      (is (= :too-large (error-reason #(expression/encode wide))))
+      (is (< (:maximum-size expression/codec-limits) (expression/encoded-byte-size wide)))
+      (is (< (* 64 (- leaf-size 100)) (expression/encoded-byte-size wide)
+             (* 64 leaf-size))))))

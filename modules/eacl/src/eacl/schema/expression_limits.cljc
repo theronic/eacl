@@ -256,9 +256,11 @@
     result))
 
 (defn expression-byte-size
-  "Returns the exact portable UTF-8 byte size of the canonical source payload."
+  "Returns the exact portable UTF-8 byte size of the canonical source payload.
+   It is measured without rendering, so a payload beyond the codec's own
+   ceilings still reaches the typed :encoded-byte-size comparison."
   [resolved-expression]
-  (count (secure/utf8-bytes (expression/encode resolved-expression))))
+  (expression/encoded-byte-size resolved-expression))
 
 (defn check-expression-bytes!
   [resolved-expression limits]

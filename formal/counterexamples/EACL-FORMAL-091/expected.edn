@@ -1,0 +1,9 @@
+{:results
+ [{:type :eacl.schema/expression-limit :dimension :encoded-byte-size
+   :maximum 131072 :actual 2057988}
+  {:type :eacl.schema/expression-limit :dimension :encoded-byte-size
+   :maximum 131072 :actual 4121220}
+  {:type :eacl.schema/expression-limit :dimension :encoded-byte-size
+   :maximum 131072 :actual 1079793}]
+ :measured-size-equals-rendered-utf8-bytes true
+ :rendering-required-to-measure false}

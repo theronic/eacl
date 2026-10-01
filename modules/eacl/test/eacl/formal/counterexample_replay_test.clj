@@ -156,7 +156,9 @@
     :EACL-FORMAL-075
     eacl.core-test/nested-relationship-mutations-fail-before-protocol-dispatch-test
     :EACL-FORMAL-090
-    eacl.caveats.plan-test/member-literals-are-admitted-like-string-literals})
+    eacl.caveats.plan-test/member-literals-are-admitted-like-string-literals
+    :EACL-FORMAL-091
+    eacl.schema.expression-limits-test/encoded-byte-limit-precedes-codec-ceilings-test})
 
 (defn- read-edn
   [path]
