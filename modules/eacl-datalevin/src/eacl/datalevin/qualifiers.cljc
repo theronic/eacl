@@ -34,7 +34,9 @@
 (defn read-api
   "Read-only native inputs; constructing this map never prepares or writes a store."
   []
-  {:backend :datalevin :entity entity :facts facts :rows db/relationship-identity-datoms
+  {:backend :datalevin :entity entity :entity-exists? native-db/entity-exists?
+   :eacl-id native-db/entity-eacl-id :facts facts
+   :rows db/relationship-identity-datoms
    :source (fn [database] (get (d/entity database [:eacl/id "datalevin-metadata"]) :eacl.datalevin/source-id)) :generation schema/current-schema-generation
    :all-rows (fn [database attribute] (d/datoms database :ave attribute))
    :relation-version-attribute :eacl.datalevin/relation-generation

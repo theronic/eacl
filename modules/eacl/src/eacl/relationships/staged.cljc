@@ -51,7 +51,8 @@
                  (= (:strategy native) (get {:datomic :inline :datalevin :inline
                                              :datascript :prepared :datahike :prepared} (:backend native)))
                  (every? #(ifn? (get native %))
-                         [:snapshot :source :entity :facts :rows :generation :fence :assert-entity :tempid :transact!]))
+                         [:snapshot :source :entity :entity-exists? :eacl-id :facts :rows :generation
+                          :fence :assert-entity :tempid :transact!]))
     (error! :unsupported-backend))
   (let [source ((:source native) ((:snapshot native)))]
     (when-not source (error! :missing-source-identity))
@@ -77,8 +78,12 @@
       (error! :invalid-temporary-id))
     id))
 
-(defn- wildcard-subject-entity? [entity]
-  (= wildcard/entity-id (:eacl/id entity)))
+(defn- wildcard-subject-eid?
+  "Whether `eid` is the EACL-owned wildcard subject entity. Reads only the
+  entity's `:eacl/id` datom, so the check stays O(1) for an endpoint that
+  holds many relationships."
+  [native db eid]
+  (= wildcard/entity-id ((:eacl-id native) db eid)))
 
 (defn- selected-relation
   "Returns the Relation and the subject form (`:wildcard` when the subject is
@@ -89,21 +94,23 @@
                  (every? concrete-eid? (map #(nth identity %) [1 2 4])))
     (error! :relationship-identity))
   (let [[subject-type subject-id relation-id resource-type resource-id] identity
-        entity (:entity native)
-        relation (entity db relation-id)
-        subject (entity db subject-id)
-        resource (entity db resource-id)]
-    (when-not (and (seq (dissoc subject :db/id))
-                   (seq (dissoc resource :db/id)))
+        relation ((:entity native) db relation-id)
+        exists? (:entity-exists? native)]
+    ;; An endpoint exists when it has at least one fact. Reading one datom
+    ;; keeps this O(1) per endpoint: materializing the entity would read every
+    ;; relationship it holds, so a write touching a high-degree subject or
+    ;; resource would cost O(degree). The wildcard checks read one
+    ;; `:eacl/id` datom each for the same reason.
+    (when-not (and (exists? db subject-id) (exists? db resource-id))
       (error! :missing-endpoint))
-    (when (wildcard-subject-entity? resource)
+    (when (wildcard-subject-eid? native db resource-id)
       (error! :wildcard-resource))
     (when-not (and (= subject-type (:eacl.relation/subject-type relation))
                    (= resource-type (:eacl.relation/resource-type relation))
                    (keyword? (:eacl.relation/relation-name relation)))
       (error! :missing-relation))
     {:relation relation
-     :form (if (wildcard-subject-entity? subject) :wildcard :concrete)}))
+     :form (if (wildcard-subject-eid? native db subject-id) :wildcard :concrete)}))
 
 (defn- parameters [native db caveat]
   (when (some? caveat)

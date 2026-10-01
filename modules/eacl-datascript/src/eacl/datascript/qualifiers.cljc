@@ -44,7 +44,9 @@
 (defn read-api
   "Read-only native inputs; constructing this map never prepares or writes a store."
   []
-  {:backend :datascript :entity entity :facts facts :rows identity-rows
+  {:backend :datascript :entity entity :entity-exists? native-db/entity-exists?
+   :eacl-id native-db/entity-eacl-id :facts facts
+   :rows identity-rows
    :source backend/database-source-scope :generation schema/current-schema-generation
    :all-rows (fn [database attribute] (ds/datoms database :aevt attribute))
    :fact-rows (fn [database eid] (ds/datoms database :eavt eid))

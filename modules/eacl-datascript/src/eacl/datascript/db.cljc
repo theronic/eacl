@@ -19,6 +19,11 @@
   [db eid]
   (boolean (seq (ds/datoms db :eavt eid))))
 
+(defn entity-eacl-id
+  "The entity's `:eacl/id`, reading at most one datom."
+  [db eid]
+  (:v (first (ds/datoms db :eavt eid :eacl/id))))
+
 (defn avet-datoms
   ([db attr]
    (ds/datoms db :avet attr))

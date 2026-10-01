@@ -151,6 +151,17 @@
     (some-> (d/entity db [:eacl/id "schema-string"])
             :eacl/schema-version)))
 
+(defn entity-exists?
+  "Whether `eid` has any datom, reading at most one."
+  [database eid]
+  (boolean (first (d/datoms database :eavt eid))))
+
+(defn entity-eacl-id
+  "The entity's `:eacl/id`, reading at most one datom."
+  [database eid]
+  (when (d/entid database :eacl/id)
+    (:v (first (d/datoms database :eavt eid :eacl/id)))))
+
 (defn entity-facts [database eid]
   (mapv (fn [datom] [(:a datom) (:v datom) (:tx datom)]) (d/datoms database :eavt eid)))
 

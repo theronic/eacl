@@ -31,7 +31,9 @@
 (defn read-api
   "Read-only native inputs; constructing this map never prepares or writes a store."
   []
-  {:backend :datomic :entity entity :facts facts :rows db/relationship-identity-datoms
+  {:backend :datomic :entity entity :entity-exists? native-db/entity-exists?
+   :eacl-id native-db/entity-eacl-id :facts facts
+   :rows db/relationship-identity-datoms
    :source (fn [database] (str (.id ^datomic.Database database))) :generation generation
    :all-rows (fn [database attribute] (when (d/entid database attribute) (d/datoms database :aevt attribute)))
    :fact-rows (fn [database eid] (d/datoms database :eavt eid))

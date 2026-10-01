@@ -258,6 +258,17 @@
                            (step (peek chunk))))))))]
     (step nil)))
 
+(defn entity-exists?
+  "Whether `eid` has any datom. The seek reads one datom; when `eid` has
+  none it lands on a later entity's datom."
+  [database eid]
+  (= eid (:e (first (ds/seek-datoms database :eav eid nil nil 1)))))
+
+(defn entity-eacl-id
+  "The entity's `:eacl/id`, reading at most one datom."
+  [database eid]
+  (:v (first (ds/datoms database :eav eid :eacl/id))))
+
 (defn entity-facts [database eid]
   (mapv (fn [datom] [(:a datom) (:v datom) (:tx datom)]) (ds/datoms database :eav eid)))
 

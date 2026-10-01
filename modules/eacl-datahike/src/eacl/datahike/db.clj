@@ -241,6 +241,11 @@
   [db eid]
   (boolean (seq (d/datoms db {:index :eavt :components [eid]}))))
 
+(defn entity-eacl-id
+  "The entity's `:eacl/id`, reading at most one datom."
+  [db eid]
+  (:v (first (d/datoms db {:index :eavt :components [eid :eacl/id]}))))
+
 (defn relationship-identity-datoms
   "Guarded first-four identity access, including retained temporal values."
   [db entity attr value]
