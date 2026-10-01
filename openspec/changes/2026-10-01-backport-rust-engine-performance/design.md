@@ -126,20 +126,14 @@ Alternatives rejected: reordering only when every skipped child is plain
 (needs #209's certificate, which Kleene removes); widest-witness
 certificates (a search per grant, which defeats this decision).
 
-### D3. Set-at-a-time arrows in the vector evaluator
+### D3. Set-at-a-time arrows (dropped)
 
-The `:arrow-membership` branch decides all pending candidates together:
-
-1. read each candidate's via edges in chunks (the existing
-   `resource->subjects` scan), or the subject's holdings of the via relation
-   when they are fewer;
-2. ask the oracle once for every distinct `(subject, intermediate)` pair, or
-   dispatch relation targets as one probe batch;
-3. combine per candidate in via order, stopping at the first definite true,
-   with doubling batches of intermediates.
-
-The value and certificate of each candidate equal the scalar arrow's: same
-intermediates, same order, same first decisive witness.
+Batching the vector evaluator's per-candidate arrow decisions was planned as
+its own step. Under the convergence decision (D8) the tabled evaluator's
+shared table decides each arrow target once per request, and structural
+certainty (D4, D5) removes most exact decisions, so the vector evaluator's
+arrow branch is retired rather than optimized. Any batching that remains
+useful is part of D8. Step numbers below keep their original values.
 
 ### D4. Structural certainty from the generator
 
@@ -245,7 +239,6 @@ each decision, following the stack's practice (#199–#204):
 | Decision | Dafny | Executable refinement | Mutation controls | Contract |
 |---|---|---|---|---|
 | D2 | `OperandOrder.dfy`: Kleene ∪/∩ permissionship invariant under child permutation; the first decisive witness's certificate is sound | `delegation-refinement-test` with random child permutations against the stratified fixed point and the tabled route; qualified differential: lookup items equal checks, certificates hold at sampled times | evaluation order drops a child; a fault taken as decisive | `:delegated-operator-recursion` gains the order theorems |
-| D3 | lemma in `VectorPredicate.dfy`: the aligned arrow equals the pointwise scalar arrow, value and certificate | vector-evaluator differential, batched against scalar, per candidate, over random programs and qualifiers | intermediate dropped; decision assigned to the wrong candidate; via qualifier ignored | same entry |
 | D4 | lemma in `CandidateCover.dfy`: a plain cover witness proves the generator node | campaign: every plain-flagged candidate's generator node is plainly true by exact evaluation | plainness ignores the qualifier slot; plainness kept across a qualified edge | same entry |
 | D5 | `StructuralBounds.dfy`: S ⊆ Has(t, ctx) ⊆ non-F(t, ctx) ⊆ M for every time and context; semi-naive per component equals the least fixed point; the count decomposition | transcription of the semi-naive evaluator beside production, per node and round; independent check that every exact decision lies between S and M | qualified edge counted sure; `Sa − Sb` for exclusion; delta not propagated through an arrow | new `:structural-operator-bounds` operation and theorem policy |
 | D6 | none new (`MemoizedMembership.dfy` covers retained answers across searches) | batch against sequential `check-permission` per demand: decisions, residuals, failing index | memo shared across contexts; error attributed to the wrong index | `:check-permissions` entry points |
@@ -267,7 +260,7 @@ listed in some operation contract or the manifest fails).
   #210 for a union with several decisive witnesses. Cross-request reuse
   (#203) keys on certified scope, so an older answer is never reused past its
   own certificate.
-- **Kleene dependency.** D2, D3, D5 and D8 rely on order-independent fault
+- **Kleene dependency.** D2, D5 and D8 rely on order-independent fault
   semantics; they must land after the Kleene PR.
 - **Memory.** S and M for a broad subject hold about 160k eids at 10⁶; they
   are request-local and counted against the existing traversal limits.
@@ -279,6 +272,55 @@ Each PR bumps the compatibility identity of what it changes
 (`compiler-plan-compatibility` for D2–D5 and D8, `checkpoint-version` for D8,
 the cursor version for D9). An outstanding cursor of an older format gets the
 typed stale-cursor error, never a wrong page; clients restart the walk.
+
+## Order of the stack
+
+After the gate (step 1), and on top of the Kleene fault-semantics PR (#219),
+the steps land in this order: 2 (cost-ordered operands: removes the
+direct-grant regression, the release blocker), 4, 5, 6, 7, 8, 9, 10. Step 3
+is dropped (D3). The narrow-count regression of #210 is gone with #219,
+which deletes #209's fault-freedom certificate.
+
+## Gate baseline
+
+Every later pull request reports `eacl.bench.drive-parity-test` before and
+after it, as thread-CPU medians in one JVM. The baseline on #217 (#210, #213
+and #217) at 10⁵ relationships:
+
+| case | measured | reference | ratio | budget |
+|---|---:|---|---:|---:|
+| check, direct grant | 479 µs | `view_any` 59 µs | 8.12 | 1.5 |
+| check, through a group | 114 µs | `view_any` 91 µs | 1.25 | 1.5 |
+| check, 64-deep folder chain | 388 µs | `view_any` 362 µs | 1.07 | 1.5 |
+| check, denied, 64-deep chain | 390 µs | `view_any` 358 µs | 1.09 | 1.5 |
+| check, denied, typical document | 477 µs | `view_any` 438 µs | 1.09 | 1.5 |
+| check, denied through the group tree | 1,405 µs | `view_any` 1,342 µs | 1.05 | 1.5 |
+| check-permissions, 256 documents | 47.3 ms | single check 244 µs | 194 | 32 |
+| first page of 50, broad subject | 2.00 ms | `view_any` 418 µs | 4.78 | 2.0 |
+| first page of 50, narrow subject | 2.50 ms | `view_any` 412 µs | 6.07 | 2.0 |
+| lookup-subjects, first 50 | 10.7 ms | `view_any` 605 µs | 17.7 | 2.0 |
+| count, broad subject | 417 ms | `view_any` 35.9 ms | 11.6 | 1.5 |
+| count, broad subject, limit 1 | 448 µs | `view_any` 97 µs | 4.62 | 1.5 |
+| count, narrow subject | 2.06 ms | `view_any` 178 µs | 11.6 | 1.5 |
+| count, narrow subject, limit 1 | 630 µs | `view_any` 85 µs | 7.41 | 1.5 |
+| count of `view_any`, per result | 34.5 ms / 18,270 | | 1.89 µs | 1.0 µs |
+| intersection, first page, small operand | 2.23 ms | operands 454 + 262 µs | 3.12 | 2.0 |
+| intersection, count, small operand | 2.21 ms | operands 35.8 ms + 244 µs | 0.06 | 2.0 |
+| intersection, count, large operand | 144 ms | operands 30.0 + 6.6 ms | 3.95 | 2.0 |
+| walk, cache off against cache miss | 800 ms | 529 ms | 1.51 | 1.25 |
+| non-linear recursion, granted | 34.3 ms | union twin 1.07 ms | 32.0 | 4.0 |
+| non-linear recursion, denied | 23.0 ms | union twin 1.06 ms | 21.7 | 4.0 |
+
+Adapter commands of one request: direct grant 189 (bound 4), denied through
+the group tree 606 (bound 64). The five operator checks within budget are
+claimed by the gate; every later pull request claims the cases it meets and
+none may drop one.
+
+On #219 (alternating with #217, two rounds each, 10⁵): count narrow −37%,
+count narrow with limit 1 −54%, first page narrow −31%, lookup-subjects −68%;
+the direct grant and the union twins are unchanged. At 10⁶ on #219: count
+narrow 2.4 ms, with limit 1 0.70 ms, first page narrow 4.6 ms,
+lookup-subjects 4.5 ms, direct grant 6.2 ms (1,932 adapter commands).
 
 ## Decisions
 

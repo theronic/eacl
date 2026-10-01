@@ -1,8 +1,10 @@
 # Tasks
 
 Each numbered section is one pull request, stacked in order on #210 after
-#213 (endpoint existence), the write-schema-reuse PR and the Kleene
-fault-semantics PR. Every PR ends with: the CI-equivalent battery, the
+#213 (endpoint existence), #217 (write-schema reuse) and #219 (Kleene fault
+semantics). Order: 1, 2, 4, 5, 6, 7, 8, 9, 10; section 3 is dropped. Each
+pull request reports the gate's cases before and after it against the
+baseline recorded in design.md. Every PR ends with: the CI-equivalent battery, the
 DataScript ClojureScript suite in both modes (last in its JVM),
 `bin/formal fast`, `bin/formal verify` when a model changed,
 `bin/formal source-closure`, the mutation-control suite,
@@ -25,12 +27,9 @@ targets within budget on a fresh JVM.
 - [ ] 2.5 Register mutation controls (child dropped from the order; fault taken as decisive; the earlier deadline kept when both operands are decisive); verify both runtimes.
 - [ ] 2.6 Gate: check cases within budget, direct grant at most 4 adapter commands.
 
-## 3. Set-at-a-time arrows (PR 3, design D3)
+## 3. Set-at-a-time arrows (dropped, design D3)
 
-- [ ] 3.1 Batch the `:arrow-membership` branch: via edges per candidate or the subject's holdings, one oracle call per distinct intermediate set, per-candidate combination in via order with doubling batches.
-- [ ] 3.2 Prove the aligned-arrow lemma in `VectorPredicate.dfy`; differential batched against scalar per candidate, values and certificates.
-- [ ] 3.3 Mutation controls: intermediate dropped, decision misassigned, via qualifier ignored.
-- [ ] 3.4 Gate: count and page cases measured; record the gain.
+- [x] 3.1 Dropped by the owner on 2026-10-01: the tabled evaluator (section 8) decides each arrow target once per request; any remaining batching is part of section 8.
 
 ## 4. Structural certainty from the generator (PR 4, design D4)
 

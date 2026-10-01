@@ -80,10 +80,9 @@ PR, which every evaluator change below relies on:
    relations, non-recursive permissions, recursive permissions. Under Kleene
    semantics the permissionship is order-independent; certificates stay
    sound and checks and lookups keep using the same order.
-3. **Set-at-a-time arrows.** The vector evaluator decides an arrow leaf for
-   all pending candidates at once: one via-edge read per candidate (or the
-   subject's holdings when they are fewer), one batched oracle call for the
-   distinct intermediates.
+3. **Set-at-a-time arrows** (dropped: the tabled evaluator of step 8 decides
+   each arrow target once per request, and steps 4 and 5 remove most exact
+   decisions).
 4. **Structural certainty from the generator.** A candidate the cover found
    through plain relationships only holds the cover's operand without an
    exact proof; only the remaining operands are decided.
