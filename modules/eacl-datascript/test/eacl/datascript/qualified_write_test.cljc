@@ -1,5 +1,6 @@
 (ns eacl.datascript.qualified-write-test
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is]]
+            [clojure.string :as str]
             [datascript.core :as ds]
             [eacl.caveats.publication-batch-contract :as batch]
             [eacl.caveats.public-write-contract :as public]
@@ -19,6 +20,49 @@
             [eacl.datascript.schema :as schema]
             [eacl.datascript.storage :as admission]
             [eacl.datascript.qualifiers :as qualifiers]))
+
+(def ^:private reuse-schema
+  "definition user {}\ndefinition doc {\n relation viewer: user\n relation owner: user\n permission view = viewer + owner\n permission edit = owner\n}")
+
+(defn- schema-reads
+  "Runs `f` and returns how many times it read the stored authorization schema."
+  [f]
+  (let [read schema/read-authorization-schema
+        calls (atom 0)]
+    (with-redefs [schema/read-authorization-schema (fn [db] (swap! calls inc) (read db))]
+      (f))
+    @calls))
+
+(deftest writes-read-the-authorization-schema-once-per-generation
+  ;; A write validates against the stored authorization schema. It is read
+  ;; once per schema generation into the client's derived-schema partitions;
+  ;; later writes of the generation reuse it, a schema write starts a new
+  ;; generation, and writes stay validated against the current schema.
+  (let [conn (schema/create-conn)
+        client (api/make-client conn {:caveat-evaluator (fixtures/portable-evaluator (atom 0))})
+        user (eacl/spice-object :user "reuse/u")
+        relationship #(eacl/->Relationship user :viewer (eacl/spice-object :doc %))
+        write! #(eacl/write-relationships! client [{:operation %1 :relationship (relationship %2)}])]
+    (eacl/write-schema! client reuse-schema)
+    (ds/transact! conn (mapv #(hash-map :eacl/id %) ["reuse/u" "reuse/d1" "reuse/d2" "reuse/d3"]))
+    (is (= 1 (schema-reads #(write! :create "reuse/d1"))) "the first write of a generation reads the schema")
+    (is (= 0 (schema-reads #(do (write! :create "reuse/d2")
+                                (write! :delete "reuse/d1")
+                                (eacl/write-relationships!
+                                 client [{:operation :touch :relationship (relationship "reuse/d3")}]))))
+        "later writes of the generation reuse it")
+    (eacl/write-schema! client (str/replace reuse-schema "permission edit = owner" "permission edit = owner + viewer"))
+    (is (= 1 (schema-reads #(do (write! :create "reuse/d1") (write! :delete "reuse/d1"))))
+        "a new generation is read again")
+    (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core/ExceptionInfo)
+                 (eacl/write-relationships!
+                  client [{:operation :create
+                           :relationship (eacl/->Relationship user :reviewer (eacl/spice-object :doc "reuse/d1"))}]))
+        "writes are still validated against the current schema")
+    (is (= [true true false]
+           (mapv #(:allowed? (eacl/check-permission client {:subject user :permission :edit
+                                                            :resource (eacl/spice-object :doc %)}))
+                 ["reuse/d2" "reuse/d3" "reuse/d1"])))))
 
 (deftest qualified-batches-publish-atomically
   (let [conn (schema/create-conn {:app/flag {}})]

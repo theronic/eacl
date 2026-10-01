@@ -455,6 +455,7 @@
   {:schema-version nil
    :request-local? true
    :parsed-schema (atom nil)
+   :authorization-schema (atom nil)
    :validation-catalog (atom nil)
    :expression-metrics (atom {})
    :sealed-plans (atom {})
@@ -499,6 +500,7 @@
   [artifact value]
   (case artifact
     :parsed-schema (map? value)
+    :authorization-schema (map? value)
     :validation-catalog (map? value)
     :expression-decodes (map? value)
     :sealed-plans (map? value)
@@ -587,6 +589,9 @@
         part #(derived-schema/artifact-partition store identity %)]
     {:schema-version schema-generation
      :parsed-schema (part :parsed-schema)
+     ;; The structural schema writes validate against; read requests keep
+     ;; theirs in `:parsed-schema`.
+     :authorization-schema (part :authorization-schema)
      :validation-catalog (part :validation-catalog)
      :expression-metrics (part :expression-decodes)
      :sealed-plans (part :sealed-plans)

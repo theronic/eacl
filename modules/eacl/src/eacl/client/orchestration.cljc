@@ -3591,9 +3591,34 @@
             (throw error))
           (:value outcome))))))
 
+(defn- publication-schema
+  "The authorization schema a write validates against, read once per schema
+  generation.
+
+  Reading it queries every Relation and permission definition and validates
+  every stored permission expression, which dominated small writes. The
+  result is kept in the client's derived-schema partitions for the selected
+  basis, keyed like the read path's (`request-schema`): the complete source
+  identity, the stored schema generation and the effective expression limits.
+  It has its own `:authorization-schema` slot, so what a write stores never
+  stands in for the schema a read request derives. Without a store, basis
+  identity or generation, the partitions are request-local."
+  [api {:keys [db adapter basis-identity]} options]
+  (engine/memoized-derived!
+   (:authorization-schema
+    (engine/schema-cache-for!
+     (:derived-schema-caches options) adapter basis-identity
+     (backend/invoke adapter :schema-generation)))
+   #((get-in api [:schema :read-authorization-schema]) db)))
+
+(defn- writer-schema-basis
+  "The schema inputs of a writer's selected basis."
+  [{:keys [db adapter semantic-identity]}]
+  {:db db :adapter adapter :basis-identity semantic-identity})
+
 (defn- qualified-publication-entries
-  [api db options updates]
-  (let [schema (qualified-schema! api db ((get-in api [:schema :read-authorization-schema]) db)
+  [api {:keys [db] :as basis} options updates]
+  (let [schema (qualified-schema! api db (publication-schema api basis options)
                                   (:caveat-evaluator options))
         resolve-input (get-in api [:impl :relationship-publication-input])
         generation ((get-in api [:schema :generation]) db)
@@ -3632,7 +3657,7 @@
       (let [outcome
             (try
               (let [entries (call-with-writer-basis
-                             writer #(qualified-publication-entries api (:db %) options updates))
+                             writer #(qualified-publication-entries api (writer-schema-basis %) options updates))
                     prepared (qualified-writes/prepare-batch! native-writer entries)
                     plan (qualified-writes/plan-batch-current native-writer prepared app-datoms)
                     tx-data (:tx-data plan)]
@@ -3675,7 +3700,7 @@
                             (typed-capability-error! :qualified-relationship-publication (:backend-id api)))
           options (current-writer-options writer)
           entries (call-with-writer-basis
-                   writer #(qualified-publication-entries api (:db %) options
+                   writer #(qualified-publication-entries api (writer-schema-basis %) options
                                                           [{:operation :touch :relationship relationship}]))]
       (:value (first (qualified-writes/prepare-batch! native-writer entries true))))))
 
@@ -4177,7 +4202,9 @@
       (let [plan (or (:qualified-plan api)
                      (typed-capability-error! :qualified-relationship-publication (:backend-id api)))
             db (:db (backend/state (:adapter basis)))
-            entries (qualified-publication-entries api db (runtime-options runtime) updates)
+            entries (qualified-publication-entries
+                     api {:db db :adapter (:adapter basis) :basis-identity (:identity basis)}
+                     (runtime-options runtime) updates)
             entries (mapv (fn [entry]
                             (if (contains? entry :prepared-qualifier)
                               (let [prepared (:prepared-qualifier entry)]
