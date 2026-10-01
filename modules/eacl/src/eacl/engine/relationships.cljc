@@ -81,7 +81,7 @@
   resource, qualifier, subject for `:forward-partial` and the subject,
   qualifier, resource for `:reverse-partial`. A continuation must compare in
   this order; comparing only primary and owner skips or repeats rows whenever
-  qualifier order disagrees with owner order (EACL-FORMAL-076)."
+  qualifier order disagrees with owner order (EACL-FORMAL-080)."
   [scan-kind a b]
   (case scan-kind
     :forward-anchored

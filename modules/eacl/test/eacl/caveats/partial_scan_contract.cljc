@@ -1,11 +1,13 @@
 (ns eacl.caveats.partial-scan-contract
   "Cross-backend contract for owner-unanchored `read-relationships` walks over
-  Relations that hold qualified rows (EACL-FORMAL-076).
+  Relations that hold qualified rows (EACL-FORMAL-080).
 
   A scan without `:subject/id` and `:resource/id` reads the AVET index, whose
   values `[p0 p1 p2 primary qualifier]` order one primary endpoint's rows by
   qualifier (plain rows first) before owner. Every walk below must list each
-  stored row exactly once, in the order of one large page, and terminate."
+  stored row exactly once, in the order of one large page, and terminate.
+  Wildcard rows (`user:*`) are rows of the one EACL-owned wildcard subject
+  entity, plain or qualified, so they take part in the same orders."
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [is testing]]
             [clojure.string :as string]
             [eacl.client.orchestration :as orchestration]
@@ -16,7 +18,7 @@
        "definition user {}\n"
        "definition org {\n"
        " relation child: org\n"
-       " relation viewer: user | user with enabled\n"
+       " relation viewer: user | user with enabled | user:* | user:* with enabled\n"
        " permission see = viewer\n"
        "}"))
 
@@ -138,20 +140,25 @@
    {:caveat "enabled" :valid-until-ms 3000}])
 
 (defn- check-random-walks!
-  "Seeded relationships over small endpoint domains, then qualifier-replacing
-  touches, which allocate newer qualifier eids so qualifier order disagrees
-  with owner order inside primary groups."
+  "Seeded relationships over small endpoint domains, two of them wildcard
+  grants, then qualifier-replacing touches, which allocate newer qualifier eids
+  so qualifier order disagrees with owner order inside primary groups."
   [{:keys [client writer now]} seed]
   (let [native (:native (writer))
         prefix (str "walk" seed "/")
         users (mapv #(eacl/spice-object :user (str prefix "u" %)) (range 4))
         orgs (mapv #(eacl/spice-object :org (str prefix "o" %)) (range 4))
+        wildcard (eacl/spice-object :user "*")
         [state ordered] (shuffle-seeded seed (concat users orgs))
         _ ((:transact! native) (mapv #(hash-map :eacl/id (:id %)) ordered))
         candidates (vec (concat (for [u users o orgs] [u :viewer o])
                                 (for [a orgs b orgs] [a :child b])))
         [state chosen] (shuffle-seeded state candidates)
-        chosen (subvec chosen 0 14)
+        ;; Two wildcard grants join twelve concrete rows, in seeded positions,
+        ;; so the touches below can renew them too.
+        [state chosen] (shuffle-seeded state
+                                       (into (subvec chosen 0 12)
+                                             (for [o (take 2 orgs)] [wildcard :viewer o])))
         assign (fn [state triples]
                  (reduce (fn [[state rows] [subject relation resource]]
                            (let [[state qualifier]
@@ -177,9 +184,15 @@
              [{:resource/type :org :resource/relation :viewer} #(= :viewer (:relation %))]
              [{:resource/type :org :resource/relation :child} #(= :child (:relation %))]
              [{:subject/type :user} #(= :user (get-in % [:subject :type]))]
-             [{:subject/type :org :resource/type :org} #(= :child (:relation %))]]
+             [{:subject/type :org :resource/type :org} #(= :child (:relation %))]
+             [{:subject/type :user :subject/id "*"} #(= "*" (get-in % [:subject :id]))]]
             :let [query (assoc query :cache? false)
-                  owned? #(string/starts-with? (get-in % [:subject :id]) prefix)]]
+                  ;; A wildcard row belongs to the seed that owns its resource.
+                  owned? #(string/starts-with?
+                           (get-in % (if (= "*" (get-in % [:subject :id]))
+                                       [:resource :id]
+                                       [:subject :id]))
+                           prefix)]]
       (testing (pr-str {:seed seed :query query})
         (check-walks! client query (expected #(and (owned? %) (pred %))))
         (check-walks! client (dissoc query :cache?) nil)

@@ -193,7 +193,7 @@
                (:eacl/error (ex-data error)))))
         (pr-str query))))
 
-;; --- Partial scans over qualified rows (EACL-FORMAL-076) --------------------
+;; --- Partial scans over qualified rows (EACL-FORMAL-080) --------------------
 ;;
 ;; A partial scan reads AVET values `[p0 p1 p2 primary qualifier]` across
 ;; owners, so one primary endpoint's rows are ordered by qualifier (plain rows
