@@ -818,9 +818,19 @@ admits are rejected before evaluation with `:eacl.caveat/invalid`
 `:reason :context-type` and `:parameter`, `:expected` and `:caveats`. Request
 meters gain `:qualifier-faults` and `:masked-faults`. Earlier candidates
 answered some of these requests with an evaluation failure that depended on
-internal order. The operator membership compatibility identity changes, so
-restored cache snapshots from earlier candidates are refused and their
-decisions recomputed.
+internal order.
+
+The operator membership compatibility identity changes, so a cache snapshot
+exported by an earlier candidate no longer restores:
+
+- `restore-cache-snapshot!` throws `:eacl/incompatible-cache-snapshot`.
+- `restore-authenticated-cache-snapshot!` returns
+  `{:restored? false :cache-miss? true :reason :invalid-cache-artifact}` and
+  leaves the existing stores untouched.
+
+Neither call installs the old entries: the client keeps its current cache,
+which is cold for a newly started client. Callers that restore persisted
+snapshots with `restore-cache-snapshot!` must catch the error or reseed.
 
 Live `SecurityKeyring` controllers let running clients share externally supplied
 primary or dedicated Zed-token key updates. Full replacements use generation

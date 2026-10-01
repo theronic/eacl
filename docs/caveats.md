@@ -297,9 +297,10 @@ candidate's decision with its filter edge before applying the result policy,
 so `:definite` and `:detailed` fail on the same candidates. A `*` entry
 excludes every subject with a relationship of its own whose decision is not a
 definite grant, faulting subjects included; a faulting subject's own candidate
-fails the walk only when a page consumes it. The `:faults` reasons are
-diagnostic: they name faulting edges that the decision depends on, but which
-ones a route reports is not part of the contract.
+fails the walk only when a page consumes it. The error's `:faults` is a
+non-exhaustive, implementation-defined sample of the faulting edges that the
+decision depends on. It is deterministic for a given route, but another route
+can report a different sample; the decision itself is canonical.
 
 A fault that a definite answer absorbs does not vanish silently. The request
 meters that a client's `:io-observer` receives include `:qualifier-faults`,
