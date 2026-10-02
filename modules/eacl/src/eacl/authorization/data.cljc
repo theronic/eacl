@@ -9,7 +9,9 @@
 (def maximum-entity-facts 4096)
 (def capability :bounded-snapshot-data-v1)
 (def ^:private single-valued-attributes
-  (into (conj qualifier/attributes :eacl.relation/allows-unqualified?) definition/attributes))
+  (into (conj qualifier/attributes :eacl.relation/allows-unqualified?
+              :eacl.relation/allows-unqualified-wildcard?)
+        definition/attributes))
 
 (defn collect
   "Consumes at most the fixed fact ceiling plus one overflow witness. Native
@@ -30,7 +32,7 @@
           (when (and (contains? single-valued-attributes attribute) (contains? entity attribute))
             (qualifier/error! :nonfunctional-qualification-entity))
           (recur (next rows)
-                 (if (= :eacl.relation/caveats attribute)
+                 (if (contains? qualifier/relation-many-attributes attribute)
                    (update (or entity {:db/id eid}) attribute (fnil conj #{}) value)
                    (assoc (or entity {:db/id eid}) attribute value))
                  (if (and assertion-version? (= qualifier/marker-attribute attribute)) (:tx datom) version)

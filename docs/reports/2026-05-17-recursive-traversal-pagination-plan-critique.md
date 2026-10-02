@@ -199,7 +199,7 @@ Recommendation:
 ```clojure
 {:eacl/error :eacl.recursive-traversal/limit-exceeded
  :limit-kind :derived-grants
- :limit 100000}
+ :limit      100000}
 ```
 
 - Keep defaults high enough for normal use and document that these are safety limits, not pagination limits.
@@ -265,7 +265,7 @@ Recommendation:
 
 ```clojure
 {:eacl/error :eacl.pagination/unsupported-recursive-last
- :reason :requires-full-traversal}
+ :reason     :requires-full-traversal}
 ```
 
 - Add README wording that says recursive previous-page navigation is supported via `:last/:before`, while "last page from the end" is intentionally unsupported without a boundary.
@@ -305,7 +305,7 @@ Recommendation:
 - Define stable rule IDs, for example:
 
 ```clojure
-{:id [:arrow-permission resource-type permission source-relation-name intermediate-type target-permission via-relation-eid]
+{:id   [:arrow-permission resource-type permission source-relation-name intermediate-type target-permission via-relation-eid]
  :node [resource-type permission]
  :rule :arrow-permission
  ...}
@@ -354,10 +354,10 @@ Add three benchmark fixtures:
 Assertions should inspect stats, not only elapsed time:
 
 ```clojure
-{:candidate-can-checks 0
+{:candidate-can-checks   0
  :advanced-stream-datoms bounded-by-reachable-prefix
- :derived-grants bounded-by-reachable-prefix
- :emitted-results page-size-plus-sentinel}
+ :derived-grants         bounded-by-reachable-prefix
+ :emitted-results        page-size-plus-sentinel}
 ```
 
 Do not keep the old "late pages should not slow down" assertion for recursive traversal. Prefix replay means late recursive pages are expected to do more work. Keep that assertion only for acyclic eid-order pagination.

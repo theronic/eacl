@@ -12,21 +12,33 @@ no checked-in pins to refresh after edits. Logs live under ignored
 `target/formal/qualified/`; input hashes are generated in the verification
 manifest under `target/formal/verification/`. CI uploads both.
 
-`QualifiedEvidence.dfy` models a residual as a set of Boolean completions of
-the selected request's remaining Caveat atoms. This is a denotation, not the
-production residual representation. Union, intersection, exclusion, and arrow
-composition are pointwise Boolean operations. Any encountered authoritative
-fault propagates before Boolean absorbers; CEL's internal expression-error
-rules remain the separate Phase 2 contract. Positive recursion has monotone,
-finite, least-fixed-point rules; negative dependencies are already stratified.
+`QualifiedEvidence.dfy` models a qualified value as a map from the Boolean
+completions (worlds) of the selected request's remaining Caveat atoms to
+Kleene's three truth values: false, a fault with its reasons ("unknown"), and
+true. This is a denotation, not the production residual representation.
+Union, intersection, exclusion, and arrow composition are pointwise
+strong-Kleene connectives, with negation fixing a fault: a definite absorber
+decides beside a fault (`true` in a union, `false` in an intersection or an
+arrow), a fault never absorbs, and two faults unite their reasons. The model
+proves the truth tables, commutativity, associativity, idempotence and De
+Morgan with reasons, absorption by definite operands of arbitrary (faulting)
+operands, that faults are not decisive, monotonicity per world in
+false < fault < true, distributivity of truth levels (and that reasons do not
+distribute), permutation invariance of folds, soundness for every Boolean
+resolution of the faulting cells, and a three-valued least fixed point for
+positive recursion; negative dependencies are already stratified. CEL's
+internal expression-error rules remain the separate Phase 2 contract.
 
 `QualifiedTemporal.dfy` models sparse references, inert preparation, atomic
 pair publication, one captured time, the exclusive expiry boundary, and
 decisive witness certificates. Structural qualifier faults precede expiry;
 expiry precedes Caveat work. With fixed context and immutable data, time cannot
 introduce a new leaf fault, but can remove an evaluator fault by expiring its
-edge. This property justifies witness pruning without masking a newly arising
-fault. The operator theorem composes over arbitrary finite evidence trees.
+edge. A decisive complete witness decides whatever the other operand becomes,
+a fault included; a composed value can therefore gain a fault later only when
+the witness that masked it expires, which is where its certificate ends. The
+operator theorem composes over arbitrary finite evidence trees without any
+no-new-fault premise on composed values.
 Recursive false evidence must retain completeness through the fixed point;
 stopping when membership alone stabilizes is deliberately killed.
 
@@ -66,8 +78,9 @@ inputs. The whole-tree formal gate retains its stronger existing reporting
 requirements. Production refinement, native conformance, mutation controls
 against production, performance qualification, and semantic activation remain
 Phase 3 implementation obligations. The repository's broader mechanized host
-refinement and independent review obligations remain explicit in the assurance
-manifest; model success does not discharge them.
+refinement obligations remain explicit in the assurance manifest; model success
+does not discharge them. Independent review is deferred to a later
+external-certification stage.
 
 Bundled adapters expose a bounded `:qualification-data` operation only with the paired `:bounded-snapshot-data-v1` capability. The read preserves unknown attributes, returns the qualifier marker assertion version from the same basis, and charges every consumed fact, including the overflow witness. Datalevin uses its native prefix limit within the selected owned read snapshot and returns no uncertified assertion version. Shared native fixtures cover the four adapters, Datahike attribute refs, ordinary zero-read behavior, per-request fetch reuse, and fact/command accounting.
 

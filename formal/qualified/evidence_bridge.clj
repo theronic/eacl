@@ -14,10 +14,20 @@
               (e/combine :union result term)))
           false worlds))
 
+(defn- production-at
+  "The production value in one world of `x` (bit 0) and `y` (bit 1): true,
+  false, or the reason keywords of a fault terminal."
+  [node world]
+  (cond
+    (boolean? node) node
+    (keyword? (first node)) (set (map second (second node)))
+    :else (let [index (if (= (ffirst node) (ffirst (e/value fixtures/x))) 0 1)]
+            (production-at (nth node (if (bit-test world index) 2 1)) world))))
+
 (defn model-value [production]
-  (if (e/fault? production)
-    {:fault (set (map second (second (e/value production))))}
-    (model/value (fixtures/completions production [fixtures/x fixtures/y]))))
+  (model/outcome (into {} (map (fn [world] [world (production-at (e/value production) world)]))
+                       contract/universe)
+                 false))
 
 (defn model-evidence [production]
   {:value (model-value production) :end (e/valid-until production) :complete? (e/complete? production)})
@@ -25,7 +35,10 @@
 (defn inputs []
   (let [values (concat (map production-for-worlds contract/subsets)
                        [(e/fault :eacl.qualifier/invalid :invalid)
-                        (e/fault :eacl.caveat/evaluation :evaluator)])]
+                        (e/fault :eacl.caveat/evaluation :evaluator)
+                        ;; Faulting in some worlds only.
+                        (e/combine :union fixtures/x (e/fault :eacl.qualifier/invalid :invalid))
+                        (e/combine :intersection fixtures/y (e/fault :eacl.caveat/evaluation :evaluator))])]
     (vec (for [v values [end complete] [[nil true] [100 true] [100 false]]]
            (e/with-certificate v end complete)))))
 
@@ -38,7 +51,7 @@
     (let [expected (model/combine contract/universe op (model-evidence a) (model-evidence b))
           actual (e/combine op a b)
           missing (model/missing-fields contract/universe (:value expected) 2)]
-      (is (= (:value expected) (model-value actual)))
+      (is (model/same? contract/universe (:value expected) (model-value actual)))
       (is (= (:end expected) (e/valid-until actual)))
       (is (= (:complete? expected) (e/complete? actual)))
       (is (= (set (map ["x" "y"] missing)) (set (e/missing-fields actual)))))))
@@ -59,7 +72,7 @@
               expected (model/combine contract/universe op expected-left expected-right)
               actual (e/combine op left right)
               label (pr-str {:seed seed :step step :operation op})]
-          (is (= (:value expected) (model-value actual)) label)
+          (is (model/same? contract/universe (:value expected) (model-value actual)) label)
           (is (= (:end expected) (e/valid-until actual)) label)
           (is (= (:complete? expected) (e/complete? actual)) label)
           (is (= actual (e/decode (e/encode actual))) label)

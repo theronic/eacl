@@ -47,9 +47,9 @@ You have access to a live nREPL via clojure-mcp MCP server. Use only clojure-mcp
 
 You can run the relevant tests via the clojure-mcp MCP server by eval'ing:
 
-```
+```clojure
 (do (require '[eacl.datomic.impl-test])
-  (clojure.test/run-tests 'eacl.datomic.impl-test))
+    (clojure.test/run-tests 'eacl.datomic.impl-test))
 ```
 
 Note that all tests in `test/eacl/datomic/impl_test.clj` are currently passing except for `expand-permission-tree`, which is not currently implemented.
@@ -70,11 +70,11 @@ Output this plan to `docs/plans/`. The plan should be fool-proof so that an infe
  - The return order of `lookup-resources` matters in the tests.
  - In the internal Datomic implementation, e.g. `eacl.datomic.impl*`, IDs are *always* interal Datomic IDs, so no need to coerce them. That's the job of `eacl.datomic.core`, which deals with coercion to/from internal/external IDs. Do not attempt to be clever about coercing idents to d/entid in the internal implementation. The internal Datomic implementation ONLY deals in Datomic IDs, which would be safe to pass to `datomic.api/entid`, or intearct with `d/index-range` if the index stores eids.
  - For testing, the `eacl.datomic.datomic-helpers/with-mem-conn` is a macro that creates a fresh in-memory Datomic database with some initial tx-data transacted. Refer to how tests use this to run test against a fresh in-memory Datomic database while avoiding datom conflicts, e.g.
- ```
+ ```clojure
  (with-mem-conn [conn schema/v5-schema]
    @(d/transact conn fixtures/base-fixtures)
    (let [client (eacl/make-client conn {})])
-      (eacl/can? client (->user :test/user) :view (->server :test/server1)))
+   (eacl/can? client (->user :test/user) :view (->server :test/server1)))
  ```
  - If you are unable to read a file you expect to exist using `clojure-mcp`'s `read_file` tool, use the `LS` tool and ensure you have the correct path. If the file is expected to exist, and you can't access it, stop and ask for clarification.
 

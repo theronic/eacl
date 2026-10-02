@@ -43,7 +43,9 @@
                           [rid {:generation (get entity (:relation-version-attribute native))
                                 :definition (select-keys entity [:eacl.relation/resource-type :eacl.relation/subject-type
                                                                  :eacl.relation/relation-name :eacl.relation/caveats
-                                                                 :eacl.relation/allows-unqualified?])}]))
+                                                                 :eacl.relation/allows-unqualified?
+                                                                 :eacl.relation/wildcard-caveats
+                                                                 :eacl.relation/allows-unqualified-wildcard?])}]))
         duplicates
         (into #{}
               (filter (fn [[st s r rt o]]

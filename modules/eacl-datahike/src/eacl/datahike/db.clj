@@ -187,10 +187,16 @@
 
   Current direct databases seek natively in either direction. Temporal/filter
   wrappers use their exact visible datoms and sort only that historical fallback
-  result; current hot-path pagination never materializes the prefix."
+  result; current hot-path pagination never materializes the prefix.
+
+  `position` is nil or `{:bound full-arity-value :entity owner}`: an exact
+  inclusive seek position that replaces the bound derived from `cursor-tail`
+  on direct databases."
   ([db attr arity prefix]
    (avet-tuple-prefix db attr arity prefix nil :asc))
   ([db attr arity prefix cursor-tail direction]
+   (avet-tuple-prefix db attr arity prefix cursor-tail direction nil))
+  ([db attr arity prefix cursor-tail direction position]
    (let [prefix (vec prefix)
          prefix-size (count prefix)
          missing (- arity prefix-size)]
@@ -209,6 +215,9 @@
                                      Long/MAX_VALUE
                                      nil))))
                (into prefix (repeat missing nil)))
+             components (if position
+                          [attr (:bound position) (:entity position)]
+                          [attr seek-bound])
              matches-prefix? (tuple-prefix-matcher arity prefix)]
          (if (direct-db? db)
            (let [a-repr (attr-repr db attr)]
@@ -216,7 +225,7 @@
                      d/rseek-datoms
                      d/seek-datoms)
                    db {:index :avet
-                       :components [attr seek-bound]})
+                       :components components})
                   (take-while
                    (fn [{:keys [a] :as datom}]
                      (and (= a-repr a)
@@ -231,6 +240,11 @@
    unchanged, so presence has to be checked separately."
   [db eid]
   (boolean (seq (d/datoms db {:index :eavt :components [eid]}))))
+
+(defn entity-eacl-id
+  "The entity's `:eacl/id`, reading at most one datom."
+  [db eid]
+  (:v (first (d/datoms db {:index :eavt :components [eid :eacl/id]}))))
 
 (defn relationship-identity-datoms
   "Guarded first-four identity access, including retained temporal values."
@@ -252,11 +266,22 @@
    include-qualifier?)))
 
 (defn checked-global-relationship-datoms
+  "Owner-unanchored relationship datoms. `resume` is nil or
+  `{:qualifier-eid q :owner-eid o}`, the remaining physical coordinates of the
+  boundary row at `cursor-eid`; with it the inclusive seek starts exactly at
+  that row in either direction (see `endpoint-pair/resume-bound`)."
   ([db attr prefix cursor-eid direction]
    (checked-global-relationship-datoms db attr prefix cursor-eid direction false))
   ([db attr prefix cursor-eid direction include-qualifier?]
+   (checked-global-relationship-datoms db attr prefix cursor-eid direction include-qualifier? nil))
+  ([db attr prefix cursor-eid direction include-qualifier? resume]
    (endpoint-pair/checked-datoms
-    (avet-tuple-prefix db attr storage/value-arity prefix cursor-eid direction)
+    (avet-tuple-prefix
+     db attr storage/value-arity prefix cursor-eid direction
+     (when (and resume (some? cursor-eid) (some? (:owner-eid resume)))
+       {:bound (endpoint-pair/resume-bound
+                (vec prefix) cursor-eid (:qualifier-eid resume) direction Long/MAX_VALUE)
+        :entity (:owner-eid resume)}))
     include-qualifier?)))
 
 (defn entity-facts [database eid]
@@ -268,6 +293,6 @@
     (when (seq rows)
       (reduce (fn [result [a v]]
                 (let [attribute (if (keyword? a) a (:db/ident (d/entity database a)))]
-                  (if (= :eacl.relation/caveats attribute)
+                  (if (#{:eacl.relation/caveats :eacl.relation/wildcard-caveats} attribute)
                     (update result attribute (fnil conj #{}) v) (assoc result attribute v))))
               {:db/id eid} rows))))

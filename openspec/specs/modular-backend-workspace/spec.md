@@ -140,6 +140,21 @@ The core module SHALL own versioned, bounded, canonical cryptographic formats fo
 - **WHEN** a token exceeds size/depth limits, contains unknown fields, has an unsupported numeric representation, or fails authentication
 - **THEN** decoding fails with a bounded typed error
 
+### Requirement: Formats accept only the strings they issue
+Every shared format SHALL accept only the exact string it issued. Canonical EDN decoding SHALL accept only the canonical encoding of the decoded value, and Base64URL decoding SHALL accept only the unpadded spelling with zero unused bits. Canonical validation SHALL stop as soon as the entry bound is exceeded, and SHALL reject a map or set whose distinct members encode identically.
+
+#### Scenario: Issued token or cursor is respelled
+- **WHEN** a caller changes an issued Zed token, cache entry, or cursor by appending text inside its envelope, adding Base64 padding, changing the unused bits of a Base64URL character, or using another EDN spelling of the same envelope
+- **THEN** decoding fails with a typed error, even though the decoded contents would authenticate
+
+#### Scenario: Value exceeds the entry bound
+- **WHEN** a value to encode or canonicalize holds more entries than its bound, including an unbounded lazy sequence
+- **THEN** validation fails with `:too-many-entries` after examining at most the bound plus one value
+
+#### Scenario: Distinct members encode identically
+- **WHEN** a map or set holds a record and a map with the same fields
+- **THEN** encoding and canonicalization fail with `:duplicate-key` or `:duplicate-member` rather than dropping a member or emitting text that does not decode
+
 ### Requirement: Shared conformance and reference-model suite
 The core module SHALL provide a backend contract suite and deterministic full-content reference model covering causal tokens, source scope, authoritative selection, dependency completeness, proof lifting, cursor continuation, exact expiry, and cache integrity. Every bundled adapter MUST run applicable scenarios with real backend transaction and snapshot APIs.
 

@@ -1,7 +1,25 @@
 (ns eacl.authorization.context-test
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is]]
             [eacl.authorization.context :as context]
+            [clojure.string :as str]
             [eacl.caveats.values :as values]))
+
+(deftest host-maps-cannot-alias-parameter-names
+  (let [folded (sorted-map-by #(compare (str/lower-case %1) (str/lower-case %2)) "A" true)
+        prepared (context/prepare folded)]
+    (is (= {} (context/project prepared [["a" :bool]])))
+    (is (= {"A" true} (context/project prepared [["A" :bool]])))
+    (is (= (context/identity (context/prepare {"A" true})) (context/identity prepared)))))
+
+#?(:clj
+   (deftest boxed-booleans-have-canonical-values-and-distinct-identities
+     (doseq [wrap [identity vector #(hash-map "key" %)]]
+       (let [yes (context/prepare {"a" (wrap (Boolean. true))})
+             no (context/prepare {"a" (wrap (Boolean. false))})]
+         (is (not= (context/identity yes) (context/identity no)))
+         (is (= (context/identity (context/prepare {"a" (wrap true)})) (context/identity yes)))
+         (is (= (context/identity (context/prepare {"a" (wrap false)})) (context/identity no)))))
+     (is (false? (get (context/value (context/prepare {"a" (Boolean. false)})) "a")))))
 
 (defn error-data [f]
   (try (f) nil

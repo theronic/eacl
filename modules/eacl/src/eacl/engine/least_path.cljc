@@ -32,6 +32,7 @@
             [eacl.authorization.result :as authorization-result]
             [eacl.authorization.qualification :as qualification]
             [eacl.backend.v8 :as backend]
+            [eacl.engine.sealed-plan :as sealed-plan]
             [eacl.engine.stable-reducer :as reducer]
             [eacl.engine.stable-route :as route]
             [eacl.relationships.edge :as edge]))
@@ -148,14 +149,15 @@
 
 (defn- stream-next
   "[value stream'] or [nil stream'] on exhaustion. Qualified false rows
-   advance physical bounds and consume the same command/value budgets."
+   advance physical bounds and consume the same command/value budgets. A
+   faulting row is a Kleene unknown carried as the stream's evidence: it is
+   possibly active, and only a consumed decision that depends on it fails."
   [ctx {:keys [mk buf idx bound done?] :as s}]
   (cond
     (< idx (count buf))
     (let [value (nth buf idx) eid (edge/endpoint value)
           result (if (and (:qualification ctx) (vector? value))
-                   (evidence/throw-if-fault!
-                    (qualification/qualify (:qualification ctx) (:relation-eid (mk bound 1)) value))
+                   (qualification/qualify (:qualification ctx) (:relation-eid (mk bound 1)) value)
                    true)
           next-stream (cond-> (assoc s :idx (inc idx) :bound eid)
                         (:qualification ctx) (assoc :evidence result))]
@@ -191,8 +193,7 @@
                                 (dec candidate) 1 false)))]
     (if (= candidate (edge/endpoint value))
       (if (:qualification ctx)
-        (evidence/throw-if-fault!
-         (qualification/qualify (:qualification ctx) relation-eid value))
+        (qualification/qualify (:qualification ctx) relation-eid value)
         true)
       false)))
 
@@ -203,8 +204,7 @@
                                 (dec candidate) 1 false)))]
     (if (= candidate (edge/endpoint value))
       (if (:qualification ctx)
-        (evidence/throw-if-fault!
-         (qualification/qualify (:qualification ctx) relation-eid value))
+        (qualification/qualify (:qualification ctx) relation-eid value)
         true)
       false)))
 
@@ -217,11 +217,13 @@
 (defn- path-active? [ctx state]
   (or (nil? (:qualification ctx)) (not (evidence/no? (get state :evidence true)))))
 
-(defn- path-hit? [ctx state other]
+(defn- path-hit?
+  "Whether the joined path is possibly active: not definitely false. A
+   faulting conjunct counts as possibly active unless the other is false."
+  [ctx state other]
   (if (:qualification ctx)
-    (not (evidence/no? (evidence/throw-if-fault!
-                       (evidence/combine :arrow (get state :evidence true)
-                                         (if (nil? other) false other)))))
+    (not (evidence/no? (evidence/combine :arrow (get state :evidence true)
+                                         (if (nil? other) false other))))
     (boolean other)))
 
 (defn- isect2?
@@ -321,7 +323,7 @@
                           :subject-eid subject-eid
                           :resource-eid resource-eid})]
       (if (:qualification env)
-        (not (evidence/no? (evidence/throw-if-fault! result)))
+        (not (evidence/no? result))
         (boolean result)))
     true))
 
@@ -338,7 +340,7 @@
                        :subject-type (:subject-type env)
                        :subject-eid subject-eid :resource-eid resource-eid
                        :evidence-witness {:rule rule :evidence path-evidence}}))]
-        (when-not (evidence/no? (evidence/throw-if-fault! result))
+        (when-not (evidence/no? result)
           {:value value :coords coords :evidence result})))
     (when (candidate-accepted? env node subject-eid resource-eid)
       {:value value :coords coords})))
@@ -354,9 +356,17 @@
                        :subject-type (:subject-type env)
                        :subject-eid subject-eid :resource-eid resource-eid
                        :evidence-witness {:rule rule :intermediate intermediate :evidence path-evidence}}))]
-        (when-not (evidence/no? (evidence/throw-if-fault! result))
+        (when-not (evidence/no? result)
           {:value value :coords coords :evidence result})))
     (accepted-emission env node rule subject-eid resource-eid value coords true)))
+
+(defn- own-derivation-required?
+  "A reverse witness asks whether an earlier arm would emit the subject,
+  which it does only through the subject's own tuples. With wildcard
+  variants in the plan, the exact node predicate alone would also count the
+  wildcard's tuples, so the own derivation is checked as well."
+  [env]
+  (and (not (:wildcards? env)) (:wildcard-plan? env)))
 
 (defn- node-evidence
   "Does `subject-eid` reach `node`'s permission on `resource-eid`? The
@@ -366,17 +376,33 @@
   (if (:qualification env)
     ;; The qualified local predicate proves the actual node. Running the
     ;; structural cover's point traversal first would duplicate that work.
-    (evidence/throw-if-fault!
-     ((:candidate-accept? env)
-      {:node node :direction (:traversal env) :subject-type (:subject-type env)
-       :subject-eid subject-eid :resource-eid resource-eid}))
+    ;; A faulting node value is possibly active: it is not thrown here, and
+    ;; only a consumed decision that depends on it fails.
+    (let [accepted
+          ((:candidate-accept? env)
+           (cond-> {:node node :direction (:traversal env) :subject-type (:subject-type env)
+                    :subject-eid subject-eid :resource-eid resource-eid}
+             (own-derivation-required? env) (assoc :wildcards? false)))]
+      (if (and (own-derivation-required? env)
+               (not (:legacy-qualified? env))
+               (not (evidence/no? accepted)))
+        (if (evidence/no? (route/derives-from-node?
+                           (assoc route-opts
+                                  :start-node node
+                                  :subject-eid subject-eid
+                                  :resource-eid resource-eid
+                                  :wildcards? false)))
+          false
+          accepted)
+        accepted))
     (boolean
      (and
       (route/derives-from-node?
        (assoc route-opts
               :start-node node
               :subject-eid subject-eid
-              :resource-eid resource-eid))
+              :resource-eid resource-eid
+              :wildcards? (:wildcards? env)))
       (candidate-accepted? env node subject-eid resource-eid)))))
 
 (defn- derives? [env node subject-eid resource-eid]
@@ -437,13 +463,26 @@
     {:node node :rules rules :order (rule-order env rules) :oi 0
      :sub nil}))
 
+(defn- rule-active?
+  "Wildcard variants derive in forward traversal and point checks only; a
+  reverse walk and its witnesses follow the subject's own tuples."
+  [env rule]
+  (or (:wildcards? env) (not (sealed-plan/wildcard-variant? rule))))
+
+(defn- rule-anchor
+  "The holder whose tuples a subject-side scan or probe reads: the wildcard
+  subject for a wildcard variant, else the traversal's subject."
+  [env rule]
+  (or (:wildcard-eid rule) (:subject-eid env)))
+
 (defn- fwd-rule-sub
   "Fresh per-rule traversal state."
   [env rule]
-  (let [{:keys [subject-type subject-eid desc?]} env]
+  (let [{:keys [subject-type desc?]} env
+        subject-eid (rule-anchor env rule)]
     (case (:rule rule)
       :relation
-      (when (= subject-type (:subject-type rule))
+      (when (and (= subject-type (:subject-type rule)) (rule-active? env rule))
         {:scan (stream #(fwd-scan subject-type subject-eid
                                   (:relation-eid rule)
                                   (:resource-type rule) %1 %2 desc?)
@@ -453,7 +492,7 @@
       {:child (fwd-mk-level env (:target-node rule))}
 
       :arrow-relation
-      (when (= subject-type (:target-subject-type rule))
+      (when (and (= subject-type (:target-subject-type rule)) (rule-active? env rule))
         {:outer (stream #(fwd-scan subject-type subject-eid
                                    (:target-relation-eid rule)
                                    (:intermediate-type rule) %1 %2 desc?)
@@ -480,11 +519,13 @@
   intersections; permission targets recurse through the certified
   node-anchored probe check."
   [env rule v]
-  (let [{:keys [ctx subject-type subject-eid]} env]
+  (let [{:keys [ctx subject-type subject-eid]} env
+        anchor (rule-anchor env rule)]
     (case (:rule rule)
       :relation
       (and (= subject-type (:subject-type rule))
-           (probe-fwd? ctx subject-type subject-eid
+           (rule-active? env rule)
+           (probe-fwd? ctx subject-type anchor
                        (:relation-eid rule) (:resource-type rule) v))
 
       :self-permission
@@ -492,9 +533,10 @@
 
       :arrow-relation
       (and (= subject-type (:target-subject-type rule))
+           (rule-active? env rule)
            (isect2? ctx
                     ;; subject's target-relation holdings
-                    (stream #(fwd-scan subject-type subject-eid
+                    (stream #(fwd-scan subject-type anchor
                                        (:target-relation-eid rule)
                                        (:intermediate-type rule) %1 %2 false)
                             nil)
@@ -506,7 +548,7 @@
                                        (:via-relation-eid rule)
                                        (:intermediate-type rule) %1 %2 false)
                             nil)
-                    #(probe-fwd-evidence ctx subject-type subject-eid
+                    #(probe-fwd-evidence ctx subject-type anchor
                                  (:target-relation-eid rule)
                                  (:intermediate-type rule) %)
                     nil))
@@ -554,7 +596,8 @@
            (case (:rule rule)
              :relation
              (when (and (= subject-type (:subject-type rule))
-                        (probe-fwd? ctx subject-type subject-eid
+                        (rule-active? env rule)
+                        (probe-fwd? ctx subject-type (rule-anchor env rule)
                                     (:relation-eid rule)
                                     (:resource-type rule) v))
                [(:ordinal rule) v])
@@ -564,14 +607,16 @@
                (into [(:ordinal rule)] sub))
 
              :arrow-relation
-             (when (= subject-type (:target-subject-type rule))
+             (when (and (= subject-type (:target-subject-type rule))
+                        (rule-active? env rule))
                ;; least eid in (subject's holdings ∩ v's via-set): the
                ;; min-side alternation — a one-sided holdings scan here
                ;; cost O(holdings prefix) per call and broke the
                ;; shared-with-10k-orgs bound on the witness path.
-               (let [i (least-common
+               (let [anchor (rule-anchor env rule)
+                     i (least-common
                         ctx
-                        (stream #(fwd-scan subject-type subject-eid
+                        (stream #(fwd-scan subject-type anchor
                                            (:target-relation-eid rule)
                                            (:intermediate-type rule)
                                            %1 %2 false)
@@ -584,7 +629,7 @@
                                            (:intermediate-type rule)
                                            %1 %2 false)
                                 nil)
-                        #(probe-fwd-evidence ctx subject-type subject-eid
+                        #(probe-fwd-evidence ctx subject-type anchor
                                      (:target-relation-eid rule)
                                      (:intermediate-type rule) %))]
                  (when i [(:ordinal rule) i v])))
@@ -659,7 +704,8 @@
     :self-permission false ;; child recursion already least-filtered
     :arrow-relation
     ;; I' < I (eid) with (subject, tr, I') ∧ (I', via, v)
-    (let [{:keys [ctx subject-type subject-eid]} env
+    (let [{:keys [ctx subject-type]} env
+          subject-eid (rule-anchor env rule)
           i (:i binding)]
       (isect2? ctx
                (stream #(fwd-scan subject-type subject-eid
@@ -815,7 +861,8 @@
   (let [{:keys [subject-type desc?]} env]
     (case (:rule rule)
       :relation
-      (when (= subject-type (:subject-type rule))
+      (when (and (= subject-type (:subject-type rule))
+                 (not (sealed-plan/wildcard-variant? rule)))
         {:scan (stream #(rev-scan (:resource-type rule) entity
                                   (:relation-eid rule)
                                   subject-type %1 %2 desc?)
@@ -825,7 +872,8 @@
       {:child (rev-mk-level env (:target-node rule) entity)}
 
       :arrow-relation
-      (when (= subject-type (:target-subject-type rule))
+      (when (and (= subject-type (:target-subject-type rule))
+                 (not (sealed-plan/wildcard-variant? rule)))
         {:outer (stream #(rev-scan (:resource-type rule) entity
                                    (:via-relation-eid rule)
                                    (:intermediate-type rule) %1 %2 desc?)
@@ -847,6 +895,7 @@
     (case (:rule rule)
       :relation
       (and (= subject-type (:subject-type rule))
+           (not (sealed-plan/wildcard-variant? rule))
            (probe-rev? ctx (:resource-type rule) entity
                        (:relation-eid rule) subject-type s))
 
@@ -855,6 +904,7 @@
 
       :arrow-relation
       (and (= subject-type (:target-subject-type rule))
+           (not (sealed-plan/wildcard-variant? rule))
            (isect2? ctx
                     (stream #(rev-scan (:resource-type rule) entity
                                        (:via-relation-eid rule)
@@ -899,7 +949,9 @@
       :relation false
       :self-permission false
       :arrow-relation
-      (isect2? ctx
+      (and
+       (not (sealed-plan/wildcard-variant? rule))
+       (isect2? ctx
                (stream #(rev-scan (:resource-type rule) entity
                                   (:via-relation-eid rule)
                                   (:intermediate-type rule) %1 %2 false)
@@ -914,7 +966,7 @@
                #(probe-rev-evidence ctx (:resource-type rule) entity
                             (:via-relation-eid rule)
                             (:intermediate-type rule) %)
-               i)
+               i))
       :arrow-permission
       (let [node (:target-node rule)
             child-env (assoc env :desc? false :subject-eid s)]
@@ -1099,10 +1151,13 @@
         rule (nth rules ri)
         _ (check-arity! rule coords)
         {:keys [subject-type subject-eid desc?]} env
+        anchor (rule-anchor env rule)
+        _ (when-not (rule-active? env rule)
+            (invalid-coords! :inactive-wildcard-rule {:node node}))
         sub
         (case (:rule rule)
           :relation
-          {:scan (stream #(fwd-scan subject-type subject-eid
+          {:scan (stream #(fwd-scan subject-type anchor
                                     (:relation-eid rule)
                                     (:resource-type rule) %1 %2 desc?)
                          (nth coords 1))}
@@ -1113,12 +1168,12 @@
 
           :arrow-relation
           (let [i (nth coords 1) v (nth coords 2)]
-            {:outer (cond-> (stream #(fwd-scan subject-type subject-eid
+            {:outer (cond-> (stream #(fwd-scan subject-type anchor
                                                (:target-relation-eid rule)
                                                (:intermediate-type rule) %1 %2 desc?) i)
                       (:qualification env)
                       (assoc :evidence (resume-evidence!
-                                        (probe-fwd-evidence (:ctx env) subject-type subject-eid
+                                        (probe-fwd-evidence (:ctx env) subject-type anchor
                                                             (:target-relation-eid rule)
                                                             (:intermediate-type rule) i))))
              :i i
@@ -1156,6 +1211,8 @@
         oi (order-position order ri)
         rule (nth rules ri)
         _ (check-arity! rule coords)
+        _ (when (sealed-plan/wildcard-variant? rule)
+            (invalid-coords! :reverse-wildcard-variant {:node node}))
         {:keys [subject-type desc?]} env
         sub
         (case (:rule rule)
@@ -1211,11 +1268,11 @@
         route-options (assoc (select-keys options reducer/run-option-keys) :qualification request)
         scope (delay (qualification/exact-reuse-identity request))
         memo (volatile! {})]
-    (fn [{:keys [node subject-type subject-eid resource-eid evidence-witness]}]
-      (when evidence-witness (evidence/throw-if-fault! (:evidence evidence-witness)))
+    (fn [{:keys [node subject-type subject-eid resource-eid evidence-witness] :as request}]
       (if (and evidence-witness (evidence/has? (:evidence evidence-witness)))
         (:evidence evidence-witness)
-        (let [point [node subject-type subject-eid resource-eid]]
+        (let [wildcards? (not (false? (:wildcards? request)))
+              point [node subject-type subject-eid resource-eid wildcards?]]
           (if (contains? @memo point)
             (get @memo point)
             (do
@@ -1224,12 +1281,15 @@
                                 {:type :eacl.operator/invalid-lookup :eacl/error :eacl.operator/invalid-lookup
                                  :reason :node-evidence-limit})))
               (let [result
-                    (evidence/throw-if-fault!
-                     (route/derives-from-node?
-                      (cond-> (assoc route-options :start-node node :subject-type subject-type
-                                     :subject-eid subject-eid :resource-eid resource-eid)
-                        evidence-witness
-                        (assoc :known-witness (assoc evidence-witness :point point :scope (force scope))))))]
+                    (route/derives-from-node?
+                     (cond-> (assoc route-options :start-node node :subject-type subject-type
+                                    :subject-eid subject-eid :resource-eid resource-eid
+                                    :wildcards? wildcards?)
+                       evidence-witness
+                       (assoc :known-witness
+                              (assoc evidence-witness
+                                     :point [node subject-type subject-eid resource-eid]
+                                     :scope (force scope)))))]
                 (vswap! memo assoc point result)
                 result))))))))
 
@@ -1250,6 +1310,10 @@
      :subject-eid subject-eid
      :desc? (boolean desc?)
      :traversal traversal
+     ;; Forward walks grant through wildcard variants; a reverse walk emits
+     ;; the wildcard subject itself and judges witnesses by own tuples.
+     :wildcards? (not= :reverse traversal)
+     :wildcard-plan? (boolean (some sealed-plan/wildcard-variant? (:rules plan)))
      :candidate-accept? (if legacy-qualified? (legacy-node-acceptor options) candidate-accept?)
      :qualification qualification
      ;; Internal positive covers preserve possible candidates. Public callers
@@ -1263,6 +1327,12 @@
      :route-opts (select-keys options reducer/run-option-keys)}))
 
 (defn- run-page
+  "Consumes emissions until the page and its sentinel are full. A public page
+   fails on a consumed candidate whose complete decision faults in some
+   completion, before applying its result policy, so the policy only selects
+   which decided items are shown. Raw candidates go to a caller that composes
+   them further (an operator predicate or a relationship filter): they keep
+   every possibly active candidate, faults included, and decide nothing."
   [env level next-fn page-size raw-candidates?]
   (loop [level level
          emissions []]
@@ -1278,13 +1348,17 @@
       (let [[emission level'] (next-fn env level)]
         (if (nil? emission)
           {:emissions emissions :has-more? false :exhausted? true}
-          (do (vswap! (:counters (:ctx env)) update :emissions inc)
-              (recur level'
-                     (if (and (:qualification env)
-                              (= :definite (:result-policy env))
-                              (not (evidence/has? (get emission :evidence true))))
-                       emissions
-                       (conj emissions emission)))))))))
+          (let [value (get emission :evidence true)]
+            (vswap! (:counters (:ctx env)) update :emissions inc)
+            (when (and (:qualification env) (not raw-candidates?))
+              (evidence/throw-if-fault! value))
+            (recur level'
+                   (if (and (:qualification env)
+                            (not raw-candidates?)
+                            (= :definite (:result-policy env))
+                            (not (evidence/has? value)))
+                     emissions
+                     (conj emissions emission)))))))))
 
 (defn forward-page
   "One least-path page of root entities for the subject.

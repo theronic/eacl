@@ -1,0 +1,21 @@
+{:id :EACL-FORMAL-074
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "closed-known-key-map/missing-subject-dispatched-to-reader"
+ :minimized-fixture "fixture.edn"
+ :impact :fail-open
+ :affected-versions
+ ["v8.0 pre-release before required public read-field validation"]
+ :affected-backends
+ [:shared :third-party]
+ :root-cause
+ "The public read boundary rejected unknown map keys but did not require the keys mandatory for each operation. Incomplete demands therefore crossed the IAuthorizationReader protocol boundary, where a third-party or remote reader could assign unsafe default or wildcard semantics."
+ :fix
+ "Require every scalar operation's endpoint and schema-name fields, fully validate batch demands, relationship-scan anchors and authorization clauses, and nested lookup relationship clauses before protocol dispatch; extend the Dafny closed-request model and bind it to an executed production mutation and protocol-level regressions."
+ :closing-evidence
+ ["PublicRequestBoundary.OpenRequestAcceptsMissingRequiredIdentity"
+  "PublicRequestBoundary.ClosedRequestRejectsMissingRequiredIdentity"
+  "eacl.formal.executed-mutation-controls/missing-required-read-field-killed?"
+  "eacl.core-test/missing-public-read-keys-fail-before-dispatch-test"
+  "eacl.core-test/public-reader-extensions-receive-only-validated-request-shapes-test"]}

@@ -32,11 +32,11 @@ The implementation includes automatic fallback to regular Datalog queries when i
   (map #(d/entity db (:e %)) datoms)
   ;; Fallback to regular query
   (d/q '[:find [?e ...]
-        :in $ ?subject ?rel
-        :where
-        [?e :eacl.relationship/subject ?subject]
-        [?e :eacl.relationship/relation-name ?rel]]
-      db subject-eid rel-name))
+         :in $ ?subject ?rel
+         :where
+         [?e :eacl.relationship/subject ?subject]
+         [?e :eacl.relationship/relation-name ?rel]]
+       db subject-eid rel-name))
 ```
 
 #### Recursion for Arrow Permissions
@@ -102,4 +102,4 @@ The implementation correctly handles:
 
 ## Conclusion
 
-The index-range optimization has been successfully implemented with appropriate fallbacks for compatibility. The implementation maintains correctness while providing significant performance improvements for production use cases with proper indices. 
+The index-range optimization has been successfully implemented with appropriate fallbacks for compatibility. The implementation maintains correctness while providing significant performance improvements for production use cases with proper indices.

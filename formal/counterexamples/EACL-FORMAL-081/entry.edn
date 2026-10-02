@@ -1,0 +1,24 @@
+{:id :EACL-FORMAL-081
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace "eacl-rust/port-campaign/EACL-RS-005"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions ["v8.0.0"]
+ :affected-backends [:shared :datomic :datascript :datahike]
+ :root-cause
+ "expand-permission-tree scanned :resource->subjects without :include-qualifier? true. Every bundled backend's endpoint scan then rejects a stored value that carries a qualifier reference with :eacl/unsupported-qualifier, and adapter-call! replaced that error with :eacl.permission-tree/adapter-contract-violation :adapter-operation-failed. Caveated and expiring Relationships both carry a qualifier, so any expansion that scanned a Relation holding one failed, whether the row was live or expired, in a leaf or in an arrow's source Relation."
+ :fix
+ "scan-relation! opts into compact qualified scans and renders each edge's endpoint. A qualified edge is decoded with qualification/inspect, the read-relationships decoder, and its :caveat, :caveat-context (omitted when empty) and :valid-until-ms are merged into the leaf subject or into the arrow child node it reached. Nothing is evaluated and no clock is read, so the tree stays a function of the selected basis, which the answer key already assumes. Decode faults surface as :eacl.qualifier/invalid or :eacl.caveat/invalid with only their reason keyword; other adapter errors stay redacted contract violations; a qualified row without a qualification request is :eacl/unsupported-capability. The completed-answer validator admits the canonical annotation keys."
+ :closing-evidence
+ ["eacl.datascript.qualified-write-test/eacl-rs-005-expansions-list-expiring-and-caveated-relationships"
+  "eacl.datascript.qualified-write-test/permission-trees-list-qualified-relationships-without-evaluating-them"
+  "eacl.datomic.qualified-write-test/permission-trees-list-qualified-relationships-without-evaluating-them"
+  "eacl.datahike.qualified-write-test/permission-trees-list-qualified-relationships-without-evaluating-them"
+  "eacl.permission-tree-test/qualified-leaf-subjects-carry-their-stored-qualifiers-test"
+  "eacl.permission-tree-test/qualified-arrow-edges-annotate-only-the-arrow-child-test"
+  "eacl.permission-tree-test/qualified-trees-match-the-annotating-reference-test"
+  "eacl.permission-tree-test/qualifier-decode-faults-are-typed-and-redacted-test"
+  "eacl.formal.qualified.production-mutations/production-mutations-are-killed-by-conformance-gates"]
+ :notes
+ "Known before as PR206-F1 for caveated rows; the eacl-rust port found that expiring rows, live or expired, fail the same way (EACL-RS-005, https://github.com/theronic/eacl-rust/blob/main/BUGS.md), and that a qualified arrow-source edge breaks every arrow over it. Datalevin shares the shape and runs the shared contract in its module suite. The annotation keys and their positions follow the eacl-rust port's spec 14 option B."}

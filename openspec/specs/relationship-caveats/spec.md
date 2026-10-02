@@ -35,11 +35,21 @@ Schema admission SHALL parse Caveat declarations, require a Boolean result in th
 
 #### Scenario: Unsupported construct or type
 - **WHEN** a Caveat uses a CEL construct, function, overload, or type outside the versioned profile
-- **THEN** schema validation fails with a typed profile error
+- **THEN** schema validation fails with `:eacl.schema/unsupported-feature` and a `:caveat-profile` issue when SpiceDB accepts the Caveat, and with `:eacl.caveat/invalid` when SpiceDB rejects it
 
 #### Scenario: Non-Boolean root
 - **WHEN** a Caveat expression cannot produce Boolean permissionship
 - **THEN** schema validation rejects it
+
+#### Scenario: Member access is a bounded string literal
+- **WHEN** a Caveat indexes a map as `m.name` with a name longer than the 4096-byte string bound
+- **THEN** compiling its plan fails with `:eacl.caveat/invalid :reason :resource-limit`, as it does for `m["name"]`, and schema validation, since SpiceDB accepts the expression, fails with `:eacl.schema/unsupported-feature` and a `:caveat-profile` issue with `:profile-reason :resource-limit`
+- **AND** every admitted Caveat's plan passes the plan validation that each evaluation repeats
+
+#### Scenario: Stored source is the CEL expression SpiceDB compiles
+- **WHEN** a Caveat body has whitespace or comments before its first token or after its last
+- **THEN** the stored expression source is the body text from its first token to its last, as SpiceDB passes it to CEL, whatever those comments contain
+- **AND** a `//` comment inside the expression is kept in the source, while a `/* */` comment inside it is rejected with `:eacl.caveat/invalid`, as CEL rejects it
 
 ### Requirement: Relation branches explicitly allow Caveats
 A Relation subject branch SHALL declare which Caveat may qualify a Relationship. A Relationship may carry zero or one Caveat, and the stored Caveat MUST be allowed for its resolved Relation branch.

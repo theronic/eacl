@@ -1,0 +1,287 @@
+(ns eacl.datascript.set-algebra-reuse-differential-test
+  "Cache-on/cache-off differential for set-algebra result reuse. Each case
+  has a random schema of operator permissions and a guarded member over
+  relationships that are plain, expiring or caveated. One caching client
+  serves random walks (definite and detailed, paged), counts and checks under
+  random caveat contexts while a clock advances past the relationships'
+  deadlines, and midway the client is replaced by one restored from its
+  exported cache. Every result must equal the same request with `:cache?
+  false` at the same time."
+  (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is testing]]
+            [clojure.string :as str]
+            [datascript.core :as ds]
+            [eacl.authorization.qualification-test :as qualification-fixtures]
+            [eacl.core :as eacl]
+            [eacl.datascript.core :as datascript]
+            [eacl.datascript.qualifiers :as qualifiers]
+            [eacl.engine.leveled-membership-refinement-test :as leveled]
+            [eacl.engine.memoized-membership-refinement-test :as plain]
+            [eacl.engine.stable-route :as stable-route]
+            [eacl.relationships.staged :as staged]))
+
+(def ^:private users ["u0" "u1"])
+
+(def ^:private operator-templates
+  "Operator permissions over the recursive union-only `granted` and
+  `readable`: intersections, an exclusion, unions at an operator's root, and
+  an arrow to an operator permission."
+  [[:removable "granted & readable"]
+   [:removable_top "deleter + (granted & readable)"]
+   [:prunable "granted - readable"]
+   [:either "(granted + readable) & (reader + deleter + eligible)"]
+   [:gated "eligible & readable"]
+   [:parent_removable "deleter + parent->removable"]])
+
+(def ^:private guarded-templates
+  "Members that recurse through a linear guard."
+  ["reader + (parent->guarded & eligible)"
+   "reader + (parent->guarded - blocked)"
+   "owner + reader + ((parent->guarded & eligible) - blocked)"])
+
+(def ^:private consulting-templates
+  "Members whose guards or witnesses consult another permission, directly or
+  through an arrow: the member `banned`, which a subtracted grant keeps false
+  only until that grant expires, or a union-only permission."
+  [[:kept "reader + (parent->kept - banned)"]
+   [:reach "banned + link->reach"]
+   [:backed "reader + (parent->backed & banned)"]
+   [:unbanned "reader + (link->unbanned - parent->banned)"]
+   [:unread "reader + (parent->unread - readable)"]
+   [:vouched "owner + (link->vouched & parent->granted)"]])
+
+(defn- random-program [state]
+  (let [chosen (filterv (fn [_] (plain/chance? state 60)) operator-templates)
+        chosen (if (seq chosen) chosen [(first operator-templates)])
+        ;; `parent_removable` reads `removable`.
+        chosen (if (and (some #{:parent_removable} (map first chosen))
+                        (not (some #{:removable} (map first chosen))))
+                 (conj chosen (first operator-templates))
+                 chosen)]
+    (into {:guarded (plain/pick state guarded-templates)} chosen)))
+
+(defn- random-consulting-program [state]
+  (let [chosen (filterv (fn [_] (plain/chance? state 50)) consulting-templates)]
+    (into {:banned "owner + (parent->banned - blocked)"}
+          (if (seq chosen) chosen [(first consulting-templates)]))))
+
+(defn- render-schema [program & extra-relations]
+  (str "caveat enabled(flag bool) { flag }\n"
+       "definition user {}\n"
+       "definition folder {\n"
+       "  relation parent: folder\n"
+       (apply str (for [relation extra-relations] (str "  relation " relation "\n")))
+       "  relation reader: user\n"
+       "  relation owner: user\n"
+       "  relation deleter: user\n"
+       "  relation eligible: user\n"
+       "  relation blocked: user\n"
+       "  permission readable = reader + parent->readable\n"
+       "  permission granted = deleter + parent->granted\n"
+       (apply str (for [[permission body] (sort-by key program)]
+                    (str "  permission " (name permission) " = " body "\n")))
+       "}\n"))
+
+(defn- random-relationships [state folders]
+  (vec
+   (distinct
+    (concat
+     (for [child folders parent folders :when (plain/chance? state 25)]
+       [:folder parent :parent :folder child])
+     (for [folder folders user users
+           relation [:reader :owner :deleter :eligible :blocked]
+           :when (plain/chance? state 25)]
+       [:user user relation :folder folder])))))
+
+(defn- random-consulting-relationships
+  "A parent chain, so a grant or ban on one folder reaches the folders below
+  it, random links, and dense grants: a member's decision often rests on
+  another's, and on a ban that expires."
+  [state folders]
+  (vec
+   (distinct
+    (concat
+     (for [[parent child] (partition 2 1 folders)]
+       [:folder parent :parent :folder child])
+     (for [child folders other folders :when (plain/chance? state 15)]
+       [:folder other :link :folder child])
+     (for [folder folders user users
+           relation [:reader :owner :deleter :blocked]
+           :when (plain/chance? state 40)]
+       [:user user relation :folder folder])))))
+
+(def ^:private operand-shapes
+  "Operator permissions over two union-only operands, and one member guarded
+  by relations."
+  {:program random-program
+   :schema render-schema
+   :relationships random-relationships})
+
+(def ^:private consulting-shapes
+  "Guarded members that consult other permissions."
+  {:program random-consulting-program
+   :schema #(render-schema % "link: folder")
+   :relationships random-consulting-relationships})
+
+(def ^:private caveatable #{:reader :eligible :blocked})
+
+(defn- store!
+  "A DataScript store with the case's schema and relationships, each written
+  with a random qualifier: plain, already expired, expiring at 1100, 1200 or
+  1300, or, on the caveatable relations, caveated."
+  [state schema folders relationships]
+  (let [conn (datascript/create-conn)
+        writer-client (datascript/make-client conn {})]
+    (eacl/write-schema! writer-client schema)
+    (ds/transact! conn (mapv #(hash-map :eacl/id %) (concat users folders)))
+    (let [db (ds/db conn)
+          eid #(ds/entid db [:eacl/id %])
+          relation-eid (fn [relation subject-type]
+                         (ds/entid db [:eacl.relation/resource-type+relation-name+subject-type
+                                       [:folder relation subject-type]]))
+          caveat (ds/entid db [:eacl.caveat/name "enabled"])
+          writer (qualifiers/writer conn)]
+      (ds/transact! conn (vec (for [relation caveatable]
+                                {:db/id (relation-eid relation :user)
+                                 :eacl.relation/caveats [caveat]
+                                 :eacl.relation/allows-unqualified? true})))
+      (doseq [[subject-type subject relation resource-type resource] relationships]
+        (staged/write! writer :create
+                       [subject-type (eid subject) (relation-eid relation subject-type)
+                        resource-type (eid resource)]
+                       (leveled/random-qualifier
+                        state (and (= :user subject-type) (contains? caveatable relation)) caveat)))
+      conn)))
+
+(defn- walk
+  "Every item of a complete walk, page by page."
+  [client query]
+  (loop [after nil items []]
+    (let [page (eacl/lookup-resources client (cond-> query after (assoc :after after)))
+          items (into items (:data page))]
+      (if (get-in page [:page-info :has-next-page?])
+        (recur (get-in page [:page-info :end-cursor]) items)
+        items))))
+
+(defn- decision [result]
+  (select-keys result [:permissionship :missing-fields :residual]))
+
+(defn- random-request
+  "One request as `(fn [client cache?] result)`, with a description."
+  [state permissions folders]
+  (let [subject (eacl/spice-object :user (plain/pick state users))
+        permission (plain/pick state permissions)
+        context (plain/pick state [{} {"flag" true} {"flag" false}])]
+    (case (plain/next-int! state 3)
+      0 (let [query {:subject subject :permission permission :resource/type :folder
+                     :first (plain/pick state [1 2 100]) :caveat-context context
+                     :result-policy (plain/pick state [:definite :detailed])}]
+          [[:walk query] (fn [client cache?] (walk client (assoc query :cache? cache?)))])
+      1 (let [query {:subject subject :permission permission :caveat-context context
+                     :resource (eacl/spice-object :folder (plain/pick state folders))}]
+          [[:check query]
+           (fn [client cache?] (decision (eacl/check-permission client (assoc query :cache? cache?))))])
+      2 (let [query {:subject subject :permission permission :resource/type :folder
+                     :caveat-context context}]
+          [[:count query]
+           (fn [client cache?] (:count (eacl/count-resources client (assoc query :cache? cache?))))]))))
+
+(defn- denotation-hits [client]
+  (get-in (datascript/cache-stats client) [:subproblems :denotation-hits] 0))
+
+(defn run-case
+  "Runs one seeded case of `shapes` (by default `operand-shapes`); returns its
+  counters, with `:failure` on the first divergence."
+  [seed & [shapes]]
+  (let [shapes (or shapes operand-shapes)
+        state (atom seed)
+        program ((:program shapes) state)
+        schema ((:schema shapes) program)
+        folders (mapv #(str "f" %) (range (+ 3 (plain/next-int! state 4))))
+        conn (store! state schema folders ((:relationships shapes) state folders))
+        clock (atom 1000)
+        options {:clock #(deref clock)
+                 :caveat-evaluator (qualification-fixtures/portable-evaluator (atom 0))}
+        permissions (into [:readable :granted] (keys program))
+        steps (+ 20 (plain/next-int! state 20))
+        restore-at (quot steps 2)
+        membership (atom {})]
+    (binding [stable-route/*membership-stats* membership]
+      (loop [step 0
+             client (datascript/make-client conn options)
+             counters {:requests 0 :restores 0 :hits 0}]
+        (cond
+          (= step steps)
+          (-> counters
+              (update :hits + (denotation-hits client))
+              (assoc :reused (:reused @membership 0)))
+
+          (= step restore-at)
+          (let [bounds {:max-entries 4096}
+                snapshot (datascript/export-cache-snapshot client bounds)
+                restored (datascript/make-client conn options)]
+            (datascript/restore-cache-snapshot! restored snapshot bounds)
+            (recur (inc step) restored
+                   (-> counters
+                       (update :hits + (denotation-hits client))
+                       (update :restores inc))))
+
+          :else
+          (do
+            (when (plain/chance? state 30)
+              (swap! clock + (plain/pick state [1 50 100 150 250])))
+            (let [[description request] (random-request state permissions folders)
+                  outcome (fn [cache?]
+                            (try (request client cache?)
+                                 (catch #?(:clj Exception :cljs :default) error
+                                   [:error (:type (ex-data error))])))
+                  cached (outcome true)
+                  fresh (outcome false)]
+              (if (= fresh cached)
+                (recur (inc step) client (update counters :requests inc))
+                {:failure {:seed seed :step step :time @clock :request description
+                           :cached cached :fresh fresh :schema schema}}))))))))
+
+(defn run-campaign
+  "Runs cases of `shapes` seeded `first-seed`..; stops at the first
+  divergence, returned under `:failure`."
+  [first-seed cases & [shapes]]
+  (reduce (fn [totals seed]
+            (let [result (run-case seed shapes)]
+              (if-let [failure (:failure result)]
+                (reduced (assoc totals :failure failure))
+                (-> (merge-with + totals result) (update :cases inc)))))
+          {:cases 0}
+          (range first-seed (+ first-seed cases))))
+
+(deftest conditional-result-keeps-the-fresh-point-certificate-test
+  ;; Seed 386 first exposed a batched operand with a wider decisive
+  ;; certificate being reused by the point reconstruction of a conditional
+  ;; operator result.  Permissionship stayed conditional, but the cached
+  ;; public residual lost its 1300 deadline and differed from cache-free
+  ;; execution on the very first request.
+  (let [result (run-case 386)]
+    (is (nil? (:failure result)) (pr-str (:failure result)))))
+
+(deftest cached-check-reconstructs-the-fresh-point-certificate-test
+  ;; Seed 3217 reaches a point check after a prior walk cached a different,
+  ;; still-sound certificate for one recursive operand.  The public check
+  ;; must reconstruct the point evaluator's residual instead of exposing the
+  ;; walk evaluator's certificate.
+  (let [result (run-case 3217)]
+    (is (nil? (:failure result)) (pr-str (:failure result)))))
+
+(deftest cached-results-equal-fresh-results-test
+  (let [report (run-campaign 1 #?(:clj 40 :cljs 8))]
+    (is (nil? (:failure report)) (pr-str (:failure report)))
+    (testing "the campaign reuses operand and operator decisions, and restores"
+      (is (pos? (:hits report)))
+      (is (pos? (:reused report)))
+      (is (pos? (:restores report))))))
+
+(deftest cached-consulting-decisions-equal-fresh-results-test
+  ;; A guarded member that consults another permission reuses nothing past
+  ;; the deadline of what it consulted, including another member's false
+  ;; that ends when a subtracted grant expires.
+  (let [report (run-campaign 1 #?(:clj 40 :cljs 8) consulting-shapes)]
+    (is (nil? (:failure report)) (pr-str (:failure report)))
+    (is (pos? (:hits report)))))

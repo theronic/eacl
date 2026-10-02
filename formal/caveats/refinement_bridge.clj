@@ -18,6 +18,14 @@
                         (not= ::absent context) (assoc :caveat-context context))]]
     (is (= (model/normalized-qualifier input) (actual-normalization input)))))
 
+(deftest profile-identity-and-names-refine-model
+  (is (= (:profile model/profile) values/profile-id))
+  (is (= (:definition-profiles model/profile) values/definition-profiles))
+  (is (= (set (:reserved-identifiers model/profile)) @#'values/reserved-names))
+  (doseq [name (concat (:reserved-identifiers model/profile)
+                       [(:accumulator-identifier model/profile) "__eacl_v" "x" "_1" "a-b" ""])]
+    (is (= (model/variable-name? name) (values/variable-name? name)) name)))
+
 (deftest context-precedence-refines-model
   (doseq [request [nil true false] bound [nil true false]
           :let [r (if (nil? request) {} {"a" request})

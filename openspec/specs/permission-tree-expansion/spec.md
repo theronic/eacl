@@ -19,7 +19,7 @@ Defines EACL's snapshot-consistent, bounded shallow permission-tree introspectio
 - **THEN** EACL rejects it because Authzed expansion requires an object reference rather than a subject reference
 
 ### Requirement: Success returns an explicit PermissionRelationshipTree mapping
-A successful call SHALL return `{:expanded-at token :tree-root node}`. `token` SHALL be an authenticated EACL causal token for the selected snapshot. Every node SHALL contain `:expanded-object` as a `SpiceObject`, `:expanded-relation` as a keyword, and exactly one of `:intermediate` or `:leaf`. An intermediate value SHALL be `{:operation :union :children [...]}` and a leaf value SHALL be `{:subjects [...]}` containing `SpiceObject` subject references.
+A successful call SHALL return `{:expanded-at token :tree-root node}`. `token` SHALL be an authenticated EACL causal token for the selected snapshot. Every node SHALL contain `:expanded-object` as a `SpiceObject`, `:expanded-relation` as a keyword, and exactly one of `:intermediate` or `:leaf`. An intermediate value SHALL be `{:operation :union :children [...]}` and a leaf value SHALL be `{:subjects [...]}` containing `SpiceObject` subject references. A leaf subject or arrow child node reached through a qualified Relationship SHALL additionally carry that Relationship's qualifier keys, and no other node SHALL carry them.
 
 #### Scenario: Direct relation response
 - **WHEN** a defined direct relation is expanded
@@ -32,6 +32,29 @@ A successful call SHALL return `{:expanded-at token :tree-root node}`. `token` S
 #### Scenario: Node oneof invariant
 - **WHEN** EACL publishes any tree node
 - **THEN** that node has one and only one tree variant and contains no backend entity id or private unresolved marker
+
+### Requirement: Qualified Relationships are listed with their stored qualifiers
+Expansion SHALL scan stored Relationships with their qualifier references and list every stored Relationship, caveated, expiring, expired, or plain. The leaf subject, or the arrow child node, reached through a qualified Relationship SHALL carry `:caveat` (the Caveat name), `:caveat-context` (only when non-empty), and `:valid-until-ms` (only when present), decoded by the same inspector and with the same omission rules as `read-relationships`. Expansion MUST NOT evaluate a Caveat or read the evaluation clock, so its tree SHALL depend only on the selected basis and the request. A stored qualifier that cannot be decoded SHALL fail the request with `:eacl.qualifier/invalid` or `:eacl.caveat/invalid` carrying only `:reason` and `:operation`; a qualified Relationship reached without an available qualification request SHALL fail with `:eacl/unsupported-capability`.
+
+#### Scenario: Expiring direct Relationship
+- **WHEN** a relation holds a plain Relationship and an expiring Relationship whose deadline has passed
+- **THEN** its leaf lists both subjects and the expired subject carries its `:valid-until-ms`
+
+#### Scenario: Caveated direct Relationship
+- **WHEN** a relation holds a Relationship with a Caveat and bound context
+- **THEN** its leaf subject carries `:caveat` and `:caveat-context`, and no Caveat program runs
+
+#### Scenario: Qualified arrow source
+- **WHEN** an arrow's source relation reaches an intermediate object through an expiring or caveated Relationship
+- **THEN** the arrow child node for that object carries the qualifier keys and its own children carry none on account of that edge
+
+#### Scenario: Deadline passes after expansion
+- **WHEN** the same basis is expanded before and after a listed Relationship's deadline, with the answer cache enabled or disabled
+- **THEN** the two trees are equal
+
+#### Scenario: Undecodable stored qualifier
+- **WHEN** a scanned Relationship's qualifier fails strict decoding
+- **THEN** expansion fails with the typed qualifier error, without the qualifier id, eids, context values, or a cause, and returns no partial tree
 
 ### Requirement: Expansion follows SpiceDB shallow semantics for the EACL schema subset
 Expansion SHALL recursively follow normalized permission union components, same-resource relation references, same-resource permission references, and supported single-level arrows. Direct relation subjects SHALL remain terminal leaf entries. The type of every arrow intermediate SHALL come from its concrete source-relation definition, so equal backend ids under different object types remain distinct.
@@ -147,14 +170,14 @@ Actual scanned internal ids SHALL be externalized through the selected adapter e
 - **THEN** EACL reports an adapter-contract violation instead of choosing an interpretation
 
 ### Requirement: SpiceDB compatibility is scoped and reproducible
-For EACL-supported union, same-resource reference, and single-level arrow schemas using SpiceDB-valid string object ids, shallow tree topology, expanded annotations, empty branches, duplicate multiplicity, and direct-subject membership SHALL equal the response captured from a version-pinned SpiceDB Docker image after mechanical field conversion and unordered-multiset normalization. Authzed features rejected by EACL schema validation, non-string custom ids, token byte equality, incidental vector order, error-code identity, and resource-limit timing SHALL remain outside the equivalence claim.
+For EACL-supported union, same-resource reference, and single-level arrow schemas using SpiceDB-valid string object ids, shallow tree topology, expanded annotations, empty branches, duplicate multiplicity, and direct-subject membership SHALL equal the response captured from a version-pinned SpiceDB Docker image after mechanical field conversion and unordered-multiset normalization. Authzed features rejected by EACL schema validation, caveated and expiring Relationships with their qualifier keys, non-string custom ids, token byte equality, incidental vector order, error-code identity, and resource-limit timing SHALL remain outside the equivalence claim.
 
 #### Scenario: Provenance-bearing golden fixture
 - **WHEN** a supported fixture records its schema, relationships, request, Docker image tag and digest, and raw protobuf JSON response
 - **THEN** mechanical normalization of its tree equals every shipped backend's result
 
 #### Scenario: Unsupported feature
-- **WHEN** a schema contains intersection, exclusion, subject relations, caveats, wildcards, `.all`, multi-level arrows, or another already rejected feature
+- **WHEN** a schema contains intersection, exclusion, subject relations, wildcards, `.all`, multi-level arrows, or another already rejected feature
 - **THEN** expansion does not weaken schema validation or claim SpiceDB equivalence for it
 
 #### Scenario: Custom id extension

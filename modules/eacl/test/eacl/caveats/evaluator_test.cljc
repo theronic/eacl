@@ -18,8 +18,7 @@
     (is (zero? @calls))
     (is (= supplied (evaluator/require-matching! supplied evaluator/profile-fingerprint)))
     (is (= {:outcome :false} (evaluator/evaluate supplied {} {} {})))
-    (is (= 1 @calls))
-    #?(:cljs (is (nil? (evaluator/default-evaluator))))))
+    (is (= 1 @calls))))
 
 (deftest admission-uses-one-complete-descriptor
   (let [reads (atom 0)

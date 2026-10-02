@@ -36,7 +36,7 @@ Most selective clauses should execute first, but current rules often start with 
      ;; Direct relationship - most common case
      [(tuple ?resource ?subject) ?resource+subject]
      [?relationship :eacl.relationship/resource+subject ?resource+subject]]
-    
+
     [(reachable ?resource ?subject)
      ;; Indirect relationship - use tuple for first hop
      [(tuple ?resource ?mid) ?resource+mid]
@@ -49,10 +49,10 @@ Most selective clauses should execute first, but current rules often start with 
      ;; Start with the most selective tuple lookup
      [(tuple ?resource ?relation-name ?subject) ?rel-tuple]
      [?relationship :eacl.relationship/resource+relation-name+subject ?rel-tuple]
-     
+
      ;; Get resource type from the resource entity (already have it)
      [?resource :resource/type ?resource-type]
-     
+
      ;; Now lookup permission definition
      [(tuple ?resource-type ?relation-name ?permission-name) ?perm-tuple]
      [?perm-def :eacl.permission/resource-type+relation-name+permission-name ?perm-tuple]]
@@ -61,15 +61,15 @@ Most selective clauses should execute first, but current rules often start with 
     [(has-permission ?subject ?permission-name ?resource)
      ;; Get resource type first (we already have the resource)
      [?resource :resource/type ?resource-type]
-     
+
      ;; Find permission definitions for this resource type
      [(tuple ?resource-type ?relation-name ?permission-name) ?perm-tuple]
      [?perm-def :eacl.permission/resource-type+relation-name+permission-name ?perm-tuple]
-     
+
      ;; Find structural relationships where resource is the subject
      [(tuple ?target ?relation-name ?resource) ?struct-tuple]
      [?structural-rel :eacl.relationship/resource+relation-name+subject ?struct-tuple]
-     
+
      ;; Check reachability last
      (reachable ?target ?subject)]
 
@@ -77,15 +77,15 @@ Most selective clauses should execute first, but current rules often start with 
     [(has-permission ?subject ?perm-name-on-this-resource ?this-resource)
      ;; Get resource type from the resource we already have
      [?this-resource :resource/type ?this-resource-type]
-     
+
      ;; Find arrow permission definitions using tuple
      [(tuple ?this-resource-type ?via-relation ?perm-on-related ?perm-name-on-this-resource) ?arrow-tuple]
      [?arrow-perm :eacl.arrow-permission/resource-type+source-relation-name+target-permission-name+permission-name ?arrow-tuple]
-     
+
      ;; Find intermediate resource using tuple index
      [(tuple ?this-resource ?via-relation ?intermediate-resource) ?link-tuple]
      [?rel-linking :eacl.relationship/resource+relation-name+subject ?link-tuple]
-     
+
      ;; Recursive permission check
      (has-permission ?subject ?perm-on-related ?intermediate-resource)]])
 ```
@@ -100,32 +100,32 @@ Most selective clauses should execute first, but current rules often start with 
      [?relationship :eacl.relationship/subject ?subject]
      [?relationship :eacl.relationship/relation-name ?relation]
      [?relationship :eacl.relationship/resource ?resource]]
-    
+
     ;; Direct permission check - subject-centric
     [(has-permission ?subject ?permission ?resource-type ?resource)
      ;; Start from subject's relationships
      (subject-has-relationships ?subject ?relation ?resource)
-     
+
      ;; Check if resource is of correct type
      [?resource :resource/type ?resource-type]
-     
+
      ;; Check if relation grants permission
      [(tuple ?resource-type ?relation ?permission) ?perm-tuple]
      [?perm :eacl.permission/resource-type+relation-name+permission-name ?perm-tuple]]
-    
+
     ;; Indirect via arrow permissions
     [(has-permission ?subject ?permission ?resource-type ?resource)
      ;; Find resources of the target type
      [?resource :resource/type ?resource-type]
-     
+
      ;; Find arrow permissions for this resource type
      [(tuple ?resource-type ?via-relation ?target-perm ?permission) ?arrow-tuple]
      [?arrow :eacl.arrow-permission/resource-type+source-relation-name+target-permission-name+permission-name ?arrow-tuple]
-     
+
      ;; Find intermediate resources linked to this resource
      [(tuple ?resource ?via-relation ?intermediate) ?link-tuple]
      [?link :eacl.relationship/resource+relation-name+subject ?link-tuple]
-     
+
      ;; Check if subject has permission on intermediate
      (has-permission ?subject ?target-perm ?intermediate-type ?intermediate)
      [?intermediate :resource/type ?intermediate-type]]])
@@ -166,7 +166,7 @@ Most selective clauses should execute first, but current rules often start with 
   [db {:keys [resource/type subject permission limit offset]}]
   (let [{subject-id :id} subject
         subject-eid (:db/id (d/entity db [:entity/id subject-id]))
-        
+
         ;; Stage 1: Find direct relationships
         direct-resources
         (d/q '[:find [?resource ...]
@@ -183,7 +183,7 @@ Most selective clauses should execute first, but current rules often start with 
                [?perm :eacl.permission/relation-name ?relation]
                [?perm :eacl.permission/permission-name ?permission]]
              db subject-eid type permission)
-        
+
         ;; Stage 2: Find via arrow permissions (if needed)
         arrow-resources
         (when (< (count direct-resources) (or limit 100))
@@ -204,13 +204,13 @@ Most selective clauses should execute first, but current rules often start with 
                  ;; (This would need to be a separate query or rule)
                  ]
                db subject-eid type permission))
-        
+
         ;; Stage 3: Combine and paginate
         all-resources (distinct (concat direct-resources (or arrow-resources [])))
         paginated (cond->> all-resources
-                          offset (drop offset)
-                          limit (take limit))]
-    
+                    offset (drop offset)
+                    limit (take limit))]
+
     (->> paginated
          (map #(d/entity db %))
          (map entity->spice-object))))
@@ -249,25 +249,25 @@ Most selective clauses should execute first, but current rules often start with 
 (defn performance-tests [db]
   ;; Direct permission check
   (measure-performance db "can? direct"
-    #(can? db (->user "user1") :view (->server "server1")))
-  
+                       #(can? db (->user "user1") :view (->server "server1")))
+
   ;; Arrow permission check
   (measure-performance db "can? arrow"
-    #(can? db (->user "user1") :admin (->vpc "vpc1")))
-  
+                       #(can? db (->user "user1") :admin (->vpc "vpc1")))
+
   ;; Lookup resources - small result set
   (measure-performance db "lookup-resources small"
-    #(lookup-resources db {:resource/type :server
-                          :permission :view
-                          :subject (->user "user1")
-                          :limit 10}))
-  
+                       #(lookup-resources db {:resource/type :server
+                                              :permission    :view
+                                              :subject       (->user "user1")
+                                              :limit         10}))
+
   ;; Lookup resources - large result set
   (measure-performance db "lookup-resources large"
-    #(lookup-resources db {:resource/type :server
-                          :permission :view
-                          :subject (->user "super-user")
-                          :limit 100})))
+                       #(lookup-resources db {:resource/type :server
+                                              :permission    :view
+                                              :subject       (->user "super-user")
+                                              :limit         100})))
 ```
 
 ## Expected Performance Improvements
@@ -281,4 +281,4 @@ The key insight is to leverage Datomic's strengths:
 1. Use composite tuples for multi-attribute lookups
 2. Start queries from the most selective point
 3. Minimize full table scans
-4. Push filtering as early as possible in the query 
+4. Push filtering as early as possible in the query

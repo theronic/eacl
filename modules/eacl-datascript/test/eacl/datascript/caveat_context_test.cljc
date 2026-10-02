@@ -52,7 +52,9 @@
       (let [snapshot (eacl/snapshot client)]
         (try
           (doseq [target [client snapshot]
-                  input [{"flag" true "unused" 3} {"flag" false} {}]
+                  input [{"flag" true "unused" 3} {"flag" false} {}
+                         (sorted-map "flag" false) (sorted-map)
+                         #?(:clj {"flag" (Boolean. false)} :cljs {"flag" true})]
                   operation (operations data target input)]
             (reset! prepared [])
             (reset! seen [])

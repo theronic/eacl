@@ -1,0 +1,10 @@
+{:compile-plan
+ {:type :eacl.caveat/invalid :reason :resource-limit :offset 2}
+ :schema-write
+ {:type :eacl.schema/unsupported-feature
+  :issues [{:type :caveat-profile :caveat "longfield" :reason :profile
+            :profile-reason :resource-limit :offset 2}]}
+ :member-and-quoted-forms-share-one-bound true
+ :member-at-bound {:utf8-bytes 4096 :compiles true :validate-plan :passes
+                   :outcome-with-key :true :outcome-without-key :missing-map-key}
+ :every-compiled-plan-passes-validate-plan true}

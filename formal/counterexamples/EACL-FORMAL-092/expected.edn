@@ -1,0 +1,10 @@
+{:first-failing-declaration-in-source-order-wins true
+ :results
+ {["caveat c" "caveat c" "caveat d invalid"] :eacl.schema/duplicate-caveat
+  ["caveat d invalid" "caveat c" "caveat c"] :eacl.caveat/invalid
+  ["definition doc" "definition doc" "definition other dup-relation"] :eacl.schema/duplicate-definition
+  ["definition other dup-relation" "definition doc" "definition doc"] :eacl.schema/duplicate-relation
+  ["definition doc" "definition doc" "caveat d invalid"] :eacl.schema/duplicate-definition
+  ["caveat d invalid" "definition doc" "definition doc"] :eacl.caveat/invalid}
+ :independent-of-leading-declarations true
+ :within-one-declaration "its own errors precede its duplicate-name check"}

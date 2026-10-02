@@ -6,8 +6,8 @@ This plan treats direct relationship reads as a first-class indexed API rather
 than a seq-producing helper. `eacl/read-relationships` will return:
 
 ```clojure
-{:data [Relationship ...]
- :cursor "eacl1_..." | nil}
+{:data   [Relationship ...]
+ :cursor "eacl1_..."        | nil}
 ```
 
 with a default `:limit` of `1000`. The implementation must remove all

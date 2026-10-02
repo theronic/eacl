@@ -4,6 +4,9 @@ EACL's checked-in manifest is `:conditionally-verified`. A proof run, generated
 artifact build, differential suite, or maintainer review cannot by itself change
 that status to `:externally-certified`.
 
+This procedure applies to a later, optional external-certification stage.
+Independent review is not a current release obligation.
+
 ## Required review basis
 
 The certifier MUST start from one named Git commit in a clean checkout and MUST

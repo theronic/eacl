@@ -6,19 +6,22 @@ embedded Datalevin deployment. Authorization
 data lives beside application data and is evaluated against one immutable
 database value per request.
 
+Start with the [Datomic quickstart](../README.md#quickstart) or the
+[consumer checks](examples/datomic-consumer/).
+
 ## Modules
 
 Choose the adapter for your database; it brings the core module transitively:
 
 ```clojure
 ;; Datomic
-{:deps {dev.eacl/eacl-datomic {:mvn/version "8.0.0-SNAPSHOT"}}}
+{:deps {dev.eacl/eacl-datomic {:mvn/version "8.0.0-RC-2026-09-12"}}}
 
 ;; Datahike
-{:deps {dev.eacl/eacl-datahike {:mvn/version "8.0.0-SNAPSHOT"}}}
+{:deps {dev.eacl/eacl-datahike {:mvn/version "8.0.0-RC-2026-09-12"}}}
 
 ;; DataScript
-{:deps {dev.eacl/eacl-datascript {:mvn/version "8.0.0-SNAPSHOT"}}}
+{:deps {dev.eacl/eacl-datascript {:mvn/version "8.0.0-RC-2026-09-12"}}}
 
 ;; Datalevin (implemented; publication pending maintained-fork release)
 {:deps {dev.eacl/eacl-datalevin {:mvn/version "8.0.0-SNAPSHOT"}}}
@@ -50,6 +53,8 @@ retraction, or explicitly install/use the backend's optional
 - [Permission set algebra](permission-set-algebra.md) — intersection,
   exclusion, precedence, stratification, limits, order, cursors, cache, and
   measured performance
+- [Wildcard subjects](../README.md#wildcard-subjects) — `user:*` relations,
+  Caveated wildcards, and `*` with its exclusions in subject lookups
 - [The stable-discovery engine](stable-discovery-engine.md) — enumeration order, cursors, continuation, limits
 - [Cache behavior and recovery](cache.md)
 - [Consistency and cache operations](v8-consistency-cache-operations.md)

@@ -8,7 +8,8 @@
 (def maximum-java-release 26)
 
 (def module-order
-  [:eacl :eacl-caveats-jvm :eacl-datomic :eacl-datahike :eacl-datascript :eacl-datalevin])
+  [:eacl :eacl-caveats-jvm :eacl-caveats-portable :eacl-datomic :eacl-datahike
+   :eacl-datascript :eacl-datalevin])
 
 (def datalevin-fork-version "1.0.2-eacl.2")
 
@@ -20,8 +21,7 @@
     :required-entry "eacl/core.cljc"
     :dependencies
     {'org.clojure/clojure {:mvn/version "1.11.4"}
-     'com.github.ben-manes.caffeine/caffeine {:mvn/version "3.2.4"}
-     'instaparse/instaparse {:mvn/version "1.5.0"}}
+     'com.github.ben-manes.caffeine/caffeine {:mvn/version "3.2.4"}}
     :generated-runtime? true}
 
    :eacl-caveats-jvm
@@ -38,6 +38,15 @@
      'com.exoscale/cel-parser {:mvn/version "0.1.8"}
      'com.exoscale/antlr-cel {:mvn/version "0.1.1"}
      'org.antlr/antlr4-runtime {:mvn/version "4.9.2"}}}
+
+   :eacl-caveats-portable
+   {:lib 'dev.eacl/eacl-caveats-portable
+    :directory "modules/eacl-caveats-portable"
+    :description "Optional portable Caveat evaluator for EACL on ClojureScript and the JVM"
+    :required-entry "eacl/caveats/portable.cljc"
+    :dependencies
+    {'org.clojure/clojure {:mvn/version "1.11.4"}
+     'dev.eacl/eacl ::eacl-version}}
 
    :eacl-datomic
    {:lib 'dev.eacl/eacl-datomic
@@ -200,6 +209,7 @@
         expected
         '#{dev.eacl/eacl
            dev.eacl/eacl-caveats-jvm
+           dev.eacl/eacl-caveats-portable
            dev.eacl/eacl-datomic
            dev.eacl/eacl-datahike
            dev.eacl/eacl-datascript

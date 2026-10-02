@@ -5,6 +5,7 @@
             [eacl.engine.sealed-plan :as sealed-plan]
             [eacl.operator.cover-plan :as cover-plan]
             [eacl.operator.plan :as plan]
+            [eacl.schema.expression :as expression]
             [eacl.schema.expression-persistence :as persistence]
             [eacl.schema.expression-resolver :as resolver]))
 
@@ -284,3 +285,244 @@
     (is (= 3 (get-in expression [:metrics :node-count])))
     (is (= 2 (count (get-in expression
                             [:dag :nodes (:root expression) 1]))))))
+
+(def ^:private delegation-schema
+  "definition user {}
+   definition folder {
+     relation parent: folder
+     relation reader: user
+     relation deleter: user
+     relation banned: user
+     relation eligible: user
+     permission readable = reader + parent->readable
+     permission granted = deleter + parent->granted
+     permission removable = granted & readable
+     permission kept = granted - readable
+     permission cleared = granted - banned
+     permission cleared_readable = cleared & readable
+     permission either = (granted + readable) & (granted + reader)
+     permission inherited = reader + (parent->inherited & eligible)
+   }")
+
+(deftest recursion-inside-union-only-operands-is-delegable-test
+  (let [adapter (adapter delegation-schema :delegation)
+        seal #(plan/seal-plan adapter [:folder %])
+        delegated #(plan/delegated-permissions (seal %))]
+    (testing "union-only recursive operands are delegated; operator nodes are not"
+      (is (= #{[:folder :granted] [:folder :readable]} (delegated :removable)))
+      (is (= #{[:folder :granted] [:folder :readable]} (delegated :kept)))
+      (is (= #{[:folder :granted] [:folder :readable]}
+             (delegated :cleared_readable))))
+    (testing "recursion through an intersection is not delegable"
+      (is (nil? (delegated :inherited))))
+    (testing "the sealed derived field matches a recomputation and stays
+              outside the fingerprint"
+      (let [sealed (seal :removable)
+            recomputed (dissoc sealed :delegated-permissions)]
+        (is (= (:delegated-permissions sealed)
+               (plan/delegated-permissions recomputed)))
+        (is (= sealed (plan/validate-plan adapter sealed)))
+        (is (= (:fingerprint sealed) (:fingerprint (seal :removable))))))))
+
+(def ^:private folded-operator-schema
+  "`viewer & viewer` normalizes to `viewer` in the semantic DAG, so `manage`
+  looks union-only there; the stored expression still has the intersection,
+  which the union engine refuses (EACL-FORMAL-098)."
+  "definition user {}
+   definition project {
+     relation viewer: user
+     permission access = manage
+     permission manage = (viewer & viewer) + access
+   }")
+
+(deftest a-folded-operator-keeps-its-permission-an-operator-permission-test
+  (let [sealed (plan/seal-plan (adapter folded-operator-schema :folded) [:project :manage])
+        flags (into {} (map (juxt :permission :folded-operator?)) (:expressions sealed))]
+    (is (plan/operator-plan? sealed))
+    (testing "the stored operator is recorded where the DAG folded it"
+      (is (= {[:project :access] nil [:project :manage] true} flags))
+      (is (= [[:permission :access] [:relation :viewer [:user]] [:union [0 1]]]
+             (get-in (first (filter #(= [:project :manage] (:permission %)) (:expressions sealed)))
+                     [:dag :nodes]))))
+    (testing "so neither permission is handed to its own union plan"
+      (is (nil? (plan/delegated-permissions sealed)))
+      (is (= #{} (plan/union-only-permissions sealed)))
+      (is (= #{[:project :access] [:project :manage]}
+             (:members (plan/guarded-delegation sealed)))))
+    (testing "the flag rides inside the fingerprint, and only where it is needed"
+      (is (= sealed (plan/validate-plan (adapter folded-operator-schema :folded) sealed)))
+      (is (not-any? #(contains? % :folded-operator?)
+                    (:expressions (plan/seal-plan (adapter delegation-schema :delegation)
+                                                  [:folder :removable])))))))
+
+(def ^:private operand-order-schema
+  "definition user {}
+   definition team {
+     relation member: user
+     permission members = member
+   }
+   definition folder {
+     relation parent: folder
+     relation team: team
+     relation viewer: user
+     relation owner: user
+     relation banned: user
+     relation eligible: user
+     permission tree = viewer + parent->tree
+     permission gated = viewer & eligible
+     permission view = (parent->tree + team->members + team->member + tree + owner + gated + viewer) - banned
+   }")
+
+(deftest unions-decide-their-operands-in-static-cost-order-test
+  (let [sealed (plan/seal-plan (adapter operand-order-schema :operand-order) [:folder :view])
+        program (get-in sealed [:predicate-programs [:folder :view]])
+        union-id (some (fn [[id predicate]]
+                         (when (and (= :any-true (:instruction predicate)) (< 2 (count (:children predicate))))
+                           id))
+                       program)
+        describe (fn [id]
+                   (let [{:keys [instruction descriptor target-node]} (get program id)]
+                     (case instruction
+                       :direct-membership [:relation (:relation descriptor)]
+                       :arrow-membership [:arrow (:relation descriptor)
+                                          (mapv #(or (:target-node %) (:target-kind %)) (:partitions descriptor))]
+                       :permission-membership [:permission target-node]
+                       [instruction])))
+        order (plan/operand-order sealed [:folder :view] union-id (get program union-id))]
+    (testing "relation leaves, arrows to relations, plain references, recursive ones, operators"
+      (is (= [[:relation :owner] [:relation :viewer]
+              [:arrow :team [:relation]]
+              [:arrow :team [[:team :members]]]
+              [:arrow :parent [[:folder :tree]]] [:permission [:folder :tree]]
+              [:permission [:folder :gated]]]
+             (mapv describe order))))
+    (testing "canonical order breaks ties, and the order is a permutation of the children"
+      (is (= (sort (:children (get program union-id))) (sort order)))
+      (is (every? (fn [[a b]] (or (not= (take 1 (describe a)) (take 1 (describe b))) (< a b)))
+                  (partition 2 1 (take 2 order)))))
+    (testing "the order is derived outside the fingerprint, and a plan without it keeps the canonical order"
+      (is (= sealed (plan/validate-plan (adapter operand-order-schema :operand-order) sealed)))
+      (is (= (:children (get program union-id))
+             (plan/operand-order (dissoc sealed :operand-orders) [:folder :view] union-id
+                                 (get program union-id)))))))
+
+(def ^:private self-operand-order-schema
+  "use self
+   definition user {}
+   definition folder {
+     relation parent: folder
+     relation viewer: user
+     relation banned: user
+     permission tree = viewer + parent->tree
+     permission view = (parent->tree + tree + self + viewer) - banned
+     permission strict = parent->tree & self
+   }")
+
+(deftest self-ranks-with-the-relation-leaves-in-the-static-cost-order-test
+  ;; `self` reads the definition's identity relation, so a union or an
+  ;; intersection decides it with the relation leaves, before every arrow and
+  ;; permission reference.
+  (let [sealed-for #(plan/seal-plan (adapter self-operand-order-schema :self-operand-order) [:folder %])
+        order-of (fn [permission instruction]
+                   (let [sealed (sealed-for permission)
+                         program (get-in sealed [:predicate-programs [:folder permission]])
+                         [node-id predicate]
+                         (some (fn [[id predicate]]
+                                 (when (= instruction (:instruction predicate)) [id predicate]))
+                               program)
+                         describe (fn [id]
+                                    (let [{:keys [instruction descriptor target-node]} (get program id)]
+                                      (case instruction
+                                        :direct-membership [:relation (:relation descriptor)]
+                                        :arrow-membership [:arrow (:relation descriptor)]
+                                        :permission-membership [:permission target-node]
+                                        [instruction])))]
+                     (mapv describe (plan/operand-order sealed [:folder permission] node-id predicate))))]
+    (testing "a union"
+      (let [order (order-of :view :any-true)]
+        (is (= #{[:relation expression/self-relation] [:relation :viewer]} (set (take 2 order))))
+        (is (= #{[:arrow :parent] [:permission [:folder :tree]]} (set (drop 2 order))))))
+    (testing "an intersection"
+      (is (= [[:relation expression/self-relation] [:arrow :parent]]
+             (order-of :strict :all-true))))))
+
+(deftest delegated-generator-follows-the-anchor-and-left-chain-test
+  (let [adapter (adapter delegation-schema :delegation-generator)
+        generator (fn [permission]
+                    (let [sealed (plan/seal-plan adapter [:folder permission])]
+                      (plan/delegated-generator
+                       sealed (:root sealed) (plan/delegated-permissions sealed))))]
+    (is (= [:folder :granted] (generator :removable)) "intersection anchor")
+    (is (= [:folder :granted] (generator :kept)) "exclusion left operand")
+    (is (= [:folder :granted] (generator :cleared_readable))
+        "through an operator permission to its own left operand")
+    (is (nil? (generator :either)) "a union anchor fans in")))
+
+(def ^:private guarded-schema
+  "definition user {}
+   definition folder {
+     relation parent: folder
+     relation reader: user
+     relation deleter: user
+     relation eligible: user
+     relation blocked: user
+     permission readable = reader + parent->readable
+     permission granted = deleter + parent->granted
+     permission removable = granted & readable
+     permission inherited = reader + (parent->inherited & eligible)
+     permission pruned = reader + (parent->pruned - blocked)
+     permission arrowguard = reader + (parent->arrowguard & parent->readable)
+     permission outer = deleter + (parent->outer & inherited)
+     permission top = inherited & readable
+     permission opguard = reader + (parent->opguard & removable)
+     permission shared = reader + (parent->shared & gate)
+     permission gate = eligible + parent->shared
+   }")
+
+(defn- rule-shape
+  "A guarded rule without relation ids: its kind, its target permission, and
+  each guard's sign with its alternatives' kinds and targets."
+  [rule]
+  [(:rule rule) (:target-node rule)
+   (mapv (fn [{:keys [sign alternatives]}]
+           [sign (mapv (juxt :rule :target-node) alternatives)])
+         (:guards rule))])
+
+(deftest linearly-guarded-recursion-is-classified-test
+  (let [adapter (adapter guarded-schema :guarded)
+        seal #(plan/seal-plan adapter [:folder %])
+        guarded #(plan/guarded-delegation (seal %))
+        shapes #(update-vals (:rules (guarded %)) (partial mapv rule-shape))]
+    (testing "an intersection guard becomes a condition on the recursive edge"
+      (is (= #{[:folder :inherited]} (:members (guarded :inherited))))
+      (is (= {[:folder :inherited]
+              [[:relation nil []]
+               [:arrow-permission [:folder :inherited] [[:positive [[:relation nil]]]]]]}
+             (shapes :inherited))))
+    (testing "an exclusion's right operand becomes a subtracted guard"
+      (is (= {[:folder :pruned]
+              [[:relation nil []]
+               [:arrow-permission [:folder :pruned] [[:negative [[:relation nil]]]]]]}
+             (shapes :pruned))))
+    (testing "a guard may reach a union-only permission through an arrow"
+      (is (= [:positive [[:arrow-oracle [:folder :readable]]]]
+             (get-in (shapes :arrowguard) [[:folder :arrowguard] 1 2 0]))))
+    (testing "a lower guarded component is a guard of a higher one"
+      (is (= #{[:folder :inherited] [:folder :outer]} (:members (guarded :outer))))
+      (is (= [:positive [[:oracle [:folder :inherited]]]]
+             (get-in (shapes :outer) [[:folder :outer] 1 2 0]))))
+    (testing "an operator above a guarded component delegates to it"
+      (is (= #{[:folder :inherited]} (:members (guarded :top))))
+      (is (= #{[:folder :inherited] [:folder :readable]}
+             (plan/delegation (seal :top)))))
+    (testing "other shapes are not guarded"
+      (is (nil? (guarded :opguard)) "a guard that is an operator permission")
+      (is (nil? (guarded :shared)) "an intersection with two recursive children")
+      (is (nil? (guarded :removable)) "no operator on a cycle")
+      (is (some? (plan/delegated-permissions (seal :removable)))))
+    (testing "the sealed derived field matches a recomputation and stays
+              outside the fingerprint"
+      (let [sealed (seal :outer)]
+        (is (= (:guarded-delegation sealed)
+               (plan/guarded-delegation (dissoc sealed :guarded-delegation))))
+        (is (= sealed (plan/validate-plan adapter sealed)))))))

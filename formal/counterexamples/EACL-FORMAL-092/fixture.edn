@@ -1,0 +1,13 @@
+{:operation :validate-schema
+ :padding "n leading `definition pad<i> {}` declarations"
+ :declaration-orders
+ [{:declarations ["caveat c(x int) { x == 1 }" "caveat c(x int) { x == 2 }" "caveat d(x int) { x == }"]
+   :before {:n-sharing-a-chunk :eacl.caveat/invalid
+            :n-straddling-a-chunk :eacl.schema/duplicate-caveat}}
+  {:declarations ["definition doc {}" "definition doc {}" "definition other { relation x twice }"]
+   :before {:n-sharing-a-chunk :eacl.schema/duplicate-relation
+            :n-straddling-a-chunk :eacl.schema/duplicate-definition}}
+  {:declarations ["definition doc {}" "definition doc {}" "caveat d(x int) { x == }"]
+   :before {:every-n :eacl.caveat/invalid}}]
+ :chunk {:size 32 :first-chunk-items 31 :straddling-n [29 30 61 62]}
+ :before-failures-over-n-1-2-28-33-60-63 32}

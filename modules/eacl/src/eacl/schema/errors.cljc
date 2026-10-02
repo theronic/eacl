@@ -1,6 +1,7 @@
 (ns eacl.schema.errors
   "Portable structured failures for public requests that name schema entries
-  absent from the request's selected immutable snapshot.")
+  absent from the request's selected immutable snapshot."
+  (:require [eacl.schema.expression :as expression]))
 
 (def ^:private catalog-key ::catalog)
 
@@ -42,7 +43,12 @@
   [{:keys [relations permissions] :as schema}]
   (or
    (get schema catalog-key)
-   (let [relations (or relations [])
+   (let [;; The identity Relation behind `self` is EACL's own: no public
+         ;; request writes, filters on, or expands it.
+         relations (into []
+                         (remove #(= expression/self-relation
+                                     (:eacl.relation/relation-name %)))
+                         (or relations []))
          permissions (or permissions [])]
      {:definitions
       (into
@@ -60,6 +66,21 @@
             relations)
       :relation-names
       (into #{} (map :eacl.relation/relation-name) relations)
+      ;; The subject forms each Relation accepts: `:concrete` unless its
+      ;; only branch is `T:*`, and `:wildcard` when it declares `T:*`.
+      :relation-forms
+      (into {}
+            (map (fn [relation]
+                   [[(:eacl.relation/resource-type relation)
+                     (:eacl.relation/relation-name relation)
+                     (:eacl.relation/subject-type relation)]
+                    (cond-> #{}
+                      (not (and (false? (:eacl.relation/allows-unqualified? relation))
+                                (not (contains? relation :eacl.relation/caveats))))
+                      (conj :concrete)
+                      (contains? relation :eacl.relation/allows-unqualified-wildcard?)
+                      (conj :wildcard))]))
+            relations)
       :permissions
       (into #{}
             (map (juxt :eacl.permission/resource-type
@@ -119,15 +140,11 @@
           {}
           (or relations [])))
 
-(defn validate-relationship-write!
-  "Validates the schema names of one relationship update with the same
-  typed taxonomy the read side uses: the resource definition, the relation
-  declared on it, the subject definition, and that the subject's definition
-  is a declared subject type of that relation. IDs are data, not schema, and
-  stay outside this validator; a well-typed write may still fail on an
-  unknown object."
-  [schema operation {:keys [resource-type subject-type relation]}]
-  (let [{:keys [definitions relations]} (catalog schema)]
+(defn- validate-relationship!
+  "Validates relationship names and types. A supplied :wildcard? also checks
+  the subject form for a write; reads may select either form or no tuples."
+  [schema operation {:keys [resource-type subject-type relation wildcard?] :as request}]
+  (let [{:keys [definitions relations relation-forms]} (catalog schema)]
     (when-not (contains? definitions resource-type)
       (unknown-definition! operation resource-type :resource))
     (when-not (contains? relations [resource-type relation])
@@ -150,8 +167,39 @@
          :relation relation
          :schema-kind :relation
          :subject-type subject-type
-         :reason :subject-type-not-declared}))))
+         :reason :subject-type-not-declared})))
+    (let [form (if wildcard? :wildcard :concrete)
+          forms (get relation-forms [resource-type relation subject-type])]
+      (when (and (contains? request :wildcard?) forms (not (contains? forms form)))
+        (throw
+         (ex-info
+          (if wildcard?
+            (str "Subjects of type " (pr-str subject-type) ":* are not allowed on relation "
+                 (pr-str relation) " of definition " (pr-str resource-type) ".")
+            (str "Relation " (pr-str relation) " on definition " (pr-str resource-type)
+                 " only allows the wildcard " (name subject-type) ":*, not a concrete "
+                 (pr-str subject-type) " subject."))
+          {:type :eacl/unknown-relation-or-permission
+           :eacl/error :eacl/unknown-relation-or-permission
+           :operation operation
+           :definition resource-type
+           :relation-or-permission relation
+           :relation relation
+           :schema-kind :relation
+           :subject-type subject-type
+           :wildcard? (boolean wildcard?)
+           :reason (if wildcard?
+                     :wildcard-subject-not-allowed
+                     :concrete-subject-not-allowed)})))))
   schema)
+
+(defn validate-relationship-write!
+  "Validates schema names, types and the subject form for a relationship
+  update. :wildcard? true selects the wildcard branch; otherwise the write
+  requires a concrete branch. IDs remain outside this validator."
+  [schema operation request]
+  (validate-relationship! schema operation
+                          (assoc request :wildcard? (true? (:wildcard? request)))))
 
 (defn validate-relationship-read!
   [schema filters]
@@ -198,7 +246,7 @@
   (case operation
     :lookup-resources
     (when-let [{:keys [relation subject]} (:resource/relationship query)]
-      (validate-relationship-write!
+      (validate-relationship!
        schema operation
        {:resource-type (:resource/type query)
         :subject-type (:type subject)
@@ -206,7 +254,7 @@
 
     :lookup-subjects
     (when-let [{:keys [relation resource]} (:subject/relationship query)]
-      (validate-relationship-write!
+      (validate-relationship!
        schema operation
        {:resource-type (:type resource)
         :subject-type (:subject/type query)

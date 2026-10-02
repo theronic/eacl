@@ -1,0 +1,21 @@
+{:id :EACL-FORMAL-099
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace "spicedb-1.56-corpus/self"
+ :minimized-fixture "fixture.edn"
+ :impact :other
+ :affected-versions
+ ["v8.0.0 commit a698b3bdf15e61be9bfd1324d7d7c67dc82176be"]
+ :affected-backends [:shared]
+ :root-cause
+ "EACL rejected every SpiceDB v1.56.0 schema that uses `use self`, and reserved the name `self` everywhere, because its union plans name a same-resource reference with the source relation `:self`. SpiceDB accepts both, and grants `self` exactly when the subject is the resource object."
+ :fix
+ "A `self` leaf is stored as its own canonical expression node and evaluated through the definition's identity relation (`:_self`, subject type the definition itself), whose tuples the adapter boundary serves as the identity and never stores. Every route reads it as a definite relation, identity is typed (a subject of another type with the same id is denied), and `self` is an ordinary name without `use self`, except as an arrow's base."
+ :closing-evidence
+ ["eacl.datomic.self-counterexample-test/self-counterexample-replays-on-datomic-test"
+  "eacl.datascript.self-test/self-checks-match-spicedb-test"
+  "eacl.datascript.self-test/self-lookups-match-spicedb-test"
+  "eacl.datascript.self-test/self-expand-read-and-schema-test"
+  "eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test"]
+ :notes
+ "Expected answers are SpiceDB v1.56.0's own (serve-testing). SpiceDB's LookupSubjects also lists the resource's id under any requested subject type, which its CheckPermission denies; EACL follows CheckPermission."}

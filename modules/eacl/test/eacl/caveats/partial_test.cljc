@@ -1,5 +1,5 @@
 (ns eacl.caveats.partial-test
-  (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is]]
+  (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is testing]]
             [eacl.caveats.plan :as plan]
             [eacl.caveats.partial :as partial]))
 
@@ -20,6 +20,45 @@
     (is (= expected (evaluate source context {}))))
   (is (= {:outcome :true} (evaluate "a" {"a" false} {"a" true})))
   (is (= {:outcome :error :reason :context-type} (evaluate "a" {"a" "bad"} {"a" true}))))
+
+(deftest comprehension-results-missing-fields-and-work
+  (let [parameters [["inventory" [:list :string]] ["sensitive" [:list :string]] ["m" [:map :string :bool]]]
+        check (fn [source request]
+                (partial/evaluate parameters (:plan (plan/compile-plan source parameters)) request {}))
+        nothing-sensitive "!inventory.exists(item, item in sensitive)"]
+    (is (= {:outcome :false} (check nothing-sensitive {"inventory" ["keys" "passport"] "sensitive" ["passport"]})))
+    (is (= {:outcome :true} (check nothing-sensitive {"inventory" ["keys"] "sensitive" ["passport"]})))
+    (is (= {:outcome :true} (check nothing-sensitive {"inventory" [] "sensitive" ["passport"]})))
+    (is (= {:outcome :conditional :missing-fields #{"inventory"}
+            :residual [:not [:exists [:param "inventory"] "item"
+                               [:in [:var "item"] [:literal [:list :string] ["passport"]]]]]}
+           (check nothing-sensitive {"sensitive" ["passport"]})))
+    (is (= #{"inventory"} (:missing-fields (check nothing-sensitive {})))
+        "an absent range is missing on its own, as in SpiceDB")
+    (is (= {:outcome :conditional :missing-fields #{"sensitive"}
+            :residual [:not [:exists [:literal [:list :string] ["keys"]] "item"
+                               [:in [:var "item"] [:param "sensitive"]]]]}
+           (check nothing-sensitive {"inventory" ["keys"]})))
+    (is (= {:outcome :true} (check "inventory.exists(x, m[x])" {"inventory" ["zz" "a"] "m" {"a" true}}))
+        "a true element decides exists over another element's fault")
+    (is (= {:outcome :error :reason :missing-map-key}
+           (check "inventory.exists(x, m[x])" {"inventory" ["zz" "a"] "m" {"a" false}})))
+    (is (= {:outcome :false} (check "inventory.all(x, m[x])" {"inventory" ["zz" "a"] "m" {"a" false}})))
+    (is (= {:outcome :true} (check "m.exists(k, m[k])" {"m" {"a" false "b" true}})))
+    (testing "each element of a supplied range is charged; an absent range is not iterated"
+      (is (= :conditional (:outcome (check "inventory.exists(x, x in sensitive)" {"inventory" ["a"]}))))
+      (is (= {:outcome :error :reason :resource-limit}
+             (check "inventory.exists(x, x in sensitive)" {"inventory" ["a" "b"]}))))))
+
+(deftest comprehension-variables-are-lexically-scoped
+  (let [parameters [["xs" [:list :string]] ["ys" [:list :bool]] ["x" :string]]
+        check (fn [source request]
+                (partial/evaluate parameters (:plan (plan/compile-plan source parameters)) request {}))]
+    (is (= {:outcome :true} (check "xs.exists(xs, xs == \"a\")" {"xs" ["b" "a"]})))
+    (is (= {:outcome :false} (check "xs.exists(x, x == \"b\") && x == \"a\"" {"xs" ["c"]}))
+        "a missing parameter x is not the variable x")
+    (is (= {:outcome :true} (check "xs.exists(x, ys.exists(x, x))" {"xs" ["q"] "ys" [false true]})))
+    (is (= {:outcome :false} (check "ys.all(b, b)" {"ys" [true false]})))))
 
 (deftest partial-container-residuals-and-bounds
   (let [parameters [["k" :string] ["m" [:map :string :bool]]]

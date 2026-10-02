@@ -1,8 +1,11 @@
 (ns eacl.schema.expression-persistence-test
   (:require [#?(:clj clojure.test :cljs cljs.test)
-             :refer [deftest is]]
+             :refer [deftest is testing]]
             [eacl.cache.derived-schema :as derived-schema]
+            [eacl.cache.standard-lru :as lru]
+            [eacl.schema.expression :as expression]
             [eacl.schema.expression-persistence :as persistence]
+            [eacl.schema.expression-policy :as policy]
             [eacl.schema.expression-resolver :as resolver]))
 
 (defn- derived-identity
@@ -191,3 +194,54 @@
                  (is (contains?
                       (set results)
                       (persistence/decode-entity-with-metadata entity)))))))))))
+
+(deftest process-wide-decodes-are-exact-content-addressed-and-bounded-test
+  (let [{:keys [permissions]}
+        (persistence/candidate-schema (resolver/validate-schema schema))
+        [base view] permissions
+        computed (atom 0)
+        decode expression/decode
+        strict (assoc policy/default-client-limits :maximum-source-nodes 1)]
+    (binding [persistence/*content-decodes* (lru/store 2)]
+      (with-redefs [expression/decode
+                    ;; Count each codec invocation. Both arities are explicit,
+                    ;; because optimized ClojureScript calls a multi-arity var
+                    ;; through its arity entry points. Both reach the original's
+                    ;; two-argument arity through `apply`: its dispatcher and its
+                    ;; one-argument arity call back through the redefined var.
+                    (fn ([encoded]
+                         (swap! computed inc)
+                         (apply decode [encoded {}]))
+                      ([encoded options]
+                       (swap! computed inc)
+                       (apply decode [encoded options])))]
+        (let [first-view (persistence/decode-entity-with-metadata view)]
+          (testing "a completed decode serves the same stored fields"
+            (is (= first-view (persistence/decode-entity-with-metadata view)))
+            (is (= 1 @computed)))
+          (testing "the served value is the decode's own"
+            (is (= first-view
+                   (binding [persistence/*content-decodes* nil]
+                     (persistence/decode-entity-with-metadata view)))))
+          (testing "another limit profile is another key, and it is enforced"
+            (is (some? (error-data
+                        #(binding [persistence/*expression-limits* strict]
+                           (persistence/decode-entity-with-metadata view))))))
+          (testing "another stored payload is decoded, not served"
+            (reset! computed 0)
+            (is (= :base (get-in (persistence/decode-entity-with-metadata base)
+                                 [:expression :permission-name])))
+            (is (= 1 @computed)))
+          (testing "a failed decode is never published"
+            (let [corrupt (assoc view :eacl.permission/expression-payload
+                                 "{:not :an-expression}")]
+              (reset! computed 0)
+              (is (= :eacl.schema/corrupt-expression-storage
+                     (:type (error-data
+                             #(persistence/decode-entity-with-metadata corrupt)))))
+              (is (= :eacl.schema/corrupt-expression-storage
+                     (:type (error-data
+                             #(persistence/decode-entity-with-metadata corrupt)))))
+              (is (= 2 @computed))))
+          (testing "the memo stays within its bound"
+            (is (<= (lru/entry-count persistence/*content-decodes*) 2))))))))

@@ -28,9 +28,9 @@ Some initial work was done in `src/eacl/spicedb/parser.clj` & `test/eacl/datomic
 - EACL only supports one level of nested arrow permissions at this time, but multi-arrow schema could be supported in future with hidden internal arrow jumps or a more fleshed out schema spec, because I suspect the permission path traversal can probably handle it.
 
 To run, tests, use the nREPL via clojure-mcp MCP server by eval'ing:
-```
+```clojure
 (do (require '[eacl.datomic.impl.indexed-test])
-  (clojure.test/run-tests 'eacl.datomic.impl.indexed-test))
+    (clojure.test/run-tests 'eacl.datomic.impl.indexed-test))
 ```
 
 All tests in `test/eacl/datomic/impl/indexed_test.clj` are passing.
@@ -78,11 +78,11 @@ Remember to stop it when you're done if it's running in background. You can add 
 5. If anything is unclear, stop & ask for clarification. If any files do not exist that you expect to exist, stop and ask for clarification.
 6. Run tests between logical changes and ensure tests that should be passing, are still passing. If tests are emitting noise unrelated to your work that may be filling up your context, stop & inform the operator to avoid unnecessary costs.
 8. When running database tests, use the `eacl.datomic.datomic-helpers/with-mem-conn` macro, which creates a fresh in-memory Datomic database given some initial tx-data and binds to some let-value. Refer to how tests use this to run test against a fresh in-memory Datomic database while avoiding datom conflicts, e.g.
- ```
+ ```clojure
  (with-mem-conn [conn schema/v6-schema]
    @(d/transact conn fixtures/base-fixtures)
    (let [client (eacl/make-client conn {})])
-      (eacl/can? client (->user :test/user) :view (->server :test/server1)))
+   (eacl/can? client (->user :test/user) :view (->server :test/server1)))
  ```
 9. If you are unable to read a file you expect to exist using `clojure-mcp`'s `read_file` tool, use the `LS` tool and ensure you have the correct path. If the file is expected to exist, and you can't access it, stop and ask for clarification.
 10. The project is small, so do not try to truncate or use Grep. Always read the *entire file* (if relevant to context), because all the contents matter. This project can only be understood by reading all files passed to context.

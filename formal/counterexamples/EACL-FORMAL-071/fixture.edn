@@ -1,0 +1,22 @@
+{:operation-family
+ [:read-relationships :request-execution-normalization]
+ :public-identity
+ {:value false
+  :admitted-by-public-object-validation true
+  :resolved-internal-eid 101
+  :relationship-active true}
+ :before
+ {:permission-check :allowed
+  :subject-filtered-relationship-read []
+  :cursor-resume :false-coordinate-treated-as-absent
+  :authorization-result-cursor :false-boundary-treated-as-absent
+  :execution-controls
+  {:evaluation false
+   :timeout-ms false
+   :cancellation-token false
+   :result :silently-defaulted-or-ignored}}
+ :risk
+ [:live-grant-hidden-from-inspection
+  :revocation-workflow-omission
+  :pagination-omission-or-repetition
+  :request-resource-control-weakening]}

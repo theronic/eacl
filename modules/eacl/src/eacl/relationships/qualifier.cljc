@@ -19,19 +19,51 @@
   (and #?(:clj (integer? eid) :cljs (and (number? eid) (js/Number.isSafeInteger eid)))
        (pos? eid)))
 
-(defn relation-allowance
-  "Concrete Caveat alternatives for one selected Relation. Legacy plain
-   Relations have exactly the nil alternative. Qualified branches carry both
-   the native ref set and the explicit plain-branch bit."
+(def relation-many-attributes
+  "The Relation attributes with cardinality many: each branch's Caveat refs."
+  #{:eacl.relation/caveats :eacl.relation/wildcard-caveats})
+
+(defn- branch-allowance
+  [refs refs? plain]
+  (when (and refs? (not (and (set? refs) (seq refs) (every? concrete-eid? refs))))
+    (error! :malformed-relation-allowance))
+  (cond-> (or refs #{}) plain (conj nil)))
+
+(defn relation-branch-allowances
+  "Native Caveat alternatives for one selected Relation by subject form:
+   `{:concrete #{caveat-eid nil?} :wildcard #{caveat-eid nil?}}`. Legacy plain
+   Relations have exactly the concrete nil alternative. Qualified branches
+   carry both the native ref set and the explicit plain-branch bit. A
+   Relation whose only branch is `T:*` stores
+   `:eacl.relation/allows-unqualified? false` without concrete refs."
   [relation]
   (let [refs (:eacl.relation/caveats relation)
         refs? (contains? relation :eacl.relation/caveats)
         plain? (contains? relation :eacl.relation/allows-unqualified?)
-        plain (if plain? (:eacl.relation/allows-unqualified? relation) true)]
-    (when (or (not= refs? plain?) (not (boolean? plain))
-              (and refs? (not (and (set? refs) (seq refs) (every? concrete-eid? refs)))))
+        plain (if plain? (:eacl.relation/allows-unqualified? relation) true)
+        wildcard-refs (:eacl.relation/wildcard-caveats relation)
+        wildcard-refs? (contains? relation :eacl.relation/wildcard-caveats)
+        wildcard? (contains? relation :eacl.relation/allows-unqualified-wildcard?)
+        wildcard-plain (:eacl.relation/allows-unqualified-wildcard? relation)]
+    (when (or (not (boolean? plain))
+              (and refs? (not plain?))
+              (and plain? (not refs?) (not (and (false? plain) wildcard?)))
+              (and wildcard-refs? (not wildcard?))
+              (and wildcard? (not (boolean? wildcard-plain)))
+              (and wildcard? (false? wildcard-plain) (not wildcard-refs?)))
       (error! :malformed-relation-allowance))
-    (cond-> (or refs #{}) plain (conj nil))))
+    {:concrete (branch-allowance refs refs? plain)
+     :wildcard (if wildcard?
+                 (branch-allowance wildcard-refs wildcard-refs? wildcard-plain)
+                 #{})}))
+
+(defn relation-allowance
+  "Every Caveat alternative of one selected Relation, across its concrete and
+   wildcard branches. Reads check this union; writes and schema replacement
+   check the branch named by the subject form."
+  [relation]
+  (let [{:keys [concrete wildcard]} (relation-branch-allowances relation)]
+    (into concrete wildcard)))
 
 (defn normalize
   "Normalizes resolved semantic input; nil and an empty map allocate nothing.

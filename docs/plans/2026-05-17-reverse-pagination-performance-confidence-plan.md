@@ -210,27 +210,27 @@ Add an internal planning layer in `src/eacl/datomic/impl/indexed.clj` or a new n
 Represent list planning explicitly:
 
 ```clojure
-{:kind :acyclic-permission-stream
- :op :lookup-resources
- :order [:eid :asc]
+{:kind      :acyclic-permission-stream
+ :op        :lookup-resources
+ :order     [:eid :asc]
  :direction :asc
- :source source-fn}
+ :source    source-fn}
 ```
 
 ```clojure
-{:kind :recursive-effective-grant-stream
- :op :lookup-resources
- :order [:eid :asc]
+{:kind      :recursive-effective-grant-stream
+ :op        :lookup-resources
+ :order     [:eid :asc]
  :direction :desc
- :source source-fn}
+ :source    source-fn}
 ```
 
 ```clojure
-{:kind :relationship-datom-stream
- :op :read-relationships
- :order [:relationship-datom :asc]
+{:kind      :relationship-datom-stream
+ :op        :read-relationships
+ :order     [:relationship-datom :asc]
  :direction :asc
- :source source-fn}
+ :source    source-fn}
 ```
 
 The plan must be returned or observable in tests. A private helper is acceptable if tests can access it through `#'namespace/private-var`, but a small internal public function is cleaner:
@@ -391,9 +391,9 @@ If the grant index is not implemented yet, recursive paginated list calls should
 
 ```clojure
 (ex-info "Recursive paginated lookup requires the effective grant index."
-         {:eacl/error :eacl.pagination/recursive-query-not-indexed
+         {:eacl/error    :eacl.pagination/recursive-query-not-indexed
           :resource/type resource-type
-          :permission permission})
+          :permission    permission})
 ```
 
 This is acceptable in the development branch because no backward compatibility or migration path is required.

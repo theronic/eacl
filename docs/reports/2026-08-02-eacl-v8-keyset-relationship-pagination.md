@@ -11,10 +11,10 @@ offset. They page directly over the immutable backend tuple indexes.
 The cursor carries an authenticated physical edge:
 
 ```clojure
-{:kind :relationship-index
- :v 1
- :scan-index relation-spec-index
- :subject-id internal-subject-id
+{:kind        :relationship-index
+ :v           1
+ :scan-index  relation-spec-index
+ :subject-id  internal-subject-id
  :resource-id internal-resource-id}
 ```
 

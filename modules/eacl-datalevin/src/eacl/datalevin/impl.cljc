@@ -175,7 +175,7 @@
 
 (defn- internal-id
   [db value]
-  (when value
+  (when (some? value)
     (ds/entid db value)))
 
 (defn- existing-internal-id
@@ -327,9 +327,9 @@
 (defn- retract-relationship-txes
   [db resolved]
   (let [forward (ddb/all-relationship-identity-datoms db (:subject-id resolved)
-                                                    relationship-storage/forward-attribute (relationship-tuple resolved))
+                                                      relationship-storage/forward-attribute (relationship-tuple resolved))
         reverse (ddb/all-relationship-identity-datoms db (:resource-id resolved)
-                                                    relationship-storage/reverse-attribute (reverse-relationship-tuple resolved))
+                                                      relationship-storage/reverse-attribute (reverse-relationship-tuple resolved))
         operations
         (into (mapv #(vector :db/retract (:subject-id resolved)
                              relationship-storage/forward-attribute (:v %)) forward)
@@ -350,19 +350,19 @@
   (boolean
    (seq
     (endpoint-pair/checked-datoms
-    (ddb/relationship-identity-datoms
-     db subject-id relationship-storage/forward-attribute
-     (endpoint-pair/forward-value
-      subject-type relation-id resource-type resource-id))))))
+     (ddb/relationship-identity-datoms
+      db subject-id relationship-storage/forward-attribute
+      (endpoint-pair/forward-value
+       subject-type relation-id resource-type resource-id))))))
 
 (defn direct-edge
   "Stored compact edge or nil, prior to request qualification."
   [db subject-type subject-id relation-id resource-type resource-id]
   (some-> (first (endpoint-pair/checked-datoms
-                 (ddb/relationship-identity-datoms
-                  db subject-id relationship-storage/forward-attribute
-                  (endpoint-pair/forward-value subject-type relation-id resource-type resource-id))
-                 true))
+                  (ddb/relationship-identity-datoms
+                   db subject-id relationship-storage/forward-attribute
+                   (endpoint-pair/forward-value subject-type relation-id resource-type resource-id))
+                  true))
           edge/from-datom))
 
 (defn- reverse-match?
@@ -370,10 +370,10 @@
   (boolean
    (seq
     (endpoint-pair/checked-datoms
-    (ddb/relationship-identity-datoms
-     db resource-id relationship-storage/reverse-attribute
-     (endpoint-pair/reverse-value
-      resource-type relation-id subject-type subject-id))))))
+     (ddb/relationship-identity-datoms
+      db resource-id relationship-storage/reverse-attribute
+      (endpoint-pair/reverse-value
+       resource-type relation-id subject-type subject-id))))))
 
 (defn validate-relationship-operation!
   [operation]
@@ -455,6 +455,7 @@
                  {:spec-idx    (:idx spec)
                   :subject-id  subject-id
                   :resource-id resource-id
+                  :qualifier-id qualifier-id
                   :relationship
                   (inspection/row
                    (eacl/->Relationship
@@ -468,7 +469,8 @@
                     {:subject-id (or (:subject-id cursor)
                                      (:subject cursor))
                      :resource-id (or (:resource-id cursor)
-                                      (:resource cursor))}
+                                      (:resource cursor))
+                     :qualifier-id (:qualifier-id cursor)}
                      (:resume-inclusive? cursor)
                      (assoc :resume-inclusive? true))))
                (drop-until-beyond-cursor [spec cursor direction rows]
@@ -551,21 +553,22 @@
                           (drop-until-beyond-cursor
                            spec cursor direction)))))
                (scan-forward-partial [spec cursor direction]
-                 (let [args
-                       [db
+                 (let [rows
+                       (ddb/avet-endpoint-prefix
+                        db
                         relationship-storage/forward-attribute
                         [(:subject-type spec)
                          (:relation-id spec)
                          (:resource-type spec)]
                         (or (:resource-id cursor)
                             (:resource cursor))
+                        (:qualifier-id cursor)
                         (or (:subject-id cursor)
                             (:subject cursor))
-                        direction]
-                       rows
-                       (apply ddb/avet-endpoint-prefix
-                              (cond-> (conj args (or (native-page-limit spec cursor)
-                                                     ddb/maximum-unpaged-scan-results)) include-qualifier? (conj true)))]
+                        direction
+                        (or (native-page-limit spec cursor)
+                            ddb/maximum-unpaged-scan-results)
+                        include-qualifier?)]
                    (->> rows
                         (map
                          (fn [{:keys [e v]}]
@@ -573,21 +576,22 @@
                         (drop-until-beyond-cursor
                          spec cursor direction))))
                (scan-reverse-partial [spec cursor direction]
-                 (let [args
-                       [db
+                 (let [rows
+                       (ddb/avet-endpoint-prefix
+                        db
                         relationship-storage/reverse-attribute
                         [(:resource-type spec)
                          (:relation-id spec)
                          (:subject-type spec)]
                         (or (:subject-id cursor)
                             (:subject cursor))
+                        (:qualifier-id cursor)
                         (or (:resource-id cursor)
                             (:resource cursor))
-                        direction]
-                       rows
-                       (apply ddb/avet-endpoint-prefix
-                              (cond-> (conj args (or (native-page-limit spec cursor)
-                                                     ddb/maximum-unpaged-scan-results)) include-qualifier? (conj true)))]
+                        direction
+                        (or (native-page-limit spec cursor)
+                            ddb/maximum-unpaged-scan-results)
+                        include-qualifier?)]
                    (->> rows
                         (map
                          (fn [{:keys [e v]}]

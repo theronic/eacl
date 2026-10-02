@@ -53,6 +53,15 @@ negative controls. It does not run release manifests, generated-byte checks,
 or exhaustive global exploration. The larger bounded temporal campaign is
 available as `bin/formal apalache-scheduled`.
 
+Every command that runs the Dafny verifier (`bin/formal verify`, `fast`,
+`compile-java` and `compile-js`, and `formal/stable-discovery/verify-fast.sh`)
+passes `--manual-lemma-induction`, and no model may carry an induction
+attribute other than `{:induction false}`. Dafny 4.11 verified a false lemma by
+induction on a sequence parameter, whether automatic induction chose that
+induction or an attribute requested it, so a proof by induction calls its lemma
+recursively instead. `bin/formal` refuses a model that requests induction, and
+`eacl.formal.dafny-cleanup-gate-test` checks both rules in the test battery.
+
 `dafny/NativeGenerationCoherence.dfy` supersedes mutation-graph ancestry as
 the managed-cache coherence argument. It proves the forward-history frame from
 physical schema/relation generations, including empty dependency closures,
@@ -82,7 +91,10 @@ type-preserving identity, sum-typed relation declarations, and emitted-child
 depth accounting. Run `bin/formal format` and `bin/formal verify`;
 the aggregate report is `target/formal/dafny-verification.json`.
 
-This model is not mechanically extracted into production. The corresponding
+This model is not mechanically extracted into production. Its relationships
+carry no qualifier: production lists every stored Relationship, caveated and
+expiring ones included, and adds their qualifier keys as display metadata
+that the model does not describe (EACL-FORMAL-081). The corresponding
 handwritten source is `modules/eacl/src/eacl/permission_tree.cljc`; bounded
 reference/property tests are in
 `modules/eacl/test/eacl/permission_tree_test.cljc` and
@@ -92,6 +104,21 @@ in `formal/fixtures/permission-tree/`. Immutable/complete adapter reads,
 identity conversion, selected-snapshot token authentication, monotonic clocks,
 host integer/runtime semantics, and general Clojure source refinement remain
 explicit trusted or empirically checked boundaries.
+
+`dafny/WildcardSubjects.dfy` is the proof-only model of SpiceDB wildcard
+subjects (`user:*`): wildcard membership, the touch-cover representative
+theorem behind `lookup-subjects`' `*` entry and its exclusions, and the
+union-only split. Its production correspondence is the pinned SpiceDB fixture
+in `fixtures/wildcards/`, the seeded reference differential and the backend
+contracts listed in [the assurance boundary](../docs/formal-verification.md).
+
+`dafny/CaveatOutcomes.dfy` and `dafny/CaveatProfile.dfy` also model EACL CEL
+profile 2's `exists` and `all`: four-valued folds whose deciding element
+absorbs faults, whose residual keeps the undecided elements, and whose work
+charges every element. The `caveats/` finite gate compares its oracle with the
+production evaluators, and `fixtures/caveat-comprehensions/` records SpiceDB's
+answers to the shared Caveat corpus; see
+[the assurance boundary](../docs/formal-verification.md).
 
 The abstract operator Phase A consists of
 `PermissionSetAlgebra.dfy`, `SignedDependencyStratification.dfy`,

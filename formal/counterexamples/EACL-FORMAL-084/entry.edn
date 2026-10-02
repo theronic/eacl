@@ -1,0 +1,22 @@
+{:id :EACL-FORMAL-084
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace "eacl-rust spec/10 §6.1 NEW-1; spec/12 §3.12 N1-N13"
+ :minimized-fixture "fixture.edn"
+ :impact :false-deny
+ :affected-versions
+ ["v8.0 pre-release before strong-Kleene fault semantics"]
+ :affected-backends [:shared :datomic :datascript :datahike]
+ :root-cause
+ "Evidence composition was fault-dominant (a fault beat a Boolean absorber) and every route stopped at the first decisive operand, a fault included. The public outcome of a union with one faulting and one granting branch therefore depended on which branch a route evaluated first, a function of sealed rule ordinals, canonical node ids, entity ids, scan chunks, batch composition and route, not of the denotation. PR #209 pinned one such order."
+ :fix
+ "Composition is strong-Kleene and pointwise per completion of the residual Caveat atoms: a definite grant absorbs a fault in a union and a definite denial absorbs one in an intersection, an arrow or an exclusion, and a fault is never decisive, so every route keeps looking for an absorber. Recursion is the least fixed point in false < fault < true. The batched membership search no longer needs a fault-freedom certificate, and Caveated operands are no longer routed to ordered evaluation."
+ :closing-evidence
+ ["eacl.datascript.kleene-fault-test/a-definite-operand-absorbs-a-faulting-one-on-every-route-in-any-order"
+  "eacl.datascript.kleene-fault-test/answers-are-independent-of-entity-schema-and-route-order"
+  "eacl.datascript.kleene-fault-test/a-later-plain-grant-absorbs-an-earlier-faulting-arrow-target"
+  "eacl.datascript.kleene-fault-test/a-definite-grant-through-own-or-wildcard-relationship-absorbs-a-fault-through-the-other"
+  "eacl.engine.kleene-membership-test/batched-membership-equals-ordered-points-on-every-two-node-graph"
+  "eacl.authorization.evidence-test/composition-is-independent-of-operand-order"
+  "QualifiedEvidence.FoldsIgnoreOrder"
+  "QualifiedTemporal.MaskedFaultSurfacesOnlyAfterItsWitnessExpires"]}

@@ -6,7 +6,10 @@
             [eacl.caveats.publication-batch-contract :as batch]
             [eacl.caveats.public-write-contract :as public]
             [eacl.caveats.schema-allowance-contract :as allowance]
+            [eacl.caveats.relation-removal-contract :as removal]
             [eacl.caveats.inspection-contract :as inspection]
+            [eacl.caveats.partial-scan-contract :as partial-scan]
+            [eacl.caveats.permission-tree-contract :as permission-tree]
             [eacl.caveats.deletion-contract :as deletion]
             [eacl.caveats.cache-trace-contract :as cache-trace]
             [eacl.authorization.qualification-test :as fixtures]
@@ -124,6 +127,36 @@
       (is (= before (d/active-read-snapshot-info)))
       (finally (d/close conn) (util/delete-files dir)))))
 
+(deftest partial-relationship-walks-over-qualified-rows-are-total-and-terminate
+  (let [dir (util/tmp-dir (str "partial-scan-" (random-uuid)))
+        conn (schema/create-conn dir {})
+        now (atom 1000)
+        watermark (atom 0)]
+    (try
+      (partial-scan/check! {:client (api/make-client conn {:clock #(deref now)
+                                                           :caveat-evaluator (fixtures/portable-evaluator (atom 0))
+                                                           :source-lifecycle #uuid "7d0f3c1e-5b8a-4f62-9e31-2c4a8b6d0e17"
+                                                           :security-key "01234567890123456789012345678901"
+                                                           :revision-watermark watermark
+                                                           :advance-revision-watermark! (fn [revision] (swap! watermark max revision))})
+                            :writer #(qualifiers/writer conn) :now now})
+      (finally (d/close conn) (util/delete-files dir)))))
+
+(deftest permission-trees-list-qualified-relationships-without-evaluating-them
+  (let [dir (util/tmp-dir (str "permission-tree-" (random-uuid)))
+        conn (schema/create-conn dir {})
+        now (atom 1000)
+        watermark (atom 0)]
+    (try
+      (permission-tree/check! {:client (api/make-client conn {:clock #(deref now)
+                                                              :caveat-evaluator (fixtures/portable-evaluator (atom 0))
+                                                              :source-lifecycle #uuid "3b8e2f61-9c4d-4a07-b5e2-6f1d0c7a9e44"
+                                                              :security-key "01234567890123456789012345678901"
+                                                              :revision-watermark watermark
+                                                              :advance-revision-watermark! (fn [revision] (swap! watermark max revision))})
+                               :writer #(qualifiers/writer conn) :now now})
+      (finally (d/close conn) (util/delete-files dir)))))
+
 (deftest stored-and-active-inspection-preserve-aligned-native-qualifiers
   (let [dir (util/tmp-dir (str "public-qualified-" (random-uuid)))
         conn (schema/create-conn dir {:app/flag {:db/valueType :db.type/long}})
@@ -170,4 +203,16 @@
                                                        :revision-watermark watermark
                                                        :advance-revision-watermark! #(swap! watermark max %)})
                         :writer #(qualifiers/writer conn)})
+      (finally (d/close conn) (util/delete-files dir)))))
+
+(deftest removing-a-relation-with-qualified-relationships-reports-relation-in-use
+  (let [dir (util/tmp-dir (str "relation-removal-" (random-uuid)))
+        conn (schema/create-conn dir {}) watermark (atom 0)]
+    (try
+      (removal/check! {:client (api/make-client conn {:caveat-evaluator (fixtures/portable-evaluator (atom 0))
+                                                      :source-lifecycle #uuid "3f6c2f0e-5b8d-5d6a-9a43-4c1e2b7d8a90"
+                                                      :security-key "01234567890123456789012345678901"
+                                                      :revision-watermark watermark
+                                                      :advance-revision-watermark! #(swap! watermark max %)})
+                       :writer #(qualifiers/writer conn) :speculative? false})
       (finally (d/close conn) (util/delete-files dir)))))

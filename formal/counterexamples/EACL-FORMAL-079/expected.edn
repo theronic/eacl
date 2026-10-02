@@ -1,0 +1,5 @@
+{:map {:eacl/error :eacl.format/invalid :reason :duplicate-key}
+ :set {:eacl/error :eacl.format/invalid :reason :duplicate-member}
+ :projection "a record alone still encodes as its field map"
+ :invariant
+ "canonicalize never drops a member, and every string encode-canonical returns decodes to the canonicalized value."}

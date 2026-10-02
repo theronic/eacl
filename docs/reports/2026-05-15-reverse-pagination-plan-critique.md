@@ -27,16 +27,16 @@ The closest thing to a de facto standard for bidirectional cursor pagination is 
  :after end-cursor}
 
 ;; Backward
-{:last 50
+{:last   50
  :before start-cursor}
 ```
 
 Response metadata:
 
 ```clojure
-{:page-info {:start-cursor first-item-cursor
-             :end-cursor last-item-cursor
-             :has-next-page? true-or-false
+{:page-info {:start-cursor       first-item-cursor
+             :end-cursor         last-item-cursor
+             :has-next-page?     true-or-false
              :has-previous-page? true-or-false}}
 ```
 
@@ -48,7 +48,7 @@ If EACL wants a Clojure-idiomatic simplification, the clean compromise is:
  :after end-cursor}
 
 ;; Backward, equivalent to Relay last/before.
-{:limit 50
+{:limit  50
  :before start-cursor}
 ```
 
@@ -59,37 +59,34 @@ But even with `:limit`, the response should still use `:page-info` with start/en
 Primary recommendation:
 
 ```clojure
-(def page1
-  (eacl/lookup-resources acl
-    {:subject subject
-     :permission :view
-     :resource/type :server
-     :first 50}))
+(def page1 (eacl/lookup-resources acl
+             {:subject       subject
+              :permission    :view
+              :resource/type :server
+              :first         50}))
 
-(def page2
-  (eacl/lookup-resources acl
-    {:subject subject
-     :permission :view
-     :resource/type :server
-     :first 50
-     :after (get-in page1 [:page-info :end-cursor])}))
+(def page2 (eacl/lookup-resources acl
+             {:subject       subject
+              :permission    :view
+              :resource/type :server
+              :first         50
+              :after         (get-in page1 [:page-info :end-cursor])}))
 
-(def page1-again
-  (eacl/lookup-resources acl
-    {:subject subject
-     :permission :view
-     :resource/type :server
-     :last 50
-     :before (get-in page2 [:page-info :start-cursor])}))
+(def page1-again (eacl/lookup-resources acl
+                   {:subject       subject
+                    :permission    :view
+                    :resource/type :server
+                    :last          50
+                    :before        (get-in page2 [:page-info :start-cursor])}))
 ```
 
 Response:
 
 ```clojure
-{:data [...]
- :page-info {:start-cursor opaque-token-or-nil
-             :end-cursor opaque-token-or-nil
-             :has-next-page? true-or-false
+{:data      [...]
+ :page-info {:start-cursor       opaque-token-or-nil
+             :end-cursor         opaque-token-or-nil
+             :has-next-page?     true-or-false
              :has-previous-page? true-or-false}}
 ```
 
@@ -109,11 +106,11 @@ Do not make top-level `:before` and `:after` response fields the primary contrac
 The plan proposes:
 
 ```clojure
-{:data [...]
- :before opaque-token-or-nil
- :after opaque-token-or-nil
+{:data        [...]
+ :before      opaque-token-or-nil
+ :after       opaque-token-or-nil
  :has-before? true-or-false
- :has-after? true-or-false}
+ :has-after?  true-or-false}
 ```
 
 This is serviceable, but not the common shape. In Relay and GitHub GraphQL, `before` and `after` are request arguments, while the response returns first-item and last-item cursors. JSON:API returns `prev` and `next` links that contain `page[before]` or `page[after]`, not bare response fields named `before` and `after`.
@@ -123,18 +120,18 @@ This is serviceable, but not the common shape. In Relay and GitHub GraphQL, `bef
 Replace the response shape with:
 
 ```clojure
-{:data [...]
- :page-info {:start-cursor token-or-nil
-             :end-cursor token-or-nil
-             :has-next-page? boolean
+{:data      [...]
+ :page-info {:start-cursor       token-or-nil
+             :end-cursor         token-or-nil
+             :has-next-page?     boolean
              :has-previous-page? boolean}}
 ```
 
 If UI ergonomics matter, optionally add derived request maps:
 
 ```clojure
-{:page-info {...}
- :next-page {:after end-cursor}
+{:page-info     {...}
+ :next-page     {:after end-cursor}
  :previous-page {:before start-cursor}}
 ```
 
@@ -181,7 +178,7 @@ Use a scan primitive like:
 ```clojure
 (defn seek-page [db {:keys [index components direction exclusive-key in-range?]}]
   (let [datoms (case direction
-                 :asc  (apply d/seek-datoms db index components)
+                 :asc (apply d/seek-datoms db index components)
                  :desc (apply d/rseek-datoms db index components))]
     (->> datoms
          (take-while in-range?)
@@ -210,13 +207,13 @@ Cursor tokens are only meaningful for a specific ordered result set. In EACL, th
 Add these fields to the internal token:
 
 ```clojure
-{:v 3
- :op :lookup-resources
- :query-shape query-shape-hash
- :order [:eid :asc]
- :basis-t basis-t-or-nil
+{:v                3
+ :op               :lookup-resources
+ :query-shape      query-shape-hash
+ :order            [:eid :asc]
+ :basis-t          basis-t-or-nil
  :path-fingerprint permission-path-fingerprint
- :edge edge-cursor}
+ :edge             edge-cursor}
 ```
 
 `path-fingerprint` should change when schema or resolved relation eids change. If the fingerprint does not match, fail with `ex-info` rather than returning a misleading page.
@@ -230,8 +227,8 @@ The page-bound section talks about `:key`, `:paths`, and `path-frontier`, but it
 Introduce an internal edge value:
 
 ```clojure
-{:node result-object-or-eid
- :cursor edge-cursor
+{:node     result-object-or-eid
+ :cursor   edge-cursor
  :frontier path-frontier}
 ```
 
@@ -261,23 +258,23 @@ The plan correctly says `read-relationships` cannot use only a resource or subje
 Define relationship edge cursor variants:
 
 ```clojure
-{:scan :subject
+{:scan  :subject
  :index :eavt
- :e subject-eid
- :a forward-relationship-attr-eid
- :v [subject-type relation-eid resource-type resource-eid]}
+ :e     subject-eid
+ :a     forward-relationship-attr-eid
+ :v     [subject-type relation-eid resource-type resource-eid]}
 
-{:scan :resource
+{:scan  :resource
  :index :eavt
- :e resource-eid
- :a reverse-relationship-attr-eid
- :v [resource-type relation-eid subject-type subject-eid]}
+ :e     resource-eid
+ :a     reverse-relationship-attr-eid
+ :v     [resource-type relation-eid subject-type subject-eid]}
 
-{:scan :global
+{:scan  :global
  :index :avet
- :a forward-relationship-attr-eid
- :v [subject-type relation-eid resource-type resource-eid]
- :e subject-eid}
+ :a     forward-relationship-attr-eid
+ :v     [subject-type relation-eid resource-type resource-eid]
+ :e     subject-eid}
 ```
 
 Do not attempt to reuse the lookup-resource edge cursor for relationship reads.

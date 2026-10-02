@@ -65,10 +65,10 @@
 (def shared-dag-schema
   "definition user {}
    definition document {
-     relation a: user
-     relation b: user
-     relation c: user
-     permission view = (a & b) + (a & c)
+     relation aaa: user
+     relation bbb: user
+     relation ccc: user
+     permission view = (aaa & bbb) + (aaa & ccc)
    }")
 
 (def recursive-schema
@@ -209,15 +209,15 @@
         document (object :document "d")
         env
         (fixture shared-dag-schema [user document]
-                 [(eacl/->Relationship user :a document)
-                  (eacl/->Relationship user :c document)])
+                 [(eacl/->Relationship user :aaa document)
+                  (eacl/->Relationship user :ccc document)])
         operator-plan (plan/seal-plan (:adapter env) [:document :view])
         stats (atom {})]
     (is (true?
          (binding [evaluator/*evaluation-stats* stats]
            (check env operator-plan user document))))
     (is (= 1 (:memo-hits @stats))
-        "the shared :a leaf is physically decided once")
+        "the shared :aaa leaf is physically decided once")
     (is (= 3 (:scalar-equivalent-predicates @stats))
         "short-circuiting avoids no demanded leaf and repeats no shared leaf")))
 

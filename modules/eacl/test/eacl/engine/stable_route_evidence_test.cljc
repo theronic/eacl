@@ -66,10 +66,17 @@
       (is (= #{1 2 3} (completions/completions (:answer result) [completions/x completions/y])))
       (is (= 110 (evidence/valid-until (:answer result))))
       (is (= [11] (mapv :relation-eid (:commands result))))
-      (doseq [value [(evidence/with-certificate true 110 true) (evidence/fault :test/failure :invalid)]]
-        (let [result (run plan rows {101 value 102 y} (known-options rule value nil))]
-          (is (= value (:answer result)))
-          (is (= [] (:commands result))))))))
+      ;; A known definite grant decides alone.
+      (let [value (evidence/with-certificate true 110 true)
+            result (run plan rows {101 value 102 y} (known-options rule value nil))]
+        (is (= value (:answer result)))
+        (is (= [] (:commands result))))
+      ;; A known fault is a Kleene unknown, never a decision: the remaining
+      ;; alternative is still probed, and composes with it pointwise.
+      (let [value (evidence/fault :test/failure :invalid)
+            result (run plan rows {101 value 102 y} (known-options rule value nil))]
+        (is (= (evidence/combine :union value y) (:answer result)))
+        (is (= [11] (mapv :relation-eid (:commands result))))))))
 
 (deftest known-arrow-binding-is-not-requalified-or-reprobed
   (doseq [rule [(arrow root 20 target)
@@ -108,9 +115,15 @@
     (is (= #{1 2 3} (completions/completions answer [completions/x completions/y])))
     (is (= 110 (evidence/valid-until answer)))
     (is (= ["x" "y"] (evidence/missing-fields answer)))
-    (is (evidence/fault? (:answer (run plan rows {101 (evidence/fault :test/failure :invalid)
-                                                               102 true}))))
-    (is (true? (:answer (run plan rows {101 true 102 (evidence/fault :test/failure :invalid)}))))))
+    ;; A grant absorbs a faulting alternative whichever rule comes first
+    ;; (eacl-rust NEW-1); two faulting alternatives unite their reasons.
+    (is (true? (:answer (run plan rows {101 (evidence/fault :test/failure :invalid) 102 true}))))
+    (is (true? (:answer (run plan rows {101 true 102 (evidence/fault :test/failure :invalid)}))))
+    (is (= [[:test/failure :invalid] [:test/failure :other]]
+           (evidence/fault-reasons
+            (:answer (run plan rows {101 (evidence/fault :test/failure :invalid)
+                                     102 (evidence/fault :test/failure :other)})))))
+    (is (evidence/fault? (:answer (run plan rows {101 (evidence/fault :test/failure :invalid) 102 false}))))))
 
 (deftest bidirectional-arrows-continue-past-conditional-and-expired-candidates
   (doseq [rule [(arrow root 20 target)

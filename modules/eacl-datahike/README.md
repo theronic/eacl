@@ -51,9 +51,9 @@ the explicit, bounded maintenance migration before starting ordinary v8
 clients:
 
 ```clojure
-(require '[eacl.datahike.migrations.v7-to-v8 :as v7-to-v8])
+(require '[eacl.datahike.migrations.v7-to-v8])
 
-(v7-to-v8/migrate! conn)
+(eacl.datahike.migrations.v7-to-v8/migrate! conn)
 ```
 
 The stored `:eacl/schema-string` is authoritative by default. A maintenance
@@ -86,29 +86,30 @@ Consumers must remove relationships through EACL before retracting a
 permissioned entity. `eacl.datahike.integrity/dangling-relationship-report`
 provides an explicit offline audit for violations of that contract.
 
-### Optional atomic entity retraction
+#For application-owned IDs, follow the [backend quickstart](../../README.md#datahike-quickstart). The deletion example below assumes that `:app/id` setup.
+
+## Optional atomic entity retraction
 
 Datahike support is selected from the actual schema flexibility, attribute
 representation, and writer topology:
 
 ```clojure
 (require '[datahike.api :as d]
-         '[eacl.datahike.safe-retraction :as safe-retraction])
+         '[eacl.datahike.safe-retraction])
 
-(safe-retraction/support-descriptor (d/db conn))
+(eacl.datahike.safe-retraction/support-descriptor (d/db conn))
 ;; :schema-flexibility :read  + in-process writer => :named
 ;; default :write            + in-process writer => :direct
 ;; function-unsafe remote writer                => :unsupported
 
 ;; Named :read mode:
-(safe-retraction/install! conn)
+(eacl.datahike.safe-retraction/install! conn)
 
 ;; Direct :write mode (no named function is installed):
-(safe-retraction/prepare! conn)
-(d/transact
- conn
- (safe-retraction/retract-entity-tx-data
-  (d/db conn) [:eacl/id "account-1"]))
+(eacl.datahike.safe-retraction/prepare! conn)
+(d/transact conn
+  (eacl.datahike.safe-retraction/retract-entity-tx-data
+   (d/db conn) [:app/id "account-1"]))
 ```
 
 Named-mode `install!` installs `:eacl.fn/retractEntity` and verifies that the
@@ -158,14 +159,14 @@ native child/subject order is not semantic. Configure structural ceilings with
 client-level `:permission-tree-limits`.
 
 ```clojure
-{:deps {dev.eacl/eacl-datahike {:mvn/version "8.0.0-SNAPSHOT"}}}
+{:deps {dev.eacl/eacl-datahike {:mvn/version "8.0.0-RC-2026-09-12"}}}
 ```
 
 Its POM depends on `dev.eacl/eacl` at the exact same version, so consumers do
 not declare core separately. EACL targets Java 25 by default; explicit
 source/custom builds can target older Java, subject to Datahike's own runtime
 requirements. Git and `:local/root` development must first follow the explicitly opt-in
-[core source preparation instructions](../../README.md#source-dependencies-and-formal-tooling).
+[core source preparation instructions](../../README.md#development-from-source).
 Maven consumers install no formal tools.
 
 Build this module in isolation with `clojure -T:build jar`.

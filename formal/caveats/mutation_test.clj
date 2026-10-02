@@ -54,11 +54,52 @@
      :required-caveat-omitted
      (let [original m/allowed?]
        (with-redefs [m/allowed? (fn [schema relation caveat] (or (nil? caveat) (original schema relation caveat)))]
-         (not= false (m/allowed? {:allowances {:viewer #{"c"}}} :viewer nil))))}))
+         (not= false (m/allowed? {:allowances {:viewer #{"c"}}} :viewer nil))))
+     :fault-beats-deciding-element
+     (let [original m/comprehension-value]
+       (with-redefs [m/comprehension-value
+                     (fn [parameters [_ range variable predicate :as plan] context scope]
+                       (let [r (m/partial-value parameters range context scope)
+                             faults (when (m/has-value? r)
+                                      (keep #(:fault (m/partial-value parameters predicate context
+                                                                      (assoc scope variable [(m/bound-type (:type r)) %])))
+                                            (m/elements (:type r) (:value r))))]
+                         (if (seq faults) (m/fault (first (sort faults))) (original parameters plan context scope))))]
+         (not= {:outcome :true}
+               (m/evaluate {"xs" [:list :string] "m" [:map :string :bool]}
+                           [:exists [:param "xs"] "x" [:index [:param "m"] [:var "x"]]]
+                           {"xs" ["zz" "a"] "m" {"a" true}} {}))))
+     :absent-range-reports-predicate-fields
+     (let [original m/comprehension-value
+           parameters {"inventory" [:list :string] "sensitive" [:list :string]}
+           plan [:not [:exists [:param "inventory"] "item" [:in [:var "item"] [:param "sensitive"]]]]]
+       (with-redefs [m/comprehension-value
+                     (fn [parameters [_ range _ predicate :as plan] context scope]
+                       (let [result (original parameters plan context scope)
+                             named (keep #(when (and (vector? %) (= :param (first %))) (second %))
+                                         (tree-seq vector? seq predicate))]
+                         (if (:missing (m/partial-value parameters range context scope))
+                           (update result :missing into (remove #(contains? context %) named))
+                           result)))]
+         (not= #{"inventory"} (:missing-fields (m/evaluate parameters plan {} {})))))
+     :comprehension-charged-once
+     (let [original m/estimate-work]
+       (with-redefs [m/estimate-work
+                     (fn charged-once
+                       ([parameters plan context] (charged-once parameters plan context {}))
+                       ([parameters [op a b c :as plan] context scope]
+                        (if (and (m/comprehensions op) (= :param (first a)) (contains? context (second a)))
+                          (let [t (get parameters (second a)) v (get context (second a))]
+                            (original parameters [op [:literal t (if (map? v) (select-keys v (take 1 (keys v))) (vec (take 1 v)))] b c]
+                                      context scope))
+                          (original parameters plan context scope))))]
+         (not= {:outcome :error :reason :resource-limit}
+               (m/evaluate {"xs" [:list :string] "ys" [:list :string]}
+                           [:exists [:param "xs"] "x" [:in [:var "x"] [:param "ys"]]] {"xs" ["a" "b"]} {}))))}))
 
 (deftest registered-mutations-are-executed-and-killed
   (let [registered (:controls (edn/read-string (slurp "formal/caveats/mutations.edn")))
         results (run-controls)]
-    (is (= 11 (count registered)))
+    (is (= 14 (count registered)))
     (is (= (set (map :id registered)) (set (keys results))))
     (doseq [[id killed?] results] (is (true? killed?) (name id)))))

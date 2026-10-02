@@ -1,0 +1,19 @@
+{:id :EACL-FORMAL-090
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace "eacl-rust/EACL-RS-102/caveat-member-literal-over-string-bound"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions
+ ["v8.0.0 commit a698b3bdf15e61be9bfd1324d7d7c67dc82176be"]
+ :affected-backends [:shared]
+ :root-cause
+ "The CEL profile parser admitted every quoted string literal against the 4096-byte string bound, but built the `.name` member form as the string literal \"name\" without that admission, and identifiers have no length limit of their own. Every evaluation re-validates the plan with validate-plan, which rejects the over-long literal, so a schema write admitted a Caveat whose every evaluation faulted with :resource-limit."
+ :fix
+ "Admit a `.name` member through the same string-literal admission as a quoted literal, at the member's offset, so compile-plan rejects it with :eacl.caveat/invalid :resource-limit and every plan it returns passes validate-plan."
+ :closing-evidence
+ ["eacl.caveats.plan-test/member-literals-are-admitted-like-string-literals"
+  "eacl.caveats.definition-test/over-long-member-is-rejected-at-schema-admission"
+  "eacl.formal.caveats.plan-bridge/admitted-member-literals-are-model-typed-plans"]
+ :notes
+ "Found by the eacl-rust port (BUGS.md EACL-RS-102), verified against main a698b3bd on DataScript."}

@@ -14,7 +14,8 @@ mkdir -p "$output"
 node formal/caveats/check-boundary.mjs
 time_limit=$(json_value formal/caveats/gate.json verificationTimeLimitSeconds)
 resource_limit=$(json_value formal/caveats/gate.json proofResourceLimit)
-"$dafny" verify --verification-time-limit "$time_limit" --resource-limit "$resource_limit" \
+"$dafny" verify --manual-lemma-induction \
+  --verification-time-limit "$time_limit" --resource-limit "$resource_limit" \
   formal/dafny/CaveatOutcomes.dfy formal/dafny/CaveatProfile.dfy \
   formal/dafny/CaveatSchema.dfy formal/dafny/QualifierLifecycle.dfy > "$output/proofs.log" 2>&1 || {
   cat "$output/proofs.log"

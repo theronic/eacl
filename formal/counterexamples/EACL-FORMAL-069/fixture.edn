@@ -1,0 +1,44 @@
+{:operation-family
+ [:check-permission :count-resources :read-schema
+  :delete-relationships! :tx-relationships :delete-object!]
+ :before
+ {:misspelled-consistency
+  {:request-key :consistncy
+   :requested-value :fully-consistent
+   :effective-value :minimize-latency}
+  :ignored-page-basis
+  {:request-key :page/basis
+   :requested-value :live
+   :effective-value :stable}
+  :public-empty-schema-escape-hatch
+  {:request-key :allow-empty-schema?
+   :requested-value true
+   :documented-scope :backend-only}
+  :single-relationship-delete
+  {:input-shape :relationship-record
+   :derived-updates []
+   :reported :success}
+  :single-update-plan
+  {:input-shape :update-map
+   :derived-updates []
+   :reported :success}
+  :misspelled-expiry
+  {:request-key :valid-until-mss
+   :requested-value 0
+   :effective-value :no-expiry}
+  :mixed-object-delete
+  {:request-keys [:object :native-eid]
+   :selected-identity :native-eid}
+  :nil-object-delete
+  {:object {:type :user :id nil}
+   :reported :success
+   :retracted-datoms 0}}
+ :risk
+ [:weakened-consistency
+  :ignored-pagination-consistency-control
+  :schema-safety-guard-bypass
+  :permanent-relationship-from-dropped-expiry
+  :revocation-not-applied
+  :object-cleanup-not-applied
+  :empty-transaction-reported-as-success
+  :wrong-object-relationships-deleted]}

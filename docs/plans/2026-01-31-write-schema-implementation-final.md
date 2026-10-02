@@ -190,11 +190,11 @@ This would make it easier to add SpiceDB features incrementally.
 
 ```clojure
 (require '[eacl.core :as eacl])
-(require '[eacl.datomic.core :as datomic])
+(require '[eacl.datomic.core :as eacl.datomic])
 
 ;; Create client
-(def client (datomic/make-client conn {:entity->object-id :eacl/id
-                                        :object-id->ident (fn [id] [:eacl/id id])}))
+(def client (eacl.datomic/make-client conn {:entity->object-id :eacl/id
+                                            :object-id->ident  (fn [id] [:eacl/id id])}))
 
 ;; Write schema using SpiceDB DSL
 (eacl/write-schema! client
@@ -227,7 +227,7 @@ The implementation rejects invalid schemas with detailed error messages:
 ;;    {:errors [{:type :invalid-self-permission, :message "..."}]}
 
 ;; Invalid arrow target
-(eacl/write-schema! client 
+(eacl/write-schema! client
   "definition a { relation b: b }
    definition b {}
    definition c {

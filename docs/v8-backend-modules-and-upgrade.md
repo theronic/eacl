@@ -1,9 +1,75 @@
 # EACL backend modules
 
-Authorization semantics and cache orchestration live in `modules/eacl`.
-Database access, immutable snapshot selection, transactions, exact-snapshot
-recovery, and cursor protection remain adapter responsibilities. Applications
-depend on one adapter module; backend authors depend on core.
+Choose the adapter for your database. It includes the shared EACL library;
+you do not need to declare core separately. Start with the
+[Datomic quickstart](../README.md#quickstart), or choose another backend below.
+
+## Upgrading an application
+
+Use the same published version for all EACL modules. The consumer examples use
+`8.0.0-RC-2026-09-12`, a release candidate available on
+[Clojars](https://clojars.org/dev.eacl/eacl-datomic).
+
+Check the dependency path with the same aliases your application actually uses:
+
+```sh
+clojure -Stree
+clojure -Spath
+```
+
+Remove unintended `:local/root`, `:override-deps`, or development aliases from
+your launch command, build scripts, and test configuration. Changing a Maven
+version does not override an alias that selects a checkout.
+
+### Fresh or disposable databases
+
+For a new Datomic database:
+
+1. Connect to the database.
+2. Run `(eacl.datomic.schema/install! conn)`.
+3. Install your application's unique ID attribute, such as `:app/id`.
+4. Create the client with both ID converters.
+5. Write the permission schema and application entities, then relationships.
+
+The [quickstart](../README.md#quickstart) contains every step. If an old memory
+database is disposable, recreate it before following those steps. Do not
+recreate a database whose data you need to keep.
+
+### Retained databases
+
+Back up the database and rehearse the upgrade on a copy. Stop authorization
+readers and writers for migration. Depending on the existing format, follow:
+
+1. [v6-to-v7 migration](migration-v6-to-v7.md), if using v6 relationship entities.
+2. [v7-to-v8 permission migration](migration-v7-to-v8.md).
+3. [Relationship storage 7-to-8 migration](relationship-storage-v7-to-v8.md).
+4. [Serving rollout](caveats.md#coordinated-rollout-and-rollback) before allowing
+   expiring or conditional relationships.
+
+Client construction does not migrate retained data. Running the fresh-database
+installer is not a substitute for these migrations.
+
+If you use Datomic's saved deletion function, rerun
+`eacl.datomic.safe-retraction/install!` after updating the dependency. Datomic
+stores the function body in the database; updating the JAR does not replace it.
+
+### Symptoms and fixes
+
+| Symptom | Check | Fix |
+| --- | --- | --- |
+| The app still runs old code | Launch aliases and resolved classpath | Remove unintended local overrides; restart with the published dependency. |
+| `Relationship storage ABI 8` startup error | Fresh database or retained data? | Use `schema/install!` for fresh Datomic setup; migrate retained data explicitly. |
+| Unknown cache options | `:remember-answers`, `:ttl-ms`, or other old keys | Remove the cache map to use defaults; see [cache configuration](cache.md). |
+| Custom IDs do not resolve | Unique attribute and both conversion functions | Follow the `:app/id` setup in the quickstart. |
+| An application test queries a missing internal attribute | Tests coupled to tuple storage | Assert public `can?` or anchored `read-relationships` results. |
+| Saving an expired or same-role share conflicts | Use of `:create` | Use `:touch`; see [updating shares](caveats.md#updating-a-share). |
+| Lookup rejects `:relationship` | Query option name | This RC accepts `:resource/relationship` or `:subject/relationship`; see [aggregate queries](aggregate-authorization.md). |
+| A sharing screen still shows access after expiration | UI refresh and retained snapshots | Refresh without waiting for a write; check current access separately from saved shares. |
+| Atomic creation fails with `:eacl/unknown-object` | New entities exist only in pending `:tx-data` | See the [public tempid limitation](atomic-writes.md#new-entities-and-tempids). |
+
+Keep existing application IDs unless you are deliberately migrating them.
+The default `:eacl/id` remains supported; using an application-owned attribute
+for a new application does not require changing old databases.
 
 ## Choose a module
 
@@ -79,15 +145,15 @@ Every bundled backend creates a bounded client-private cache unless explicitly
 disabled:
 
 ```clojure
-(require '[eacl.cache :as cache])
+(require '[eacl.cache])
 
-(datascript/make-client conn {:cache cache/no-cache})
-(datahike/make-client conn {:cache cache/no-cache})
-(datomic/make-client conn {:cache cache/no-cache})
-(datalevin/make-client conn {:cache cache/no-cache
+(eacl.datascript/make-client conn {:cache eacl.cache/no-cache})
+(eacl.datahike/make-client conn {:cache eacl.cache/no-cache})
+(eacl.datomic/make-client conn {:cache eacl.cache/no-cache})
+(eacl.datalevin/make-client conn {:cache eacl.cache/no-cache
                              ;; plus mandatory lifecycle, watermark,
                              ;; and signing options
-                             })
+                                  })
 ```
 
 Every bundled adapter also certifies EACL's schema generation independently
@@ -216,12 +282,11 @@ admits each (node, entity) exactly once. Each client accepts positive
 `:recursive-traversal-limits` overrides:
 
 ```clojure
-(datascript/make-client
- conn
- {:recursive-traversal-limits
-  {:max-derived-grants 200000
-   :max-advanced-datoms 200000
-   :max-queued-work 200000}})
+(eacl.datascript/make-client conn
+  {:recursive-traversal-limits
+   {:max-derived-grants  200000
+    :max-advanced-datoms 200000
+    :max-queued-work     200000}})
 ```
 
 Exceeding a ceiling throws `:eacl.recursive-traversal/limit-exceeded`. Use
@@ -242,12 +307,11 @@ enumerations (point checks, lookups, counts) and a replay ledger for cursor
 replays; slots are held for the full synchronous call chain of the work:
 
 ```clojure
-(datascript/make-client
- conn
- {:service-admission
-  {:max-concurrent 64        ; enumerations holding a slot at once
-   :max-replays 16           ; concurrent cursor replays in total
-   :max-replays-per-key 2}}) ; concurrent replays of one continuation
+(eacl.datascript/make-client conn
+  {:service-admission
+   {:max-concurrent      64        ; enumerations holding a slot at once
+    :max-replays         16           ; concurrent cursor replays in total
+    :max-replays-per-key 2}}) ; concurrent replays of one continuation
 ```
 
 Rejections are `:eacl.service/admission-rejected` and
@@ -273,7 +337,10 @@ reconstruction.
 
 The tree is a shallow structural explanation, not a flattened authorization
 answer. It preserves union, intersection, directed exclusion, permission, and
-arrow boundaries, empty branches, and duplicate multiplicity. Child/subject
+arrow boundaries, empty branches, and duplicate multiplicity. Caveated and
+expiring Relationships are listed like plain ones; the leaf subject or arrow
+child node they reach carries their `:caveat`, `:caveat-context`, and
+`:valid-until-ms`, and nothing is evaluated. Child/subject
 order is deliberately unspecified except that exclusion retains left/right
 operand order.
 Use `can?` for membership decisions and compare normalized tree topology with
@@ -282,11 +349,11 @@ multisets when order is irrelevant.
 Clients accept `:permission-tree-limits` with positive portable exact integers:
 
 ```clojure
-{:max-depth 50
- :max-schema-components 100000
+{:max-depth               50
+ :max-schema-components   100000
  :max-relationship-values 100000
- :max-tree-nodes 100000
- :max-leaf-subjects 100000}
+ :max-tree-nodes          100000
+ :max-leaf-subjects       100000}
 ```
 
 These are construction-time ceilings; requests cannot override them. Limit,
@@ -305,13 +372,20 @@ loops should call `eacl.execution/check!` at bounded internal checkpoints.
 ## Backend extension boundary
 
 The adapter operation map validates snapshot/source identity, consistency,
-object conversion, schema definitions, adjacency, direct matches, recursive
-nodes, transaction behavior, cursor identity, the independent
+application-ID conversion, object externalization, schema definitions, adjacency, direct matches,
+recursive nodes, transaction behavior, cursor identity, the independent
 `:schema-generation` operation, and optional ordered-generation proof
 capability. A third-party adapter without certified proof support remains a
 correct exact-basis adapter. Returning nil for schema generation also
 disables cross-request derived-state reuse while preserving request-local
 reuse.
+
+Every v8 adapter continues to implement `:object-id->internal`. It must always
+invoke the configured identity codec and must not treat a numeric application
+ID as a native entity ID. Resolved IDs do not need another adapter operation:
+the shared engine receives them through its explicit `-eids` entry points.
+Third-party adapters therefore need no new operation or configuration key;
+they must remove any numeric-shape pass-through from the existing converter.
 
 Backend authors should follow the [adapter boundary
 inventory](v8-backend-adapter-boundary.md) and run the shared public API,
@@ -329,6 +403,7 @@ and rejected candidate deterministically.
 The separate `eacl-spicedb` repository must be recut against this core before
 it can claim v8 compatibility. Its reader boundary must implement or explicitly
 reject the new `:schema-generation` and certified `:direct-match?` obligations,
+make `:object-id->internal` a codec-only conversion boundary,
 wire `check-permissions` and both authorized pagination query shapes through
 the shared contracts where its topology permits, adopt the current encrypted
 cursor ABI, and pass the aggregate conformance suite. An older published

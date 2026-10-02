@@ -56,8 +56,8 @@ definition document {
 `folder/read` is recursive. `document/view` is not part of the recursive SCC, but it transitively depends on one. A `lookup-resources` query for:
 
 ```clojure
-{:subject user
- :permission :view
+{:subject       user
+ :permission    :view
  :resource/type :document}
 ```
 
@@ -74,9 +74,9 @@ Recommendation:
 - Define:
 
 ```clojure
-recursive-sccs       := SCCs with size > 1 or self-edge
-grant-indexed-nodes  := all permission nodes that can reach any recursive-scc node
-raw-indexed-nodes    := permission nodes not in grant-indexed-nodes
+recursive-sccs := SCCs with size > 1 or self-edge
+grant-indexed-nodes := all permission nodes that can reach any recursive-scc node
+raw-indexed-nodes := permission nodes not in grant-indexed-nodes
 ```
 
 - Planner rule:
@@ -92,11 +92,11 @@ The plan describes grant semantics in prose, but the grant builder is the most f
 For a permission node `[resource-type permission-name]`, an effective grant should be:
 
 ```clojure
-{:subject-type subject-type
- :subject-eid subject-eid
- :permission permission-name
+{:subject-type  subject-type
+ :subject-eid   subject-eid
+ :permission    permission-name
  :resource-type resource-type
- :resource-eid resource-eid}
+ :resource-eid  resource-eid}
 ```
 
 The builder needs formal rules for each permission arm.

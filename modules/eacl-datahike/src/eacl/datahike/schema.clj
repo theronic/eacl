@@ -12,7 +12,8 @@
             [eacl.schema.expression-resolver :as expression-resolver]
             [eacl.schema.model :as model]
             [eacl.schema.relation-allowance :as relation-allowance]
-            [eacl.schema.replacement-plan :as replacement-plan]))
+            [eacl.schema.replacement-plan :as replacement-plan]
+            [eacl.schema.wildcard :as wildcard]))
 
 (def relation-key-attr
   :eacl.relation/resource-type+relation-name+subject-type)
@@ -230,7 +231,10 @@
   (let [pattern (cond-> relation-pull
                   (ddb/entid db :eacl.relation/caveats)
                   (into [:eacl.relation/allows-unqualified?
-                         {:eacl.relation/caveats [:eacl.caveat/name]}]))]
+                         {:eacl.relation/caveats [:eacl.caveat/name]}])
+                  (ddb/entid db wildcard/unqualified-attribute)
+                  (into [wildcard/unqualified-attribute
+                         {wildcard/caveats-attribute [:eacl.caveat/name]}]))]
     (mapv #(relation-allowance/canonicalize (d/pull db pattern (:e %)))
           (ddb/avet-datoms db relation-key-attr))))
 
@@ -512,6 +516,16 @@
              :eacl/error :eacl.schema/empty-schema-guard
              :existing {:relations (count (:relations existing-schema))
                         :permissions (count (:permissions existing-schema))}})))
+        wildcards? (wildcard/schema-uses-wildcards? (:relations new-schema-map))
+        _ (when (and wildcards?
+                     (not (every? #(ddb/entid db %) wildcard/attributes)))
+            (throw
+             (ex-info
+              "Datahike database lacks the EACL wildcard Relation attributes; write the schema through eacl/write-schema! or install eacl.datahike.schema/datahike-schema."
+              {:type :eacl.schema/wildcard-attributes-missing
+               :eacl/error :eacl.schema/wildcard-attributes-missing
+               :backend :datahike
+               :attributes (vec (sort wildcard/attributes))})))
         deltas (compare-schema existing-schema new-schema-map)
         _ (relation-allowance/validate-existing! (:relations deltas) #(stored-relation-caveats db %))
         semantic
@@ -554,6 +568,9 @@
         tx-data
         (vec
          (concat
+          ;; The EACL-owned wildcard subject exists before any wildcard
+          ;; relationship can reference it; the upsert is idempotent.
+          (when wildcards? [wildcard/entity])
           (:additions caveats)
           (relation-allowance/attribute-retractions relations)
           relation-additions
@@ -597,6 +614,22 @@
            :no-op? no-op?
            :schema-string schema-string)))
 
+(defn- ensure-wildcard-attributes!
+  "A database installed before wildcard support gains the two additive
+  Relation attributes on its first wildcard schema write. Parsing happens
+  before any transaction, so an invalid schema installs nothing."
+  [conn schema-string {:keys [expression-limits allow-caveats?]}]
+  (let [schema (expression-resolver/validate-schema
+                schema-string
+                (expression-policy/normalize-client-limits expression-limits)
+                {:allow-caveats? allow-caveats?})]
+    (when (wildcard/schema-uses-wildcards? (:relations schema))
+      (let [db (d/db conn)
+            missing (filterv #(nil? (ddb/entid db (:db/ident %)))
+                             caveat-schema/wildcard-attribute-schema)]
+        (when (seq missing)
+          (d/transact conn missing))))))
+
 (defn- reject-committed-retain-inert!
   [options]
   (when (= :retain-inert (:orphan-policy options))
@@ -617,6 +650,7 @@
    (write-schema! conn schema-string options ::read-current-generation))
   ([conn schema-string options known-schema-generation]
    (reject-committed-retain-inert! options)
+   (ensure-wildcard-attributes! conn schema-string options)
    ;; Validate before the additive first-write coherence bootstrap.
    (plan-schema-replacement (d/db conn) schema-string options)
    (let [db (ensure-schema-coherence! conn)

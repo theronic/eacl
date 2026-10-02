@@ -1,0 +1,19 @@
+{:id :EACL-FORMAL-093
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace "eacl-rust/EACL-RS-109/leading-block-comment-with-closing-brace"
+ :minimized-fixture "fixture.edn"
+ :impact :other
+ :affected-versions
+ ["v8.0.0 commit a698b3bdf15e61be9bfd1324d7d7c67dc82176be"]
+ :affected-backends [:shared]
+ :root-cause
+ "The grammar parsed a Caveat body as '{' caveat-source '}', and Instaparse inserts its comment-aware auto-whitespace before every terminal. A leading block comment was therefore part of the stored source when the body parsed that way, and was silently consumed as schema whitespace only when it contained '}', because the body expression then failed to reach the closing brace. Whether a Caveat was admitted, and the source and identity it stored, depended on what its comment said."
+ :fix
+ "Lex the body with the schema lexer, as SpiceDB v1.56.0 does, and store the CEL expression SpiceDB compiles: the text from the body's first token to its last, where a line end after the expression's last name, literal, ')', '}' or '*' is a token. Comments before the first token or after the last are outside the expression whatever they contain; inside it, CEL accepts '//' comments and rejects '/* */' with :eacl.caveat/invalid :syntax-error, as SpiceDB does."
+ :closing-evidence
+ ["eacl.caveats.definition-test/caveat-source-is-the-spicedb-cel-expression"
+  "eacl.caveats.definition-test/braces-in-caveat-literals-and-comments"
+  "eacl.spicedb.compatibility-corpus-test/spicedb-verdicts-test"]
+ :notes
+ "Found by the eacl-rust port (BUGS.md EACL-RS-109), verified against main a698b3bd. The first fix stored the text between the braces verbatim and rejected every block comment; it was replaced by SpiceDB's rule after the SpiceDB v1.56.0 container accepted block comments outside the expression."}

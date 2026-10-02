@@ -18,7 +18,7 @@ The `impl_fixed.clj` implementation has **critical cursor pagination bugs** that
 The `lazy_fixed_test.clj` tests are **correctly designed** and testing fundamental pagination requirements:
 
 ### Critical Test: Manual Step-by-Step Pagination
-```clojure
+```text
 ;; Expected: 3 servers total for super-user
 Page 1: limit=2, cursor=nil     → 2 servers + cursor    ✓
 Page 2: limit=2, cursor=page1   → 1 server + cursor     ✗ (returns 0)  
@@ -51,7 +51,7 @@ Page 3: limit=2, cursor=page2   → 0 servers, nil cursor ✗ (returns data)
 ### 2. **Union Permissions Make Cursor Pagination Complex**
 **The Real Problem**: Union permissions require combining multiple index ranges, each with their own order:
 
-```clojure
+```text
 ;; server.admin = account->admin + shared_admin
 Path A: index-range → [server1@pos1, server2@pos5] (in index order)
 Path B: index-range → [server3@pos2, server4@pos8] (in index order)
@@ -61,7 +61,7 @@ Combined: [server1, server2, server3, server4] (loses cursor semantics)
 **After sorting**: Order changes → cursor positions become invalid
 
 ### 3. **Current Helper Functions Are Fundamentally Broken**
-```clojure
+```text
 (defn combine-union-results [path-results cursor limit]
   ;; ✅ Concatenates all paths correctly
   ;; ✅ Deduplicates efficiently  
@@ -153,22 +153,22 @@ For proper union permission pagination, implement path-aware cursors:
   (let [permission-paths (get-unified-permission-paths db (:resource/type query) (:permission query))
         cursor (:cursor query)
         limit (:limit query)
-        
+
         ;; Apply cursors to individual paths
-        path-results-with-cursors 
-        (map-indexed 
-          (fn [path-idx path]
-            (let [path-cursor (when cursor 
-                                (get-in cursor [:path-cursors path-idx]))
-                  cursor-eid (when path-cursor (:last-resource-id path-cursor))]
-              (traverse-traversal-path db subject-type subject-eid path 
-                                       resource-type cursor-eid limit)))
-          permission-paths)
-        
+        path-results-with-cursors
+        (map-indexed
+         (fn [path-idx path]
+           (let [path-cursor (when cursor
+                               (get-in cursor [:path-cursors path-idx]))
+                 cursor-eid (when path-cursor (:last-resource-id path-cursor))]
+             (traverse-traversal-path db subject-type subject-eid path
+                                      resource-type cursor-eid limit)))
+         permission-paths)
+
         ;; Combine without sorting, preserving index order
         combined-resources (combine-union-results-fixed path-results-with-cursors nil limit)]
-    
-    {:data (map #(eid->spice-object db (first %) (second %)) combined-resources)
+
+    {:data   (map #(eid->spice-object db (first %) (second %)) combined-resources)
      :cursor (create-path-aware-cursor path-results-with-cursors permission-paths limit)}))
 ```
 
@@ -182,27 +182,27 @@ For proper union permission pagination, implement path-aware cursors:
   (let [permission-paths (get-unified-permission-paths db (:resource/type query) (:permission query))
         cursor (:cursor query)
         limit (:limit query)
-        
+
         ;; Extract current path index from cursor
         current-path-index (or (:path-index cursor) 0)
         path-cursor (or (:resource-id cursor) nil)
-        
+
         ;; Get results from current path only
         current-path (nth permission-paths current-path-index nil)]
-    
+
     (if current-path
-      (let [path-results (traverse-traversal-path db subject-type subject-eid current-path 
+      (let [path-results (traverse-traversal-path db subject-type subject-eid current-path
                                                   resource-type path-cursor limit)
             next-cursor (when (= (count path-results) limit)
                           (base/->Cursor current-path-index (second (last path-results))))]
-        
+
         ;; If this path is exhausted, move to next path
-        (if (and (< (count path-results) limit) 
+        (if (and (< (count path-results) limit)
                  (< (inc current-path-index) (count permission-paths)))
           (recur db (assoc query :cursor (base/->Cursor (inc current-path-index) nil)))
-          {:data (map #(eid->spice-object db (first %) (second %)) path-results)
+          {:data   (map #(eid->spice-object db (first %) (second %)) path-results)
            :cursor next-cursor}))
-      
+
       {:data [] :cursor nil})))
 ```
 
@@ -322,7 +322,7 @@ Union permissions require combining multiple independent index ranges, each with
 
 ### Key Insight Confirmed
 **Index order is sacred** - the single line change removing sorting fixed all pagination issues:
-```clojure
+```text
 ;; The fix: Remove this one line
 - (let [sorted-resources (sort stable-resource-comparator resources)
 + (let [cursor-filtered (apply-cursor-filter resources cursor)
@@ -343,4 +343,4 @@ Path-aware cursors can be implemented later for even more sophisticated paginati
 
 ## Implementation Success
 
-This plan successfully identified the root cause (sorting index results) and provided the minimal fix needed. The implementation is now ready for production deployment with full cursor pagination support. 
+This plan successfully identified the root cause (sorting index results) and provided the minimal fix needed. The implementation is now ready for production deployment with full cursor pagination support.

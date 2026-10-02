@@ -11,6 +11,7 @@
             [eacl.authorization.result-test]
             [eacl.authorization.qualification-test]
             [eacl.authorization.qualifier-cache-test]
+            [eacl.authorization.point-reuse-test]
             [eacl.authorization.temporal-test]
             [eacl.datascript.qualifier-cache-test]
             [eacl.cache.derived-schema-test]
@@ -24,6 +25,8 @@
             [eacl.datascript.caveat-schema-test]
             [eacl.caveats.plan-test]
             [eacl.caveats.partial-test]
+            [eacl.caveats.portable.evaluator-test]
+            [eacl.caveats.portable.datascript-test]
             [eacl.relationships.qualifier-test]
             [eacl.relationships.mutations-test]
             [eacl.core-test]
@@ -50,6 +53,7 @@
             [eacl.datascript.qualified-cursor-test]
             [eacl.datascript.qualified-cache-trace-test]
             [eacl.datascript.qualified-write-test]
+            [eacl.datascript.self-test]
             [eacl.caveats.schema-admission-test]
             [eacl.schema.relation-allowance-test]
             [eacl.datascript.qualified-schema-test]
@@ -74,6 +78,14 @@
             [eacl.operator.lookup-test]
             [eacl.operator.feature-gate-test]
             [eacl.operator.recursive-test]
+            [eacl.operator.delegated-recursion-test]
+            [eacl.operator.delegation-refinement-test]
+            [eacl.operator.folded-operator-test]
+            [eacl.engine.memoized-membership-refinement-test]
+            [eacl.engine.leveled-membership-refinement-test]
+            [eacl.engine.guarded-membership-refinement-test]
+            [eacl.engine.operand-order-refinement-test]
+            [eacl.operator.recursive-intersection-differential-test]
             [eacl.relationships.endpoint-pair-test]
             [eacl.relationships.edge-test]
             [eacl.relationships.upgrade-test]
@@ -91,8 +103,11 @@
             [eacl.schema.expression-graph-test]
             [eacl.schema.expression-fuzz-test]
             [eacl.schema.expression-persistence-test]
+            [eacl.datascript.fresh-client-decode-test]
             [eacl.schema.expression-policy-test]
             [eacl.spicedb.parser-portability-test]
+            [eacl.spicedb.compatibility-corpus-test]
+            [eacl.spicedb.resource-bounds-test]
             [eacl.subproblem-cache-test]
             [eacl.verified-kernel-test]
             [eacl.formal.cache-strategy-adversarial-test]
@@ -110,7 +125,16 @@
             [eacl.datascript.impl-test]
             [eacl.datascript.safe-retraction-test]
             [eacl.datascript.snapshot-lifecycle-test]
-            [eacl.datascript.storage-test]))
+            [eacl.datascript.set-algebra-reuse-test]
+            [eacl.datascript.kleene-fault-test]
+            [eacl.datascript.caveat-context-admission-test]
+            [eacl.engine.wildcard-membership-test]
+            [eacl.engine.kleene-membership-test]
+            [eacl.datascript.set-algebra-reuse-differential-test]
+            [eacl.datascript.storage-test]
+            [eacl.datascript.wildcard-test]
+            [eacl.datascript.wildcard-differential-test]
+            [eacl.datascript.wildcard-operator-routes-test]))
 
 (nodejs/enable-util-print!)
 
@@ -134,6 +158,7 @@
                'eacl.authorization.result-test
                'eacl.authorization.qualification-test
                'eacl.authorization.qualifier-cache-test
+               'eacl.authorization.point-reuse-test
                'eacl.authorization.temporal-test
                'eacl.datascript.qualifier-cache-test
                'eacl.cache.derived-schema-test
@@ -163,6 +188,7 @@
                'eacl.datascript.qualified-cursor-test
                'eacl.datascript.qualified-cache-trace-test
                'eacl.datascript.qualified-write-test
+               'eacl.datascript.self-test
                'eacl.caveats.schema-admission-test
                'eacl.schema.relation-allowance-test
                'eacl.datascript.qualified-schema-test
@@ -187,6 +213,14 @@
                'eacl.operator.lookup-test
                'eacl.operator.feature-gate-test
                'eacl.operator.recursive-test
+               'eacl.operator.delegated-recursion-test
+               'eacl.operator.delegation-refinement-test
+               'eacl.operator.folded-operator-test
+               'eacl.engine.memoized-membership-refinement-test
+               'eacl.engine.leveled-membership-refinement-test
+               'eacl.engine.guarded-membership-refinement-test
+               'eacl.engine.operand-order-refinement-test
+               'eacl.operator.recursive-intersection-differential-test
                'eacl.relationships.endpoint-pair-test
                'eacl.relationships.edge-test
                'eacl.relationships.upgrade-test
@@ -205,6 +239,8 @@
                'eacl.datascript.caveat-schema-test
                'eacl.caveats.plan-test
                'eacl.caveats.partial-test
+               'eacl.caveats.portable.evaluator-test
+               'eacl.caveats.portable.datascript-test
                'eacl.relationships.qualifier-test
                'eacl.relationships.mutations-test
                'eacl.schema.expression-test
@@ -213,8 +249,11 @@
                'eacl.schema.expression-graph-test
                'eacl.schema.expression-fuzz-test
                'eacl.schema.expression-persistence-test
+               'eacl.datascript.fresh-client-decode-test
                'eacl.schema.expression-policy-test
                'eacl.spicedb.parser-portability-test
+               'eacl.spicedb.compatibility-corpus-test
+               'eacl.spicedb.resource-bounds-test
                'eacl.subproblem-cache-test
                'eacl.verified-kernel-test
                'eacl.formal.cache-strategy-adversarial-test
@@ -232,6 +271,15 @@
                'eacl.datascript.impl-test
                'eacl.datascript.safe-retraction-test
                'eacl.datascript.snapshot-lifecycle-test
-               'eacl.datascript.storage-test))
+               'eacl.datascript.set-algebra-reuse-test
+               'eacl.datascript.kleene-fault-test
+               'eacl.datascript.caveat-context-admission-test
+               'eacl.engine.wildcard-membership-test
+               'eacl.engine.kleene-membership-test
+               'eacl.datascript.set-algebra-reuse-differential-test
+               'eacl.datascript.storage-test
+               'eacl.datascript.wildcard-test
+               'eacl.datascript.wildcard-differential-test
+               'eacl.datascript.wildcard-operator-routes-test))
 
 (set! *main-cli-fn* -main)

@@ -1,0 +1,14 @@
+{:ordinary-object
+ {:relation nil
+  :validation :accepted}
+ :unsupported-subject-set
+ {:relation :member
+  :validation :rejected-before-dispatch
+  :typed-error :eacl/unsupported-subject-relation
+  :base-object-substitution false}
+ :covered-boundaries
+ [:scalar-check :batch-check :enumeration :authorization-filter
+  :permission-tree :relationship-mutation :object-deletion]
+ :dafny-obligations
+ [:open-boundary-accepted-unsupported-subject-relation
+  :strict-boundary-rejects-unsupported-subject-relation]}

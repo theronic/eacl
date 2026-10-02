@@ -113,8 +113,8 @@ wrappers do not, and instead delegate `IDB/-config` to their origin database.
 MEASURED on datahike 0.8.1759, in BOTH modes:
 
 ```clojure
-seek [:room :owner]        → [:kb :reader :party]   ; bound IGNORED
-seek [:room :owner nil]    → [:room :owner :party]  ; correct
+seek [:room :owner] → [:kb :reader :party]   ; bound IGNORED
+seek [:room :owner nil] → [:room :owner :party]  ; correct
 seek [:room :owner :party] → [:room :owner :party]  ; correct
 ```
 

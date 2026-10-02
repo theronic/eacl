@@ -1,0 +1,17 @@
+{:schema-shapes
+ [{:permission :view :body "reader + editor"}
+  {:permission :view :body "parent->reader + parent->editor"}
+  {:permission :view :body "reader + parent->view"}
+  {:permission :both :body "reader & editor"}
+  {:permission :open :body "editor - reader"}
+  {:permission :open :body "reader - editor"}]
+ :faulting-relation :reader
+ :caveat "caveat bad(m map<bool>) { m[\"x\"] }"
+ :request-context {"m" {}}
+ :permutations {:operand-order [:as-written :reversed]
+                :relation-declaration-order [:as-written :reversed]
+                :object-creation-order [["alice" "d" "p"] ["p" "d" "alice"]]
+                :relationship-order [:as-written :reversed]}
+ :routes [:check-permission :can? :check-permissions :lookup-resources
+          :count-resources :lookup-subjects :read-relationships-authorization]
+ :cache-modes [true false true]}

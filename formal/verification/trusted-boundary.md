@@ -185,9 +185,9 @@ section-10 source-refinement obligation.
 
 `formal/assurance_contract.clj` records the proof-count ratchets and remaining
 obligations. Current proof counts, source digests, temporal checks, mutations,
-and cross-runtime vectors are derived or executed by CI. No independent proof
-review has been performed, and the release policy records that absence rather
-than claiming external certification.
+and cross-runtime vectors are derived or executed by CI. Independent review is
+deferred to a later external-certification stage; it is not a current release
+obligation. No external certification is claimed.
 
 ### Concrete operator Phase B boundary
 
@@ -210,9 +210,9 @@ current digests and results are generated under `target/formal/verification/`. T
 measured production performance and the explicit route/write enablement gates
 have passed. Public expression writes and public routing are enabled by
 default; explicit dynamic bindings exercise both disabled paths, and the four
-gate combinations preserve union-only public behavior. The absence of an
-independent review remains recorded as a qualification and is not an operator
-action or execution prerequisite.
+gate combinations preserve union-only public behavior. Independent review is
+reserved for a later external-certification stage and is not an operator
+action, execution prerequisite, or current release gate.
 
 ### Portable ClojureScript authority boundary
 
@@ -235,8 +235,12 @@ absolute performance and payload ceilings in `cljs-production.edn`.
 For an operation to inherit a kernel theorem, its adapter must establish:
 
 1. every read in the operation observes one immutable selected snapshot;
-2. external/internal object conversion is injective and round-trips for every
-   visible object;
+2. external/internal object conversion is deterministic, injective, and
+   round-trips for every visible object; host equality is not resolver
+   congruence for representation-distinct public values, so unresolved IDs
+   may be equality-keyed only after canonical-representation admission; the
+   configured converter runs exactly once at ingress, while resolved EIDs
+   enter the engine directly and never re-enter that converter;
 3. relation and permission definitions are complete for the requested schema;
 4. forward and reverse scans are finite, duplicate-free, complete,
    directionally equivalent, strictly ordered within the adapter's internal
@@ -253,6 +257,17 @@ For an operation to inherit a kernel theorem, its adapter must establish:
    floor, and exact selection matches both authenticated revision and locator;
 10. source lifecycle and adapter fingerprint change whenever an
     assumption-affecting implementation identity changes.
+
+Before any adapter obligation applies, the public host boundary must reject
+unknown request and object fields, malformed mutation collection shapes, and
+ambiguous public/native identity selectors. `PublicRequestBoundary.dfy` models
+that pre-adapter obligation; CLJ/CLJS regressions and executed mutants bind it
+to the public wrappers and shared client protocol methods.
+
+Snapshot selection also trusts the client runtime assembled by `make-client`.
+No caller-supplied protocol option may replace its identity conversion,
+security, clock, or cache dependencies. `SnapshotOptionBoundary.dfy` models
+the empty-options rule enforced before the shared client selects a basis.
 
 Backend certification provides evidence for these assumptions. It does not
 verify DataScript, Datomic, Datahike, their storage engines, or host databases.

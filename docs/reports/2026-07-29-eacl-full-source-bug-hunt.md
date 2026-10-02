@@ -86,7 +86,7 @@ Whichever one is queried first writes its permission paths into the shared slot.
 (def spec (:db-after (d/with db [(base/Permission :account :view {:relation :owner})])))
 
 (idx/can? spec (spice-object :user U) :view (spice-object :account A))  ;=> true   (correct for `spec`)
-(idx/can? db   (spice-object :user U) :view (spice-object :account A))  ;=> true   ← WRONG
+(idx/can? db (spice-object :user U) :view (spice-object :account A))  ;=> true   ← WRONG
 ```
 
 `:view` **does not exist** in the committed database. Expected `false`. The false grant persists
@@ -212,9 +212,9 @@ granting it indefinitely.
 
 A v7 relationship is two datoms on two *different* entities:
 
-```
-[subject-eid  …/subject-type+relation+resource-type+resource  [st rel-eid rt resource-eid]]
-[resource-eid …/resource-type+relation+subject-type+subject   [rt rel-eid st subject-eid]]
+```clojure
+[subject-eid …/subject-type+relation+resource-type+resource [st rel-eid rt resource-eid]]
+[resource-eid …/resource-type+relation+subject-type+subject [rt rel-eid st subject-eid]]
 ```
 
 The peer entities appear only *inside the tuple values*. Datomic's `:db.fn/retractEntity` follows
@@ -232,7 +232,7 @@ that happens to live on that entity, and leaves the other half dangling.
 (seq (d/datoms (d/db conn) :eavt A))                                             ;=> nil  (entity is gone)
 (idx/can? (d/db conn) (spice-object :user U) :admin (spice-object :account A))   ;=> true  ← WRONG
 (idx/lookup-resources (d/db conn) {…:permission :admin :resource/type :account}) ;=> [17592186045423]
-(idx/count-resources  (d/db conn) {…})                                           ;=> {:count 1}
+(idx/count-resources (d/db conn) {…})                                           ;=> {:count 1}
 ```
 
 With the default `:eacl/id` coercion the public `can?` is accidentally shielded (the lookup ref no
@@ -253,8 +253,8 @@ Through *any* configuration, `lookup-resources` still returns the ghost, coerced
 ```clojure
 @(d/transact conn [[:db.fn/retractEntity SU]])           ; delete the user entity
 
-(idx/lookup-subjects db {:resource (spice-object :account SA) :permission :admin
-                         :subject/type :user :first 5})
+(idx/lookup-subjects db {:resource     (spice-object :account SA) :permission :admin
+                         :subject/type :user                      :first      5})
 ;=> [17592186045422]                                     ← deleted user still listed
 (eacl/lookup-subjects acl {…})
 ;=> [#SpiceObject{:type :user, :id nil, :relation nil}]
@@ -262,7 +262,7 @@ Through *any* configuration, `lookup-resources` still returns the ghost, coerced
 ;; and it can never be cleaned up through EACL:
 (eacl/delete-relationship! acl (spice-object :user "su") :owner (spice-object :account "sa"))
 ;=> throws  "Unknown object: :user with id \"su\" does not exist."
-(eacl/delete-relationship! acl (spice-object :user SU)   :owner (spice-object :account "sa"))
+(eacl/delete-relationship! acl (spice-object :user SU) :owner (spice-object :account "sa"))
 ;=> throws  "Unknown object: :user with id 17592186045422 does not exist."
 ```
 
@@ -408,7 +408,7 @@ alongside a bare relation filter.
 [indexed.clj:1340-1343](../../src/eacl/datomic/impl/indexed.clj#L1340-L1343).
 
 ```clojure
-(idx/lookup-resources db  (assoc acyclic-q :last 2))     ;=> works, returns the last page
+(idx/lookup-resources db (assoc acyclic-q :last 2))     ;=> works, returns the last page
 (idx/lookup-resources db4 (assoc recursive-q :last 2))   ;=> throws "Bare :last is not supported for
                                                          ;;          recursive traversal pagination."
 ```
@@ -461,9 +461,9 @@ at 10 000 when it is not. Drop it or make it real.
 Paging backward from the *first* result of a recursive walk (ordinal 0):
 
 ```clojure
-{:data []
- :page-info {:start-cursor nil, :end-cursor nil,
-             :has-next-page? true,          ; ← hard-coded at indexed.clj:1058
+{:data      []
+ :page-info {:start-cursor       nil,  :end-cursor nil,
+             :has-next-page?     true,          ; ← hard-coded at indexed.clj:1058
              :has-previous-page? false}}
 ```
 

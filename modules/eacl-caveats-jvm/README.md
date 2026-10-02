@@ -6,16 +6,15 @@ registers the bounded process default. It does not activate qualified serving.
 Core and DataScript CLJS do not depend on this module, CEL, or ANTLR.
 
 ```clojure
-(require '[eacl.caveats.definition :as definition]
-         '[eacl.caveats.evaluator :as evaluator]
-         '[eacl.caveats.jvm :as jvm])
+(require '[eacl.caveats.definition]
+         '[eacl.caveats.evaluator]
+         '[eacl.caveats.jvm])
 
-(def check-region
-  (definition/entity "region_match"
-                     {"request_region" :string "required_region" :string}
-                     "request_region == required_region"))
-(evaluator/evaluate (evaluator/default-evaluator) check-region
-                    {"request_region" "za"} {"required_region" "za"})
+(def check-region (eacl.caveats.definition/entity "region_match"
+                                                  {"request_region" :string "required_region" :string}
+                                                  "request_region == required_region"))
+(eacl.caveats.evaluator/evaluate (eacl.caveats.evaluator/default-evaluator) check-region
+                                 {"request_region" "za"} {"required_region" "za"})
 ;; => {:outcome :true}
 ```
 
@@ -25,11 +24,12 @@ override request values. Complete contexts use cel-parser. Incomplete contexts
 use the portable partial evaluator, which preserves definite short-circuit
 results and returns canonical residuals when missing fields still matter.
 
-The profile fingerprint identifies EACL CEL profile 1 and its locked resource
+The profile fingerprint identifies EACL CEL profile 2 and its locked resource
 bounds. The implementation fingerprint also includes the pinned evaluator
-artifacts and literal-lowering version. Dependency overrides have not been
-qualified. A separately supplied evaluator must pass the same conformance
-suite and advertise the matching profile; registration is not certification.
+artifacts and the literal, value and comprehension lowering versions.
+Dependency overrides have not been qualified. A separately supplied evaluator
+must pass the same conformance suite and advertise the matching profile;
+registration is not certification.
 
 Every source literal is lowered to a reserved internal binding, avoiding the
 candidate library's string-unescaping divergences. Caller parameter names are
@@ -40,6 +40,18 @@ only successful portable plans and parsed programs are shared. Native error valu
 before Boolean extraction. Error messages and library objects never appear in
 portable outcomes.
 
+`exists` and `all` do not use cel-parser's macros. Those reparse the predicate
+for every element, from token text without whitespace, which turns
+`x in xs` into the unknown name `xinxs`. The adapter instead parses each
+comprehension's predicate once, as its own program with the variable as a
+reserved binding, and folds it over the range: the first deciding element
+wins, then the first fault, then `false` for `exists` or `true` for `all`.
+The fold's result is a reserved binding of the enclosing program, whose `&&`
+and `||` absorb a faulted one as they absorb any faulted operand. Map keys are
+visited in canonical order. Warm evaluation parses nothing, however many
+elements there are. Bindings are typed once per evaluation, so an element
+does not translate the context again.
+
 The default retains at most 256 compiled artifacts and builds at most four
 distinct artifacts concurrently. Portable plans and native programs share that
 capacity; a fully compiled definition occupies two entries. Partial inputs
@@ -47,17 +59,24 @@ retain only the portable plan and never construct a native program. Same-key mis
 waiters and are not retained, and distinct misses wait for capacity. Cache
 entries include canonical name, typed parameters, source, and implementation
 fingerprint; database entity IDs and request values are excluded. Schema edits
-cannot reuse an old program. `jvm/evaluator` creates a separate cache; optional
+cannot reuse an old program. `eacl.caveats.jvm/evaluator` creates a separate cache; optional
 `:max-entries` and `:max-builds` may lower the profile limits.
 
-The independent 24-case corpus lives in `test/eacl/caveats/corpus.edn` and is
-shared with the formal and exploration gates. Twenty cases have exact admitted
-outcomes. Four reject Boolean ordering, regex, repeated ungrouped unary `!`, and
-arithmetic. Profile 1 also excludes macros, conditional expressions, source
-container literals, nested containers, null, floats, unsigned integers, bytes,
-durations, conversions, timestamp selectors, string ordering/size, and list
-concatenation. The qualification inventory records their divergences; no full
-CEL or full SpiceDB compatibility is claimed.
+The independent 59-case corpus lives in `test/eacl/caveats/corpus.edn` and is
+shared with the formal and exploration gates. Forty-seven cases have exact
+admitted outcomes, 27 of them with `exists` or `all`: true, false, empty
+lists, faults inside predicates, nesting, shadowing, map keys, missing ranges
+and predicate fields, and the work limit. Twelve are rejected, among them
+Boolean ordering, regex, repeated ungrouped unary `!`, arithmetic,
+`exists_one`, `map`, a non-list range, a non-Boolean predicate, an escaped or
+malformed variable, and `__result__`. The profile also excludes other macros,
+conditional expressions, source container literals, nested containers, null,
+floats, unsigned integers, bytes, durations, conversions, list indexing,
+timestamp selectors, string ordering/size, and list concatenation. SpiceDB
+v1.56.0's answer to every case is recorded in
+[`formal/fixtures/caveat-comprehensions`](../../formal/fixtures/caveat-comprehensions/README.md),
+with the differences listed there; no full CEL or full SpiceDB compatibility
+is claimed.
 
 Run module tests via an nREPL started with `clojure -M:test:nrepl --port 7793`:
 

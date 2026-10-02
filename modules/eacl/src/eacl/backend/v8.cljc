@@ -9,6 +9,7 @@
             [eacl.backend.entity-id :as entity-id]
             [eacl.relationships.edge :as edge]
             [eacl.request.counters :as request-counters]
+            [eacl.schema.expression :as expression]
             [eacl.spicedb.consistency :as consistency]))
 
 (def adapter-version 8)
@@ -92,7 +93,8 @@
    :exact-locator
    #{:stable-for-immutable-snapshot}
    :object-id->internal
-   #{:visible-object-total :injective :nonnegative :snapshot-bound}
+   #{:visible-object-total :injective :nonnegative :snapshot-bound
+     :configured-conversion-only}
    :internal-id->object
    #{:visible-object-round-trip :snapshot-bound}
    :relation-defs
@@ -378,6 +380,90 @@
           :profile profile})))
     profile))
 
+(defn ^:no-doc identity-scan
+  "The identity relation's ordered scan from `anchor`: the anchor itself when
+  it lies inside the requested bound, and nothing else."
+  [anchor {:keys [direction bound-eid inclusive-bound? limit]}]
+  (if (and (or (nil? limit) (pos? limit))
+           (or (nil? bound-eid)
+               (if (= :desc direction)
+                 ((if inclusive-bound? >= >) bound-eid anchor)
+                 ((if inclusive-bound? <= <) bound-eid anchor))))
+    [anchor]
+    []))
+
+(defn- with-self-identity
+  "Serves the identity Relation behind SpiceDB's `self`
+  (`expression/self-relation`) at the adapter boundary: a resource relates to
+  itself, as a subject of its own type, and to nothing else. Nothing is
+  stored for it, and its edges carry no qualifier, so every engine route,
+  cursor and cache reads it as an ordinary definite relation. Its relation
+  ids come from the snapshot's own `:relation-defs`, read once per resource
+  type and only for a same-type read."
+  [operations]
+  (let [relation-defs (:relation-defs operations)
+        known (atom {})
+        identity?
+        (fn [subject-type resource-type relation-eid]
+          (and (= subject-type resource-type)
+               (contains?
+                (if-some [ids (get @known resource-type)]
+                  ids
+                  (let [ids (into #{}
+                                  (keep :relation-id)
+                                  (relation-defs resource-type
+                                                 expression/self-relation))]
+                    (swap! known assoc resource-type ids)
+                    ids))
+                relation-eid)))
+        scan-forward (:subject->resources operations)
+        scan-reverse (:resource->subjects operations)
+        match? (:direct-match? operations)]
+    (cond->
+     (assoc operations
+            :subject->resources
+            (fn [subject-type subject-eid relation-eid resource-type options]
+              (if (identity? subject-type resource-type relation-eid)
+                (identity-scan subject-eid options)
+                (scan-forward subject-type subject-eid relation-eid
+                              resource-type options)))
+            :resource->subjects
+            (fn [resource-type resource-eid relation-eid subject-type options]
+              (if (identity? subject-type resource-type relation-eid)
+                (identity-scan resource-eid options)
+                (scan-reverse resource-type resource-eid relation-eid
+                              subject-type options)))
+            :direct-match?
+            (fn [subject-type subject-eid relation-eid resource-type resource-eid]
+              (if (identity? subject-type resource-type relation-eid)
+                (= subject-eid resource-eid)
+                (match? subject-type subject-eid relation-eid
+                        resource-type resource-eid))))
+
+      (fn? (:direct-edge operations))
+      (update :direct-edge
+              (fn [direct-edge]
+                (fn [subject-type subject-eid relation-eid resource-type resource-eid]
+                  (if (identity? subject-type resource-type relation-eid)
+                    (when (= subject-eid resource-eid) resource-eid)
+                    (direct-edge subject-type subject-eid relation-eid
+                                 resource-type resource-eid)))))
+
+      (fn? (:direct-match-many? operations))
+      (update :direct-match-many?
+              (fn [match-many?]
+                (fn [{:keys [direction descriptor candidates] :as request}]
+                  (let [{:keys [subject-type resource-type relation-eid]} descriptor]
+                    (if (identity? subject-type resource-type relation-eid)
+                      (let [anchor (if (= :forward direction)
+                                     (:subject-eid descriptor)
+                                     (:resource-eid descriptor))]
+                        (mapv (fn [[candidate-type eid]]
+                                (and (= resource-type candidate-type)
+                                     (= anchor eid)))
+                              candidates))
+                      (match-many? request)))))))))
+
 (defn make-adapter
   [{:keys [id capabilities operations state fingerprint deterministic?
            identity-contract runtime-guards? traversal-execution
@@ -447,11 +533,12 @@
         (when-let [read-generation (:schema-generation operations)]
           (delay (read-generation)))
         operations
-        (assoc operations
-               :schema-generation
-               (if schema-generation
-                 (fn [] @schema-generation)
-                 (constantly nil)))]
+        (-> operations
+            (assoc :schema-generation
+                   (if schema-generation
+                     (fn [] @schema-generation)
+                     (constantly nil)))
+            with-self-identity)]
     (when (and (contains? (:cache-proofs normalized) :ordered-generations)
                (not (fn? (:proof-frame operations))))
       (invalid-adapter!
@@ -489,23 +576,23 @@
         (invalid-adapter!
          "Operator physical policy identity must be a closed versioned value."
          {:backend id :physical-policy operator-physical-policy})))
-  (cond->
-   {::adapter true
-    ::version adapter-version
-    ::id id
-    ::capabilities normalized
-    ::traversal-execution traversal-execution
-    ::operations operations
-    ::fingerprint
-    (or fingerprint
-        {:backend id :adapter-version adapter-version})
-    ::deterministic? (boolean deterministic?)
-    ::identity-contract identity-contract
-    ::runtime-guards? (boolean runtime-guards?)
-    ::state state
-    ::unmanaged-lifecycle (delay (uuid/fresh))}
-    operator-physical-policy
-    (assoc ::operator-physical-policy operator-physical-policy))))
+    (cond->
+     {::adapter true
+      ::version adapter-version
+      ::id id
+      ::capabilities normalized
+      ::traversal-execution traversal-execution
+      ::operations operations
+      ::fingerprint
+      (or fingerprint
+          {:backend id :adapter-version adapter-version})
+      ::deterministic? (boolean deterministic?)
+      ::identity-contract identity-contract
+      ::runtime-guards? (boolean runtime-guards?)
+      ::state state
+      ::unmanaged-lifecycle (delay (uuid/fresh))}
+      operator-physical-policy
+      (assoc ::operator-physical-policy operator-physical-policy))))
 
 (defn unmanaged-lifecycle
   "Private lifetime identity for cursors from a raw adapter without a source.
@@ -666,6 +753,12 @@
                   (set (keys (::operations adapter))))))
 
 (declare invoke)
+
+(defn object-id->internal
+  "Converts one application object ID through the adapter's configured ID
+  codec. Resolved backend IDs do not pass through this boundary again."
+  [adapter object-id]
+  (invoke adapter :object-id->internal object-id))
 
 (defn basis-kind
   "Returns the certified database-view classification for one adapter."
@@ -885,25 +978,25 @@
   (when-not (contains? #{:direct-match? :direct-edge} operation-key)
     (invalid-adapter! "A direct invoker requires a direct membership operation."
                       {:operation operation-key}))
-    (if-not (adapter? adapter)
+  (if-not (adapter? adapter)
+    (fn [subject-type subject-eid relation-eid resource-type resource-eid]
+      (invoke adapter operation-key subject-type subject-eid relation-eid
+              resource-type resource-eid))
+    (let [implementation (operation adapter operation-key)
+          guarded? (runtime-guards? adapter)]
       (fn [subject-type subject-eid relation-eid resource-type resource-eid]
-        (invoke adapter operation-key subject-type subject-eid relation-eid
-                resource-type resource-eid))
-      (let [implementation (operation adapter operation-key)
-            guarded? (runtime-guards? adapter)]
-        (fn [subject-type subject-eid relation-eid resource-type resource-eid]
-          (request-counters/add-adapter-reads!)
-          (when *backend-op-stats*
-            (swap! *backend-op-stats* update operation-key (fnil inc 0)))
-          (observe-invocation! :before adapter operation-key)
-          (try
-            (let [value (implementation subject-type subject-eid relation-eid
-                                        resource-type resource-eid)]
-              (observe-invocation! :after adapter operation-key)
-              (if guarded? (guard-output! adapter operation-key nil value) value))
-            (catch #?(:clj Throwable :cljs :default) error
-              (observe-invocation! :failed adapter operation-key)
-              (throw error)))))))
+        (request-counters/add-adapter-reads!)
+        (when *backend-op-stats*
+          (swap! *backend-op-stats* update operation-key (fnil inc 0)))
+        (observe-invocation! :before adapter operation-key)
+        (try
+          (let [value (implementation subject-type subject-eid relation-eid
+                                      resource-type resource-eid)]
+            (observe-invocation! :after adapter operation-key)
+            (if guarded? (guard-output! adapter operation-key nil value) value))
+          (catch #?(:clj Throwable :cljs :default) error
+            (observe-invocation! :failed adapter operation-key)
+            (throw error)))))))
 
 (defn ^:no-doc direct-match-invoker
   "Captures immutable direct membership with complete metering and guards."

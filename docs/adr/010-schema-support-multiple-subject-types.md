@@ -21,9 +21,9 @@ The goal of EACL is to implement the core SpiceDB gRPC API features in idiomatic
 You have access to a live nREPL via clojure-mcp MCP server. ONLY USE clojure-mcp to run code or make any changes. You need to do this because the MCP server will balance parentheses for you, which saves time and tokens. If at any time the nREPL is unreachable, STOP IMMEDIATELY and notify the user. Remember to use absolute paths when attempting to read files. Use list_files or glob_files tools to enumerate file paths.
 
 To run, tests, use the nREPL via clojure-mcp MCP server by eval'ing:
-```
+```clojure
 (do (require '[eacl.datomic.impl-test])
-  (clojure.test/run-tests 'eacl.datomic.impl-test))
+    (clojure.test/run-tests 'eacl.datomic.impl-test))
 ```
 
 Currently, all tests in `test/eacl/datomic/impl_test.clj` are passing except for the ones relevant to this ADR.
@@ -56,7 +56,7 @@ Note how the `:owner` Relation for resource type `:account` allows subjects of t
            :where
            [?rel :eacl.relation/resource-type ?rtype]
            [?rel :eacl.relation/relation-name ?rname]]
-      db resource-type relation-name)
+         db resource-type relation-name)
     (do
       (log/warn 'find-relation-def 'called-with resource-type relation-name)
       (throw (Exception. (str 'find-relation-def 'called-with resource-type relation-name))) ; throw temporarily to debug.
@@ -75,11 +75,11 @@ Note that `find-relation-def` is called by `resolve-self-relation` & `get-permis
 6. Run tests between changes to see output. Warn the user if tests are emitting noise unrelated to your work that may be costing tokens to ingest
 7. Output your plan to `docs/plans/`. The plan should be fool-proof so that an inferior LLM or intermediate developer can implement it without making any mistakes. Add `[ ]` checkboxes to the plan to track status when executing the plan.
 8. When running tests, use the `eacl.datomic.datomic-helpers/with-mem-conn` macro which creates a fresh in-memory Datomic database given some initial tx-data and binds to some let-value. Refer to how tests use this to run test against a fresh in-memory Datomic database while avoiding datom conflicts, e.g.
- ```
+ ```clojure
  (with-mem-conn [conn schema/v6-schema]
    @(d/transact conn fixtures/base-fixtures)
    (let [client (eacl/make-client conn {})])
-      (eacl/can? client (->user :test/user) :view (->server :test/server1)))
+   (eacl/can? client (->user :test/user) :view (->server :test/server1)))
  ```
 9. If you are unable to read a file you expect to exist using `clojure-mcp`'s `read_file` tool, use the `LS` tool and ensure you have the correct path. If the file is expected to exist, and you can't access it, stop and ask for clarification.
 10. The project is small, so do not try to use Grep. Always read the *entire file* (if relevant to context), because all the contents matter. This project can only be understood by reading all files passed to context.

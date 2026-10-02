@@ -12,9 +12,14 @@
   (let [respond (atom (constantly nil))
         target (reify eacl/IAuthorizationReader
                  (-check-permission [_ _] (@respond)))
-        requests [#(eacl/can? target {})
-                  #(eacl/can? target {} :view {})
-                  #(eacl/can? target {} :view {} :fully-consistent)]]
+        subject {:type :user :id "user-1"}
+        resource {:type :document :id "document-1"}
+        requests [#(eacl/can? target {:subject subject
+                                      :permission :view
+                                      :resource resource})
+                  #(eacl/can? target subject :view resource)
+                  #(eacl/can? target subject :view resource
+                              :fully-consistent)]]
     (doseq [[decision expected]
             [[{:allowed? true} true]
              [{:allowed? true :permissionship :has-permission} true]
@@ -175,6 +180,17 @@
   (-check-permissions [_ request]
     [response request]))
 
+(defrecord PlanningSnapshot [calls released]
+  eacl/IAuthorizationSnapshot
+  (-basis [_] {:revision 1})
+  (-basis-token [_] "planning-token")
+  (-release! [_] (compare-and-set! released false true))
+  (-released? [_] @released)
+
+  eacl/IRelationshipPlanning
+  (-tx-relationships [_ request]
+    (record-call! calls :tx-relationships request [])))
+
 (defn- error-data
   [f]
   (try
@@ -202,11 +218,20 @@
     (is (map? (eacl/read-schema acl)))
     (is (map? (eacl/read-schema acl {:consistency :fully-consistent})))
     (is (map? (eacl/read-relationships acl {:resource/type :document})))
-    (is (map? (eacl/lookup-resources acl {:resource/type :document})))
-    (is (map? (eacl/lookup-subjects acl {:subject/type :user})))
-    (is (map? (eacl/count-resources acl {:resource/type :document})))
-    (is (map? (eacl/count-subjects acl {:subject/type :user})))
-    (is (map? (eacl/expand-permission-tree acl demand)))
+    (is (map? (eacl/lookup-resources
+               acl {:subject subject :permission :view
+                    :resource/type :document})))
+    (is (map? (eacl/lookup-subjects
+               acl {:resource resource :permission :view
+                    :subject/type :user})))
+    (is (map? (eacl/count-resources
+               acl {:subject subject :permission :view
+                    :resource/type :document})))
+    (is (map? (eacl/count-subjects
+               acl {:resource resource :permission :view
+                    :subject/type :user})))
+    (is (map? (eacl/expand-permission-tree
+               acl {:resource resource :permission :view})))
     (is (= [:check-permission demand]
            (first @calls)))
     (is (= [:check-permission (assoc demand :consistency :fully-consistent)]
@@ -239,12 +264,219 @@
     (eacl/delete-relationship! acl relationship)
     (eacl/delete-relationship! acl subject :viewer resource)
     (eacl/delete-object! acl resource)
+    (eacl/delete-object-by-eid! acl 42)
     (is (= [:write-schema {:schema "definition user {}"}]
            (first @calls)))
     (is (= 10
            (count (filter #(= :write-relationships (first %)) @calls))))
     (is (= [:delete-object {:object resource}]
+           (nth @calls (- (count @calls) 2))))
+    (is (= [:delete-object {:native-eid 42}]
            (last @calls)))))
+
+(deftest malformed-public-mutations-fail-before-dispatch-test
+  (let [calls (atom [])
+        acl (->RecordingAcl calls nil)
+        subject {:type :user :id "user-1"}
+        resource {:type :document :id "document-1"}
+        relationship (eacl/->Relationship subject :viewer resource)]
+    (doseq [[operation expected-position]
+            [[#(eacl/delete-relationships! acl relationship) nil]
+             [#(eacl/delete-relationships! acl nil) :relationships]
+             [#(eacl/delete-relationships! acl {:data nil}) :data]
+             [#(eacl/create-relationships! acl nil) :relationships]
+             [#(eacl/write-relationships! acl {:updates nil}) :updates]]]
+      (let [data (error-data operation)]
+        (is (= :eacl/invalid-request (:type data)))
+        (is (= :invalid-request-shape (:reason data)))
+        (when expected-position
+          (is (= expected-position (:position data))))))
+    (let [data (error-data
+                #(eacl/delete-object!
+                  acl {:object subject :native-eid 42}))]
+      (is (= :eacl/invalid-request (:type data)))
+      (is (= :unknown-request-key (:reason data)))
+      (is (= [:native-eid] (:unknown-keys data))))
+    (let [data
+          (error-data
+           #(eacl/write-relationship!
+             acl {:operation :touch
+                  :subject subject
+                  :relation :viewer
+                  :resource resource
+                  :valid-until-mss 0}))]
+      (is (= :eacl/invalid-request (:type data)))
+      (is (= :unknown-request-key (:reason data)))
+      (is (= [:valid-until-mss] (:unknown-keys data))))
+    (let [data
+          (error-data
+           #(eacl/write-schema!
+             acl {:schema "definition user {}"
+                  :allow-empty-schema? true}))]
+      (is (= :eacl/invalid-request (:type data)))
+      (is (= :unknown-request-key (:reason data)))
+      (is (= [:allow-empty-schema?] (:unknown-keys data))))
+    (doseq [object [nil
+                    {:type :user}
+                    {:type :user :id nil}
+                    {:type "user" :id "user-1"}]]
+      (let [data (error-data #(eacl/delete-object! acl object))]
+        (is (= :eacl/invalid-request (:type data)))
+        (is (= :invalid-object-shape (:reason data)))))
+    (doseq [relation [:member "member"]]
+      (let [data
+            (error-data
+             #(eacl/delete-object!
+               acl {:type :user :id "user-1" :relation relation}))]
+        (is (= :eacl/unsupported-subject-relation (:type data)))
+        (is (= :unsupported-subject-relation (:reason data)))))
+    (is (empty? @calls)
+        "malformed mutation requests must not reach a writer")))
+
+(deftest relationship-planning-rejects-single-update-and-open-envelopes-test
+  (let [calls (atom [])
+        snapshot (->PlanningSnapshot calls (atom false))
+        update {:operation :delete
+                :relationship
+                (eacl/->Relationship
+                 {:type :user :id "user-1"}
+                 :viewer
+                 {:type :document :id "document-1"})}]
+    (doseq [[request expected-reason]
+            [[update :unknown-request-key]
+             [{:tx-data []} :missing-request-key]
+             [{:updates nil} :invalid-request-shape]
+             [{:updates [] :unknown true} :unknown-request-key]]]
+      (let [data (error-data #(eacl/tx-relationships snapshot request))]
+        (is (= :eacl/invalid-request (:type data)))
+        (is (= expected-reason (:reason data)))))
+    (is (empty? @calls)
+        "invalid plans must not be reported as successful empty transactions")
+    (is (= [] (eacl/tx-relationships snapshot [update])))
+    (is (= [[:tx-relationships {:updates [update]}]] @calls))))
+
+(deftest nested-relationship-mutations-fail-before-protocol-dispatch-test
+  (let [calls (atom [])
+        acl (->RecordingAcl calls nil)
+        snapshot (->PlanningSnapshot calls (atom false))
+        malformed-updates
+        [{:operation :touch
+          :relationship
+          {:subject {:type :user :id "user-1"}
+           :relation :viewer
+           :resource {:type :document :id "document-1"}
+           :valid-until-mss 1000}}
+         {:operation :touch
+          :relationship
+          {:subject {:type :user :id "user-1"}
+           :relation :viewer}}]]
+    (doseq [malformed malformed-updates
+            operation [#(eacl/write-relationships! acl [malformed])
+                       #(eacl/tx-relationships snapshot [malformed])]]
+      (let [data (error-data operation)]
+        (is (= :eacl/invalid-relationship-qualifier (:type data)))
+        (is (= :relationship-shape (:reason data)))))
+    (is (empty? @calls)
+        "nested mutation fields must be validated by the shared wrapper")))
+
+(deftest unknown-public-read-keys-fail-before-dispatch-test
+  (let [calls (atom [])
+        acl (->RecordingAcl calls nil)
+        subject {:type :user :id "user-1"}
+        resource {:type :document :id "document-1"}
+        demand {:subject subject :permission :view :resource resource}]
+    (doseq [operation
+            [#(eacl/check-permission acl (assoc demand :consistncy :fully-consistent))
+             #(eacl/read-schema acl {:consistncy :fully-consistent})
+             #(eacl/count-resources
+               acl {:subject subject :permission :view
+                    :resource/type :document
+                    :consistncy :fully-consistent})
+             #(eacl/check-permission
+               acl (assoc demand :subject
+                          (assoc subject :tenant "unexpected")))
+             #(eacl/check-permission
+               acl (assoc demand :subject (assoc subject :id nil)))
+             #(eacl/check-permission
+               acl (assoc demand :permission "view"))
+             #(eacl/lookup-resources
+               acl {:subject subject :permission :view
+                    :resource/type :document :first 1
+                    :page/basis :live})]]
+      (let [data (error-data operation)]
+        (is (contains? #{:eacl/invalid-request
+                         :eacl.pagination/invalid-page-request}
+                       (:type data)))
+        (is (contains? #{:unknown-request-key :unknown-object-key
+                         :invalid-object-shape :invalid-request-value
+                         :unsupported-page-basis}
+                       (:reason data)))))
+    (is (empty? @calls)
+        "typos must not silently weaken consistency or endpoint identity")))
+
+(deftest missing-public-read-keys-fail-before-dispatch-test
+  (let [calls (atom [])
+        acl (->RecordingAcl calls nil)
+        subject {:type :user :id "user-1"}
+        resource {:type :document :id "document-1"}
+        cases
+        [[#(eacl/check-permission
+            acl {:permission :view :resource resource}) [:subject]]
+         [#(eacl/check-permission
+            acl {:subject subject :resource resource}) [:permission]]
+         [#(eacl/check-permission
+            acl {:subject subject :permission :view}) [:resource]]
+         [#(eacl/lookup-resources
+            acl {:permission :view :resource/type :document}) [:subject]]
+         [#(eacl/lookup-subjects
+            acl {:resource resource :permission :view}) [:subject/type]]
+         [#(eacl/count-resources
+            acl {:subject subject :resource/type :document}) [:permission]]
+         [#(eacl/count-subjects
+            acl {:permission :view :subject/type :user}) [:resource]]
+         [#(eacl/expand-permission-tree
+            acl {:resource resource}) [:permission]]
+         [#(eacl/check-permissions (->BatchedReader :unsafe-grant) {})
+          [:checks]]]]
+    (doseq [[operation expected-missing] cases]
+      (let [data (error-data operation)]
+        (is (= :eacl/invalid-request (:type data)))
+        (is (= :missing-request-key (:reason data)))
+        (is (= expected-missing (:missing-keys data)))))
+    (is (empty? @calls)
+        "incomplete authorization demands must not reach a reader")))
+
+(deftest public-reader-extensions-receive-only-validated-request-shapes-test
+  (let [calls (atom [])
+        acl (->RecordingAcl calls nil)
+        subject {:type :user :id "user-1"}
+        operations
+        [#(eacl/read-relationships acl {})
+         #(eacl/check-permission
+           acl {:subject subject
+                :permission :view
+                :resource {:type :document :id "document-1"}
+                :consistency false})
+         #(eacl/lookup-resources
+           acl {:subject subject
+                :permission :view
+                :resource/type :document
+                :resource/relationship {:relation :viewer}})
+         #(eacl/check-permissions (->BatchedReader :unsafe-grant)
+                                  {:checks nil})
+         #(eacl/check-permissions (->BatchedReader :unsafe-grant)
+                                  {:checks [{}]})]]
+    (doseq [operation operations]
+      (is (some? (error-data operation))))
+    (is (empty? @calls)
+        "full scans and malformed nested demands must fail before dispatch")))
+
+(deftest malformed-snapshot-consistency-fails-before-source-dispatch-test
+  (let [calls (atom [])
+        acl (->RecordingAcl calls nil)
+        data (error-data #(eacl/snapshot acl false))]
+    (is (= :eacl/unsupported-consistency (:type data)))
+    (is (empty? @calls))))
 
 (deftest snapshot-capability-and-lifecycle-test
   (let [calls (atom [])
@@ -281,7 +513,11 @@
         snapshot (->RecordingSnapshot
                   (atom []) (atom false) {:revision 1} "token")]
     (testing "non-reader values fail before protocol dispatch"
-      (let [data (error-data #(eacl/can? {} {} :view {}))]
+      (let [data (error-data
+                  #(eacl/can? {}
+                              {:type :user :id "user-1"}
+                              :view
+                              {:type :document :id "document-1"}))]
         (is (= :eacl/invalid-authorization-target (:type data)))
         (is (= (:type data) (:eacl/error data)))))
     (testing "read-only and snapshot targets reject writes"
@@ -316,12 +552,27 @@
     (is (true? (eacl/can? remote demand)))
     (is (:remote? (eacl/check-permission remote demand)))
     (is (:remote? (eacl/read-schema remote)))
-    (is (:remote? (eacl/read-relationships remote {})))
-    (is (:remote? (eacl/lookup-resources remote {})))
-    (is (:remote? (eacl/lookup-subjects remote {})))
-    (is (:remote? (eacl/count-resources remote {})))
-    (is (:remote? (eacl/count-subjects remote {})))
-    (is (:remote? (eacl/expand-permission-tree remote demand)))
+    (is (:remote?
+         (eacl/read-relationships remote {:resource/type :document})))
+    (is (:remote?
+         (eacl/lookup-resources
+          remote {:subject subject :permission :view
+                  :resource/type :document})))
+    (is (:remote?
+         (eacl/lookup-subjects
+          remote {:resource resource :permission :view
+                  :subject/type :user})))
+    (is (:remote?
+         (eacl/count-resources
+          remote {:subject subject :permission :view
+                  :resource/type :document})))
+    (is (:remote?
+         (eacl/count-subjects
+          remote {:resource resource :permission :view
+                  :subject/type :user})))
+    (is (:remote?
+         (eacl/expand-permission-tree
+          remote {:resource resource :permission :view})))
     (is (:remote? (eacl/write-schema! remote "definition user {}")))
     (is (:remote?
          (eacl/create-relationship! remote relationship)))

@@ -9,6 +9,14 @@
 (def format-version :eacl.permission-expression/v1)
 (def digest-domain "eacl/permission-expression/v1")
 
+(def self-relation
+  "The relation a `self` leaf (SpiceDB's `use self`) is evaluated through: one
+   EACL-owned Relation per definition that uses `self`, whose subject type is
+   that definition and whose tuples are the identity, served by the adapter
+   boundary (`eacl.backend.v8`), never stored. No SpiceDB name can collide
+   with it: SpiceDB names start with a letter."
+  :_self)
+
 ;; Hard codec ceilings are deliberately above the calibrated admission policy.
 ;; They exist so a value at an exact supported expression boundary remains
 ;; encodable while malformed direct codec use is still bounded.
@@ -57,7 +65,7 @@
   (when-not (and (keyword? value)
                  (nil? (namespace value))
                  (not-empty (name value))
-                 (not= :self value))
+                 (not= self-relation value))
     (invalid! :invalid-identifier {:context context :value value}))
   value)
 
@@ -114,6 +122,11 @@
    (arrow relation-name partitions false))
   ([relation-name partitions grouped?]
    (simple-keyword! relation-name :arrow-relation)
+   ;; Union plans name a same-resource reference by the source relation
+   ;; `:self` (the adapter contract's permission-definition rows), so a
+   ;; relation named `self` cannot be an arrow's base.
+   (when (= :self relation-name)
+     (invalid! :reserved-arrow-relation {:value relation-name}))
    (grouped! grouped?)
    (when-not (and (sequential? partitions) (seq partitions))
      (invalid! :invalid-arrow-partitions {:value partitions}))
@@ -129,6 +142,15 @@
       :relation relation-name
       :partitions canonical
       :grouped? grouped?})))
+
+(defn self-leaf
+  "SpiceDB's `self` (`use self`): grants exactly the resource object itself
+   as a subject of its own type."
+  ([]
+   (self-leaf false))
+  ([grouped?]
+   (grouped! grouped?)
+   {:op :self :grouped? grouped?}))
 
 (defn- nary
   [op children grouped?]
@@ -206,6 +228,11 @@
       (exact-map! node #{:op :left :right :grouped?} :exclusion)
       (exclusion (:left node) (:right node) (:grouped? node)))
 
+    :self
+    (do
+      (exact-map! node #{:op :grouped?} :self)
+      (self-leaf (:grouped? node)))
+
     (invalid! :unknown-node-tag {:tag (:op node)})))
 
 (defn expression
@@ -236,6 +263,41 @@
    (secure/encode-canonical (canonicalize value)
                             (bounded-codec-options options))))
 
+(defn- keyword-byte-size [value]
+  (+ 1
+     (if-let [keyword-namespace (namespace value)]
+       (inc (secure/utf8-size keyword-namespace))
+       0)
+     (secure/utf8-size (name value))))
+
+(defn- rendered-byte-size
+  "UTF-8 bytes of the canonical rendering of one value from the closed v1
+   domain: maps with keyword keys, vectors, keywords and Booleans."
+  [value]
+  (cond
+    (keyword? value) (keyword-byte-size value)
+    (true? value) 4
+    (false? value) 5
+    ;; {k v, k v}: a space inside each entry, ", " between entries.
+    (map? value)
+    (reduce-kv (fn [total k v] (+ total (rendered-byte-size k) 1 (rendered-byte-size v)))
+               (+ 2 (* 2 (max 0 (dec (count value)))))
+               value)
+    ;; [a b c]
+    (vector? value)
+    (reduce (fn [total item] (+ total (rendered-byte-size item)))
+            (+ 2 (max 0 (dec (count value))))
+            value)
+    :else (invalid! :unencodable-value {:value-type (str (type value))})))
+
+(defn encoded-byte-size
+  "Returns the UTF-8 byte count of `(encode value)` without rendering it.
+   Unlike `encode`, it does not apply the codec's size and entry ceilings, so
+   admission can compare an expression larger than the codec accepts with its
+   own byte limit and report that typed limit."
+  [value]
+  (rendered-byte-size (canonicalize value)))
+
 (defn decode
   "Decodes only canonical v1 values. Noncanonical spelling, unknown fields,
    unknown tags, and malformed values fail closed."
@@ -253,9 +315,16 @@
          (invalid! :noncanonical-encoding {}))
        value)
      (catch #?(:clj Exception :cljs :default) error
-       (if (= :eacl.schema/invalid-permission-expression
-              (:type (ex-data error)))
+       (cond
+         (= :eacl.schema/invalid-permission-expression
+            (:type (ex-data error)))
          (throw error)
+
+         ;; The codec rejects every other spelling before the check above.
+         (= :noncanonical (:reason (ex-data error)))
+         (invalid! :noncanonical-encoding {})
+
+         :else
          (invalid! :malformed-codec
            {:format-error (:reason (ex-data error))}))))))
 

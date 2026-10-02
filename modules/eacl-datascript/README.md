@@ -95,19 +95,20 @@ racing duplicate `:create` fails with `:eacl/relationship-conflict` instead
 of committing a redundant datom (CLJ and CLJS alike). `:touch` stays
 idempotent.
 
-### Optional atomic entity retraction
+#For application-owned IDs, follow the [backend quickstart](../../README.md#datascript-quickstart). The deletion example below assumes that `:app/id` setup.
+
+## Optional atomic entity retraction
 
 An embedded DataScript connection may explicitly install the safe transaction
 function; it is never part of `datascript-schema`:
 
 ```clojure
 (require '[datascript.core :as ds]
-         '[eacl.datascript.safe-retraction :as safe-retraction])
+         '[eacl.datascript.safe-retraction])
 
-(safe-retraction/install! conn)
-(ds/transact!
- conn
- (safe-retraction/retract-entity-tx-data [:eacl/id "account-1"]))
+(eacl.datascript.safe-retraction/install! conn)
+(ds/transact! conn
+  (eacl.datascript.safe-retraction/retract-entity-tx-data [:app/id "account-1"]))
 ```
 
 The installed `:eacl.fn/retractEntity` computes the target's native component
@@ -129,22 +130,28 @@ repairs old peer-only ghosts by enumerating relation definitions and making
 exact index probes. Use the integrity report when the old eid is unknown.
 
 ```clojure
-{:deps {dev.eacl/eacl-datascript {:mvn/version "8.0.0-SNAPSHOT"}}}
+{:deps {dev.eacl/eacl-datascript {:mvn/version "8.0.0-RC-2026-09-12"}}}
 ```
+
+ClojureScript applications also need the pinned Git cache dependency shown in
+the [DataScript quickstart](../../README.md#datascript-quickstart). Maven does
+not include that Git dependency.
 
 Its POM depends on `dev.eacl/eacl` at the exact same version, so consumers do
 not declare core separately. EACL targets Java 25 by default; explicit
 source/custom builds can target older Java, subject to DataScript's own runtime
 requirements. Build this module in isolation with `clojure -T:build jar`; Git and `:local/root`
 development must first follow the explicitly opt-in
-[core source preparation instructions](../../README.md#source-dependencies-and-formal-tooling).
+[core source preparation instructions](../../README.md#development-from-source).
 Maven consumers install no formal tools.
 
 ## Relationship storage 8
 
 This adapter uses five-slot endpoint pairs with a trailing nullable
 `qualifier-eid`. V8 supports
-[Caveats and expiring Relationships](../../docs/caveats.md) ; older readers must be drained first. Upgrades are explicit
+[Caveats and expiring Relationships](../../docs/caveats.md) ; older readers must be drained first. In
+ClojureScript, named Caveats need the optional [portable evaluator](../eacl-caveats-portable/README.md);
+expiration alone needs none. Upgrades are explicit
 and restartable, and client construction requires a completed target store.
 Follow the [7-to-8 operator guide](../../docs/relationship-storage-v7-to-v8.md) before
 starting clients, then the v8 serving rollout guide before qualified writes.

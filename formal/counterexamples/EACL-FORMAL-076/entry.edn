@@ -1,0 +1,19 @@
+{:id :EACL-FORMAL-076
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace "eacl-rust BUGS.md EACL-RS-101 and EACL-RS-104; secure-format/base64url-unused-bits"
+ :minimized-fixture "fixture.edn"
+ :impact :fail-open
+ :affected-versions
+ ["v8.0.0 commit a698b3bdf15e61be9bfd1324d7d7c67dc82176be"]
+ :affected-backends [:shared]
+ :root-cause
+ "Both decoding layers of an authenticated string accepted more than one spelling. decode-canonical read the first form of the string \"[\" + input + \"]\" with the host EDN reader and accepted any text that read into an admissible value: an early ] ended the wrapper, so everything after it was ignored, even unbalanced text, and commas, extra whitespace, any member order, list syntax, 1N, +1, octal and hexadecimal integers, string escapes, and metadata were admitted. A character literal outside a string desynchronised the hidden-input scanner, which then admitted discards, comments, and namespaced maps. b64url-decode delegated to the host decoders, which accept = padding and ignore nonzero unused bits in the last character, and JavaScript atob also discards whitespace. Authentication covers decoded values, so text appended inside a Zed token's envelope, padding, or changed unused bits in any Base64URL layer of a Zed token, cache entry, eacl_c7_ cursor, or eacl_sd2. page token produced a different string that still authenticated."
+ :fix
+ "decode-canonical accepts only the canonical spelling: after reading and validating, the input must equal the canonical rendering of the decoded value, or decoding fails with :noncanonical. Its hidden-input scanner also rejects metadata and character literals outside strings. b64url-decode accepts only the unpadded spelling that b64url-encode emits, with zero unused bits, and fails with :malformed-base64 otherwise. Each authenticated value now has exactly one accepted string."
+ :closing-evidence
+ ["eacl.datascript.contract-test/zed-tokens-accept-only-their-issued-spelling-test (CLJ and CLJS)"
+  "eacl.secure-format-test/authenticated-envelopes-accept-only-their-issued-spelling-test (CLJ and CLJS)"
+  "eacl.secure-format-test/encrypted-cursors-accept-only-their-issued-spelling-test (CLJ and CLJS)"
+  "eacl.secure-format-test/decode-canonical-admits-only-the-canonical-spelling-test (CLJ and CLJS)"
+  "eacl.secure-format-test/base64url-decoding-admits-only-the-canonical-spelling-test (CLJ and CLJS)"]}

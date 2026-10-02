@@ -66,6 +66,22 @@ dafny_sources() {
   find "$repo_root/formal/dafny" -type f -name '*.dfy' -print | sort
 }
 
+# Dafny 4.11 can verify a false lemma by induction on a sequence parameter,
+# whether the solver chose the induction (automatic lemma induction) or an
+# `{:induction x}` attribute requested it. Every proof therefore states its
+# induction explicitly: every verifying command passes
+# --manual-lemma-induction, and no model may request induction by attribute.
+# eacl.formal.dafny-cleanup-gate-test checks both in the battery.
+check_induction_policy() {
+  # shellcheck disable=SC2046
+  if grep -n '{:induction' $(find "$repo_root/formal" -type f -name '*.dfy' -print | sort) |
+    grep -v '{:induction false}'; then
+    printf '%s\n' \
+      "Dafny models must not request induction: use {:induction false} and recursive lemma calls." >&2
+    return 1
+  fi
+}
+
 apalache_check() {
   label=$1
   model=$2
@@ -162,6 +178,7 @@ command=${1:-}
 case "$command" in
   fast)
     need_tools
+    check_induction_policy
     sh "$repo_root/formal/caveats/verify-fast.sh"
     exec sh "$repo_root/formal/qualified/verify-fast.sh"
     ;;
@@ -175,6 +192,7 @@ case "$command" in
     ;;
   verify)
     need_tools
+    check_induction_policy
     resource_output_dir="$output_root/dafny-resources"
     resource_summary="$output_root/dafny-verification.json"
     rm -rf "$resource_output_dir"
@@ -192,6 +210,7 @@ case "$command" in
         source="$0"
         source_name=$(basename "$source" .dfy)
         exec "$EACL_DAFNY_BIN" verify \
+          --manual-lemma-induction \
           --verification-time-limit "$EACL_DAFNY_TIME" \
           --resource-limit "$EACL_DAFNY_RES" \
           --log-format "csv;LogFileName=$EACL_DAFNY_OUT/$source_name.csv" \
@@ -203,9 +222,11 @@ case "$command" in
     ;;
   compile-java)
     need_tools
+    check_induction_policy
     rm -rf "$output_root/java"
     mkdir -p "$output_root/java"
     "$dafny" translate java \
+      --manual-lemma-induction \
       --include-runtime \
       --output "$output_root/java/EaclKernel" \
       "$repo_root/formal/dafny/EaclKernel.dfy"
@@ -213,9 +234,11 @@ case "$command" in
     ;;
   compile-js)
     need_tools
+    check_induction_policy
     rm -rf "$output_root/js"
     mkdir -p "$output_root/js"
     "$dafny" translate js \
+      --manual-lemma-induction \
       --include-runtime \
       --output "$output_root/js/EaclKernel" \
       "$repo_root/formal/dafny/EaclKernel.dfy"

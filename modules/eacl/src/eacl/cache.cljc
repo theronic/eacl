@@ -5,6 +5,7 @@
   only a bounded partial map of opaque keys to immutable completed values;
   misses compute independently and publication never owns computation."
   (:require [clojure.string :as str]
+            [eacl.authorization.point-reuse :as point-reuse]
             [eacl.authorization.result :as authorization-result]
             [eacl.authorization.temporal :as temporal]
             [eacl.backend.v8 :as backend]
@@ -74,7 +75,7 @@
        (dissoc :consistency))})
 
 (defrecord CacheLifecycle
-           [token subproblems rendered-pages content-revision])
+           [token subproblems rendered-pages content-revision denotation-keys])
 
 (defrecord BasisCache
            [lifecycle metrics subproblem-options
@@ -428,16 +429,29 @@
 
 (defn- exact-denotation-key-fn
   [basis-key]
-  ;; The source identity is a function of the basis key alone; build it once
-  ;; per request rather than once per candidate key.
-  (let [source-lifecycle (exact-source-identity basis-key)]
-    (fn [semantic-key]
-      (cache-key/exact-denotation-key
-       {:tier :denotation
-        :source-lifecycle source-lifecycle
-        :abi authorization-abi
-        :semantic semantic-key
-        :reuse basis-key}))))
+  ;; Every field but the semantic key is a function of the basis key alone;
+  ;; build and validate them once per request rather than once per candidate
+  ;; key.
+  (cache-key/exact-denotation-key-builder
+   {:tier :denotation
+    :source-lifecycle (exact-source-identity basis-key)
+    :abi authorization-abi
+    :reuse basis-key}))
+
+(defn- lifecycle-denotation-key-fn
+  "The exact denotation key constructor for `basis-key`. A lifecycle's
+  requests on an unchanged basis share one constructor, so the keys they
+  build share one basis value and one source identity value, and a later
+  request's lookup matches a resident key by identity rather than comparing
+  both structurally."
+  [lifecycle basis-key]
+  (let [slot (:denotation-keys lifecycle)
+        [prior-basis prior-fn] (some-> slot deref)]
+    (if (and prior-fn (= prior-basis basis-key))
+      prior-fn
+      (let [key-fn (exact-denotation-key-fn basis-key)]
+        (some-> slot (reset! [basis-key key-fn]))
+        key-fn))))
 
 (defn- lifecycle-content-change
   [lifecycle-ref token content-change-fn]
@@ -464,7 +478,8 @@
       (lifecycle-content-change
        lifecycle-ref token content-change-fn))
      (lru/store (:answer-max-entries subproblem-options))
-     content-revision)))
+     content-revision
+     (atom nil))))
 
 (defn- restored-lifecycle
   [lifecycle-ref restored-store subproblem-options content-revision
@@ -481,7 +496,8 @@
      ;; internal semantic answer/denotation entries, so restore starts this
      ;; exact-only derived store empty.
      (lru/store (:answer-max-entries subproblem-options))
-     content-revision)))
+     content-revision
+     (atom nil))))
 
 (defn- replace-lifecycle!
   [store make-next]
@@ -935,12 +951,22 @@
 (defn- rendered-spice-object-shape?
   [value]
   (and (map? value)
-       (= spice-object-fields (set (keys value)))
+       (let [fields (set (keys value))]
+         (or (= spice-object-fields fields)
+             ;; A lookup-subjects wildcard entry lists the subjects that the
+             ;; wildcard does not grant.
+             (and (= (conj spice-object-fields :excluded-subjects) fields)
+                  (= "*" (:id value))
+                  (vector? (:excluded-subjects value))
+                  (every? #(and (map? %)
+                                (= spice-object-fields (set (keys %)))
+                                (= (:type value) (:type %))
+                                (rendered-spice-object-shape? %))
+                          (:excluded-subjects value)))))
        (unqualified-keyword? (:type value))
        (some? (:id value))
        (canonical-cursor-identity? (:id value))
-       (or (nil? (:relation value))
-           (unqualified-keyword? (:relation value)))))
+       (nil? (:relation value))))
 
 (defn- rendered-relationship-shape?
   [value]
@@ -1024,16 +1050,33 @@
           (or (not (contains? page-info :bounded?))
               (boolean? (:bounded? page-info)))))))
 
+(defn- qualifier-annotation-valid?
+  "A permission-tree element reached through a qualified Relationship carries
+  that Relationship's closed canonical qualifier keys; any other element
+  carries none."
+  [value]
+  (relationship-mutations/canonical-qualifier-keys? value))
+
+(defn- annotated-spice-object-shape?
+  [value]
+  (and (map? value)
+       (rendered-spice-object-shape?
+        (apply dissoc value relationship-mutations/qualifier-keys))
+       (qualifier-annotation-valid? value)))
+
 (defn- permission-tree-answer?
   [value]
   (loop [pending [value]]
     (if-let [node (peek pending)]
       (let [remaining (pop pending)
-            fields (when (map? node) (set (keys node)))
+            fields (when (map? node)
+                     (set (remove relationship-mutations/qualifier-keys
+                                  (keys node))))
             base-valid?
             (and (map? node)
                  (rendered-spice-object-shape? (:expanded-object node))
-                 (unqualified-keyword? (:expanded-relation node)))]
+                 (unqualified-keyword? (:expanded-relation node))
+                 (qualifier-annotation-valid? node))]
         (cond
           (= #{:expanded-object :expanded-relation :leaf} fields)
           (let [leaf (:leaf node)]
@@ -1041,7 +1084,7 @@
                  (map? leaf)
                  (= #{:subjects} (set (keys leaf)))
                  (vector? (:subjects leaf))
-                 (every? rendered-spice-object-shape? (:subjects leaf))
+                 (every? annotated-spice-object-shape? (:subjects leaf))
                  (recur remaining)))
 
           (= #{:expanded-object :expanded-relation :intermediate} fields)
@@ -1142,9 +1185,12 @@
   [semantic value]
   (let [operation (when (vector? semantic) (first semantic))]
     (and (contains? #{:operator-acyclic-point
-                      :operator-recursive-point}
+                      :operator-recursive-point
+                      :membership-point}
                     operation)
-         (boolean? value))))
+         ;; A qualified decision restores with the interval its evidence
+         ;; certifies; reuse checks that interval at each later request's time.
+         (point-reuse/stored-value-valid? semantic value))))
 
 (defn- subproblem-snapshot-entry-valid?
   [tier key value]
@@ -1216,10 +1262,20 @@
         original-snapshot snapshot
         ;; JVM UUIDs are immutable. CLJS trusted decoded inputs still need
         ;; capture: freezing an ingress option does not own imported keys.
+        ;; Each entry is captured under the value bound; `max-entries` already
+        ;; bounds their number. One value bound over the whole snapshot
+        ;; rejected a client's own export once its cache held a few hundred
+        ;; entries.
         snapshot #?(:clj snapshot
                     :cljs (try
-                            (secure/capture-portable snapshot {:maximum-depth 64
-                                                               :maximum-entries 131072})
+                            (let [entries (:entries snapshot)
+                                  captured (mapv #(secure/capture-portable
+                                                   % {:maximum-depth 64
+                                                      :maximum-entries 131072})
+                                                 entries)]
+                              (if (every? true? (map identical? entries captured))
+                                snapshot
+                                (assoc snapshot :entries captured)))
                             (catch :default error
                               (incompatible-snapshot! "Cache snapshot contains invalid portable data."
                                                       {:cause-type (:type (ex-data error))}))))
@@ -1568,7 +1624,7 @@
               (if-not (execution/cache-stage-available?)
                 (uncached-result store compute)
                 (let [exact-key-fn
-                      (exact-denotation-key-fn exact-basis-key)
+                      (lifecycle-denotation-key-fn lifecycle exact-basis-key)
                       value
                       (compute-with-subproblems
                        subproblem-store exact-key-fn populate-cache? compute)

@@ -52,8 +52,8 @@ Create `src/eacl/datomic/impl_fixed.clj` with unified permission model:
   (:require [clojure.tools.logging :as log]
             [datomic.api :as d]
             [eacl.core :refer [spice-object]]
-            [eacl.datomic.schema :as schema]
-            [eacl.datomic.impl-base :as base]))
+            [eacl.datomic.schema]
+            [eacl.datomic.impl-base]))
 
 (defrecord UnifiedPermission [resource-type permission-name source-relation target-permission])
 (defrecord TraversalPath [steps terminal-relation])
@@ -72,20 +72,20 @@ Convert all permissions to unified arrow format with `:self` for direct permissi
     ;; Becomes: server.view = self->owner
     (contains? permission-def :eacl.permission/relation-name)
     (->UnifiedPermission
-      (:eacl.permission/resource-type permission-def)
-      (:eacl.permission/permission-name permission-def)
-      :self
-      (:eacl.permission/relation-name permission-def))
-    
+     (:eacl.permission/resource-type permission-def)
+     (:eacl.permission/permission-name permission-def)
+     :self
+     (:eacl.permission/relation-name permission-def))
+
     ;; Arrow permission: (Permission :server :account :admin :view)
     ;; Becomes: server.view = account->admin
     (contains? permission-def :eacl.arrow-permission/source-relation-name)
     (->UnifiedPermission
-      (:eacl.arrow-permission/resource-type permission-def)
-      (:eacl.arrow-permission/permission-name permission-def)
-      (:eacl.arrow-permission/source-relation-name permission-def)
-      (:eacl.arrow-permission/target-permission-name permission-def))
-    
+     (:eacl.arrow-permission/resource-type permission-def)
+     (:eacl.arrow-permission/permission-name permission-def)
+     (:eacl.arrow-permission/source-relation-name permission-def)
+     (:eacl.arrow-permission/target-permission-name permission-def))
+
     :else
     (throw (ex-info "Unknown permission format" {:permission permission-def}))))
 ```
@@ -120,8 +120,8 @@ Handle union permissions by processing multiple paths in parallel:
         direct-paths (filter #(= :self (:source-relation %)) all-paths)
         arrow-paths (filter #(not= :self (:source-relation %)) all-paths)]
     {:direct-paths direct-paths
-     :arrow-paths arrow-paths
-     :all-paths all-paths}))
+     :arrow-paths  arrow-paths
+     :all-paths    all-paths}))
 ```
 
 #### [ ] Step 2.2: Implement efficient union result combination
@@ -135,13 +135,13 @@ Create system to combine results from multiple permission paths:
         ;; Use transient for efficient deduplication
         seen (transient #{})
         deduplicated (persistent!
-                       (reduce (fn [acc resource]
-                                 (if (contains? seen resource)
-                                   acc
-                                   (do (assoc! seen resource true)
-                                       (conj! acc resource))))
-                               (transient [])
-                               all-resources))
+                      (reduce (fn [acc resource]
+                                (if (contains? seen resource)
+                                  acc
+                                  (do (assoc! seen resource true)
+                                      (conj! acc resource))))
+                              (transient [])
+                              all-resources))
         ;; Sort for stable pagination
         sorted-resources (sort resource-comparator deduplicated)]
     (apply-cursor-and-limit sorted-resources cursor limit)))
@@ -156,11 +156,11 @@ Support both forward and reverse relationship traversal:
 (defn traverse-relationship-forward
   "Traverses relationships forward: subject → resource via relation"
   [db subject-type subject-eid relation target-resource-type cursor limit]
-  (let [start-tuple [subject-type subject-eid relation target-resource-type 
+  (let [start-tuple [subject-type subject-eid relation target-resource-type
                      (or cursor (d/entid db 0))]
-        datoms (d/index-range db 
-                 :eacl.relationship/subject-type+subject+relation-name+resource-type+resource 
-                 start-tuple nil)]
+        datoms (d/index-range db
+                              :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
+                              start-tuple nil)]
     (->> datoms
          (take-while #(matches-forward-tuple % subject-type subject-eid relation target-resource-type))
          (map extract-resource-from-forward-datom)
@@ -169,11 +169,11 @@ Support both forward and reverse relationship traversal:
 (defn traverse-relationship-backward
   "Traverses relationships backward: resource → subject via relation"
   [db resource-type resource-eid relation target-subject-type cursor limit]
-  (let [start-tuple [resource-type resource-eid relation target-subject-type 
+  (let [start-tuple [resource-type resource-eid relation target-subject-type
                      (or cursor (d/entid db 0))]
-        datoms (d/index-range db 
-                 :eacl.relationship/resource-type+resource+relation-name+subject-type+subject 
-                 start-tuple nil)]
+        datoms (d/index-range db
+                              :eacl.relationship/resource-type+resource+relation-name+subject-type+subject
+                              start-tuple nil)]
     (->> datoms
          (take-while #(matches-backward-tuple % resource-type resource-eid relation target-subject-type))
          (map extract-subject-from-backward-datom)
@@ -192,11 +192,11 @@ Support complex chains like server → nic → lease → network → vpc:
     (let [first-step (first chain-steps)
           remaining-steps (rest chain-steps)
           ;; Get intermediate resources
-          intermediate-resources (traverse-relationship-forward 
-                                   db subject-type subject-eid 
-                                   (:relation first-step) 
-                                   (:target-resource-type first-step)
-                                   cursor limit)]
+          intermediate-resources (traverse-relationship-forward
+                                  db subject-type subject-eid
+                                  (:relation first-step)
+                                  (:target-resource-type first-step)
+                                  cursor limit)]
       ;; Continue traversal with intermediate resources
       (mapcat (fn [[inter-type inter-eid]]
                 (traverse-deep-chain db inter-type inter-eid remaining-steps target-resource-type cursor limit))
@@ -215,22 +215,22 @@ Create single function that handles both `:self` and regular arrows:
   (case (:source-relation unified-permission)
     :self
     ;; Direct permission: check relation on same resource
-    (traverse-relationship-forward db subject-type subject-eid 
-                                   (:target-permission unified-permission) 
+    (traverse-relationship-forward db subject-type subject-eid
+                                   (:target-permission unified-permission)
                                    resource-type cursor limit)
-    
+
     ;; Arrow permission: traverse to intermediate resource then check target permission
-    (let [intermediate-resource-type (get-target-resource-type db resource-type 
-                                                              (:source-relation unified-permission))
-          intermediate-resources (traverse-relationship-forward 
-                                   db subject-type subject-eid 
-                                   (:target-permission unified-permission) 
-                                   intermediate-resource-type cursor limit)]
+    (let [intermediate-resource-type (get-target-resource-type db resource-type
+                                                               (:source-relation unified-permission))
+          intermediate-resources (traverse-relationship-forward
+                                  db subject-type subject-eid
+                                  (:target-permission unified-permission)
+                                  intermediate-resource-type cursor limit)]
       ;; Now traverse back to find resources of target type
       (mapcat (fn [[inter-type inter-eid]]
-                (traverse-relationship-backward db inter-type inter-eid 
-                                               (:source-relation unified-permission) 
-                                               resource-type cursor limit))
+                (traverse-relationship-backward db inter-type inter-eid
+                                                (:source-relation unified-permission)
+                                                resource-type cursor limit))
               intermediate-resources))))
 ```
 
@@ -249,17 +249,17 @@ Handle cases where target permissions are themselves complex:
           ;; Direct permission - terminal case
           [(->TraversalPath [] (:target-permission unified-permission))]
           ;; Arrow permission - may need further resolution
-          (let [target-resource-type (get-target-resource-type db (:resource-type unified-permission) 
-                                                              (:source-relation unified-permission))
-                target-paths (get-unified-permission-paths db target-resource-type 
+          (let [target-resource-type (get-target-resource-type db (:resource-type unified-permission)
+                                                               (:source-relation unified-permission))
+                target-paths (get-unified-permission-paths db target-resource-type
                                                            (:target-permission unified-permission))]
             (map (fn [target-path]
-                   (->TraversalPath 
-                     (cons (->TraversalStep (:source-relation unified-permission)
+                   (->TraversalPath
+                    (cons (->TraversalStep (:source-relation unified-permission)
                                            (:resource-type unified-permission)
                                            target-resource-type)
-                           (:steps target-path))
-                     (:terminal-relation target-path)))
+                          (:steps target-path))
+                    (:terminal-relation target-path)))
                  target-paths)))))))
 ```
 
@@ -275,17 +275,17 @@ Support cursors with union permissions and complex paths:
   "Creates cursor that works with union permissions and complex paths"
   [results last-resource resource-type]
   (when last-resource
-    (->ComplexCursor 
-      (create-path-cursors results)
-      (extract-resource-id last-resource)
-      resource-type)))
+    (->ComplexCursor
+     (create-path-cursors results)
+     (extract-resource-id last-resource)
+     resource-type)))
 
 (defn apply-complex-cursor
   "Applies complex cursor to resume pagination correctly"
   [db query complex-cursor]
   (if complex-cursor
-    (let [path-queries (map #(apply-path-cursor % query (:path-cursors complex-cursor)) 
-                           (get-unified-permission-paths db (:resource/type query) (:permission query)))]
+    (let [path-queries (map #(apply-path-cursor % query (:path-cursors complex-cursor))
+                            (get-unified-permission-paths db (:resource/type query) (:permission query)))]
       (execute-union-query db path-queries (:last-resource-id complex-cursor)))
     (execute-union-query db (get-unified-permission-paths db (:resource/type query) (:permission query)) nil)))
 ```
@@ -322,40 +322,40 @@ Create the main function that handles all complexity:
 ```clojure
 (defn lookup-resources
   "Main lookup-resources implementation with unified permission model"
-  [db {:as query
-       subject :subject
-       permission :permission
+  [db {:as           query
+       subject       :subject
+       permission    :permission
        resource-type :resource/type
-       cursor :cursor
-       limit :limit
-       :or {cursor nil limit 1000}}]
-  {:pre [(:type subject) (:id subject) 
+       cursor        :cursor
+       limit         :limit
+       :or           {cursor nil limit 1000}}]
+  {:pre [(:type subject) (:id subject)
          (keyword? permission) (keyword? resource-type)]}
-  
+
   (let [{subject-type :type subject-eid :id} subject
-        
+
         ;; Resolve all permission paths using unified model
         permission-paths (get-unified-permission-paths db resource-type permission)
-        
+
         ;; Handle cursor extraction
         cursor-eid (extract-cursor-eid cursor)
-        
+
         ;; Execute traversal for each path
         path-results (pmap (fn [path]
-                             (traverse-unified-permission db subject-type subject-eid path 
-                                                        resource-type cursor-eid (* limit 2)))
+                             (traverse-unified-permission db subject-type subject-eid path
+                                                          resource-type cursor-eid (* limit 2)))
                            permission-paths)
-        
+
         ;; Combine results with deduplication
         combined-results (combine-union-results path-results cursor-eid limit)
-        
+
         ;; Convert to SpiceObjects
         spice-objects (map (fn [[type eid]] (eid->spice-object db type eid)) combined-results)
-        
+
         ;; Create next cursor
         next-cursor (create-complex-cursor path-results (last combined-results) resource-type)]
-    
-    {:data spice-objects
+
+    {:data   spice-objects
      :cursor next-cursor}))
 ```
 
@@ -390,13 +390,13 @@ Handle the real-world patterns from production schema:
           vpc-admin (resolve-arrow-permission db :server :vpc :admin)
           shared-admin (resolve-direct-permission db :server :shared_admin)]
       (combine-permission-paths [account-admin vpc-admin shared-admin]))
-    
+
     ;; server.view = admin + shared_member (where admin is itself complex)
     [:server :view]
     (let [admin-paths (handle-production-patterns db :server :admin)
           shared-member-paths (resolve-direct-permission db :server :shared_member)]
       (combine-permission-paths (concat admin-paths shared-member-paths)))
-    
+
     ;; Default case
     (get-unified-permission-paths db resource-type permission)))
 ```
@@ -424,12 +424,12 @@ Create tests for all new functionality:
 ```clojure
 (deftest test-self-generalization
   (testing "Direct permissions work as :self arrows"
-    (with-mem-conn [conn schema/v5-schema]
+    (with-mem-conn [conn eacl.datomic.schema/v5-schema]
       @(d/transact conn fixtures/base-fixtures)
       (let [db (d/db conn)
-            direct-results (lookup-resources db {:subject (->user "user-1")
-                                                :permission :view
-                                                :resource/type :account})
+            direct-results (lookup-resources db {:subject       (->user "user-1")
+                                                 :permission    :view
+                                                 :resource/type :account})
             ;; Should get same results whether using direct or :self representation
             paths (get-unified-permission-paths db :account :view)]
         (is (some #(= :self (:source-relation %)) paths))
@@ -437,23 +437,23 @@ Create tests for all new functionality:
 
 (deftest test-union-permissions
   (testing "Union permissions combine multiple paths correctly"
-    (with-mem-conn [conn schema/v5-schema]
+    (with-mem-conn [conn eacl.datomic.schema/v5-schema]
       @(d/transact conn fixtures/base-fixtures)
       (let [db (d/db conn)
             ;; server.admin should work via account->admin AND shared_admin
-            results (lookup-resources db {:subject (->user "super-user")
-                                          :permission :admin
+            results (lookup-resources db {:subject       (->user "super-user")
+                                          :permission    :admin
                                           :resource/type :server})]
         (is (>= (count (:data results)) 3))))))
 
 (deftest test-complex-chains
   (testing "Complex relationship chains work correctly"
-    (with-mem-conn [conn schema/v5-schema]
+    (with-mem-conn [conn eacl.datomic.schema/v5-schema]
       @(d/transact conn fixtures/base-fixtures)
       (let [db (d/db conn)
             ;; VPC should be able to view servers via deep chain
-            results (lookup-resources db {:subject (->vpc "vpc-1")
-                                          :permission :view
+            results (lookup-resources db {:subject       (->vpc "vpc-1")
+                                          :permission    :view
                                           :resource/type :server})]
         (is (pos? (count (:data results))))))))
 ```
@@ -464,14 +464,14 @@ Add performance testing for complex scenarios:
 ```clojure
 (deftest test-performance-union-permissions
   (testing "Performance with union permissions at scale"
-    (with-mem-conn [conn schema/v5-schema]
+    (with-mem-conn [conn eacl.datomic.schema/v5-schema]
       @(d/transact conn (generate-large-test-data 10000))
       (let [db (d/db conn)
             start-time (System/nanoTime)
-            results (lookup-resources db {:subject (->user "super-user")
-                                          :permission :admin
+            results (lookup-resources db {:subject       (->user "super-user")
+                                          :permission    :admin
                                           :resource/type :server
-                                          :limit 1000})
+                                          :limit         1000})
             duration (- (System/nanoTime) start-time)]
         (is (< duration 2000000000)) ; Less than 2 seconds
         (is (pos? (count (:data results))))))))
@@ -485,14 +485,14 @@ Update the main implementation to use the new fixed version:
 ```clojure
 ;; In src/eacl/datomic/impl.clj
 (ns eacl.datomic.impl
-  (:require [eacl.datomic.impl-fixed :as impl-fixed]
-            [eacl.datomic.impl-optimized :as impl-optimized]))
+  (:require [eacl.datomic.impl-fixed]
+            [eacl.datomic.impl-optimized]))
 
 ;; Use the fixed implementation
-(def can? impl-optimized/can?)
-(def lookup-subjects impl-optimized/lookup-subjects)
-(def lookup-resources impl-fixed/lookup-resources)
-(def count-resources impl-fixed/count-resources)
+(def can? eacl.datomic.impl-optimized/can?)
+(def lookup-subjects eacl.datomic.impl-optimized/lookup-subjects)
+(def lookup-resources eacl.datomic.impl-fixed/lookup-resources)
+(def count-resources eacl.datomic.impl-fixed/count-resources)
 ```
 
 #### [ ] Step 9.2: Validate against all existing tests
@@ -505,7 +505,7 @@ Run complete test suite to ensure compatibility:
     (println "Results:" impl-results)
     (when (pos? (+ (:fail impl-results) (:error impl-results)))
       (println "WARNING: Tests failed, investigating...")))
-  
+
   (println "Testing lazy lookup...")
   (let [lazy-results (clojure.test/run-tests 'eacl.datomic.lazy-lookup-test)]
     (println "Results:" lazy-results)))

@@ -8,7 +8,8 @@
             [eacl.datalevin.db :as ddb]
             [eacl.datalevin.fork :as fork]
             [eacl.datalevin.impl :as impl]
-            [eacl.schema.expression-persistence :as expression-persistence]))
+            [eacl.schema.expression-persistence :as expression-persistence]
+            [eacl.schema.wildcard :as wildcard]))
 
 (def adapter-capabilities
   {:qualification #{qualification-data/capability}
@@ -122,14 +123,14 @@
 (defn- ordered-generation-frame
   [snapshot relation-ids]
   (ddb/with-db
-   snapshot
-   (fn [db]
-     (mapv
-      (fn [relation-id]
-        [relation-id
-         (scalar-generation
-          db relation-id :eacl.datalevin/relation-generation)])
-      relation-ids))))
+    snapshot
+    (fn [db]
+      (mapv
+       (fn [relation-id]
+         [relation-id
+          (scalar-generation
+           db relation-id :eacl.datalevin/relation-generation)])
+       relation-ids))))
 
 (defn- snapshot-revision-info
   [snapshot]
@@ -188,21 +189,22 @@
        :schema-generation
        (fn []
          (ddb/with-db
-          snapshot
-          #(scalar-generation
-            % schema-eid :eacl.datalevin/schema-generation)))
+           snapshot
+           #(scalar-generation
+             % schema-eid :eacl.datalevin/schema-generation)))
 
        :exact-locator (constantly nil)
 
        :object-id->internal
        (fn [object-id]
-         (if (number? object-id)
-           (exact-natural! :entity-id object-id)
-           (ddb/with-db
-             snapshot
-             (fn [db]
-               (when-some [internal-id (object-id->entid db object-id)]
-                 (exact-natural! :entity-id internal-id))))))
+         (ddb/with-db
+           snapshot
+           (fn [db]
+             (when-some [internal-id
+                         (if object-id->entid
+                           (object-id->entid db object-id)
+                           (d/entid db [:eacl/id object-id]))]
+               (exact-natural! :entity-id internal-id)))))
 
        :internal-id->object
        (fn [internal-id]
@@ -214,14 +216,21 @@
          (ddb/with-db
            snapshot
            (fn [db]
-             (mapv
-              (fn [{:keys [e v]}]
-                (exact-natural! :relation-id e)
-                {:relation-id e
-                 :resource-type resource-type
-                 :relation-name relation-name
-                 :subject-type (nth v 2)})
-              (impl/relation-datoms db resource-type relation-name)))))
+             (let [wildcard-attribute? (contains? (d/schema db) wildcard/unqualified-attribute)
+                   wildcard-eid (delay (d/entid db wildcard/lookup-ref))]
+               (mapv
+                (fn [{:keys [e v]}]
+                  (exact-natural! :relation-id e)
+                  (cond-> {:relation-id e
+                           :resource-type resource-type
+                           :relation-name relation-name
+                           :subject-type (nth v 2)}
+                    ;; A `T:*` branch derives through the wildcard subject.
+                    (and wildcard-attribute?
+                         (seq (d/datoms db :eav e wildcard/unqualified-attribute))
+                         @wildcard-eid)
+                    (assoc :wildcard-eid @wildcard-eid)))
+                (impl/relation-datoms db resource-type relation-name))))))
 
        :permission-defs
        (fn [resource-type permission-name]
@@ -234,10 +243,10 @@
        :permission-expression
        (fn [resource-type permission-name]
          (ddb/with-db
-          snapshot
-          #(expression-persistence/validated-expression-entity
-            (impl/find-permission-defs
-             % resource-type permission-name))))
+           snapshot
+           #(expression-persistence/validated-expression-entity
+             (impl/find-permission-defs
+              % resource-type permission-name))))
 
        ;; Argument-domain guards stay: the adapter contract test and the
        ;; EACL-FORMAL-027 ledger pin fail-closed rejection of non-natural

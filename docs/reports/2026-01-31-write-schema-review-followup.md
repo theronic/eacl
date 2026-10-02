@@ -78,12 +78,12 @@ This is a significant improvement over the previous approach where validation wa
 Validation errors now include detailed context:
 
 ```clojure
-{:type :invalid-arrow-target-permission
- :permission "server/view"
- :arrow-via :account
+{:type        :invalid-arrow-target-permission
+ :permission  "server/view"
+ :arrow-via   :account
  :target-type :account
- :target :nonexistent
- :message "Permission server/view arrow via account->nonexistent - permission 'nonexistent' does not exist on account"}
+ :target      :nonexistent
+ :message     "Permission server/view arrow via account->nonexistent - permission 'nonexistent' does not exist on account"}
 ```
 
 ### 3. Full SpiceDB Grammar Support
@@ -152,7 +152,7 @@ These should be semantically equivalent (both check the `admin` permission on th
 
 **Problem**: The `validate-schema-references` function has special handling for `source-rel = :self`:
 
-```clojure
+```text
 (if (= source-rel :self)
   (if (= target-type :relation)
     ;; Self -> relation validation

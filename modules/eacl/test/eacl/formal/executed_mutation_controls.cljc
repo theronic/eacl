@@ -2,32 +2,48 @@
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is testing]]
             [clojure.string :as str]
+            [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.point-reuse :as point-reuse]
+            [eacl.authorization.qualification :as qualification]
+            [eacl.authorization.qualification-test :as qualification-fixtures]
+            [eacl.authorization.temporal :as temporal]
+            [eacl.cache.key :as cache-key]
             [eacl.backend.v8 :as backend]
             [eacl.backend.direct-membership :as direct]
             [eacl.authorization.batch :as batch]
             [eacl.cache :as cache]
+            [eacl.core :as eacl]
             [eacl.uuid :as uuid]
             [eacl.secure-format :as secure]
             [eacl.causal-token :as causal-token]
             [eacl.engine.portable-decisions :as portable]
+            [eacl.client.orchestration :as orchestration]
             [eacl.client.range-reuse :as range-reuse]
             [eacl.engine.scan-cache :as scan-cache]
+            [eacl.engine.memoized-membership-refinement-test
+             :as membership-refinement]
             [eacl.engine.sealed-plan :as sealed-plan]
             [eacl.engine.stable-reducer :as stable-reducer]
+            [eacl.engine.stable-route :as route]
             [eacl.engine.v8 :as engine]
+            [eacl.operator.cover-plan :as cover-plan]
+            [eacl.execution :as execution]
             [eacl.operator.evaluator :as operator-evaluator]
             [eacl.operator.lookup :as operator-lookup]
             [eacl.operator.plan :as operator-plan]
             [eacl.operator.recursive :as operator-recursive]
+            [eacl.operator.vector-evaluator :as vector-evaluator]
             [eacl.proof-frame :as proof-frame]
+            [eacl.relay :as relay]
+            [eacl.relationships.mutations :as relationship-mutations]
             [eacl.request.context :as request-context]
             [eacl.request.counters :as request-counters]
             [eacl.schema.expression :as expression]
             [eacl.schema.expression-graph :as expression-graph]
-            [eacl.schema.expression-persistence :as persistence]
             [eacl.schema.expression-resolver :as resolver]
             [eacl.spicedb.parser :as parser]
             [eacl.subproblem-cache :as subproblem]
+            [eacl.test-support.tuple-adapter :as tuple-adapter]
             [eacl.verified-kernel :as verified]))
 
 (defn- production-decision
@@ -717,6 +733,506 @@
                              :subject (:subject alice)))]
         (gate))))))
 
+(defn public-identity-representation-alias-killed?
+  []
+  (let [gate #(and (cache/canonical-cursor-identity? [1])
+                   (not (cache/canonical-cursor-identity? (list 1))))]
+    (and
+     (gate)
+     (false?
+      (with-redefs [cache/canonical-cursor-identity? sequential?]
+        (gate))))))
+
+(defn unresolved-relationship-coalescing-killed?
+  []
+  (let [updates [{:operation :touch
+                  :relationship
+                  {:subject {:type :user :id (list 1)}
+                   :relation :viewer
+                   :resource {:type :document :id "one"}}}
+                 {:operation :touch
+                  :relationship
+                  {:subject {:type :user :id [1]}
+                   :relation :viewer
+                   :resource {:type :document :id "one"}}}]
+        gate #(= 2 (count
+                    (relationship-mutations/normalize-public-updates updates)))
+        original relationship-mutations/normalize-public-updates]
+    (and
+     (gate)
+     (false?
+      (with-redefs [relationship-mutations/normalize-public-updates
+                    (fn [candidate]
+                      (relationship-mutations/coalesce-updates
+                       (original candidate)))]
+        (gate))))))
+
+(defn false-public-identity-presence-killed?
+  []
+  (let [cursor {:v 3 :subject false :resource "document"}
+        opts {:object-id->entid
+              (fn [_ public-id]
+                ({false 101 "document" 202} public-id))}
+        expected {:v 3 :subject 101 :resource 202}
+        gate #(= expected
+                 (orchestration/default-spice-cursor->internal
+                  :db opts cursor))]
+    (and
+     (gate)
+     (false?
+      (with-redefs [orchestration/public-id-present? boolean]
+        (gate))))))
+
+(defn- public-identity-domain-adapter
+  []
+  (backend/make-adapter
+   {:id :public-identity-domain-control
+    :capabilities backend/empty-capabilities
+    :operations
+    (merge
+     (operation-map)
+     {:object-id->internal
+      (fn [public-id]
+        ({0 101 false 102} public-id))})}))
+
+(defn numeric-public-id-native-eid-alias-killed?
+  []
+  (let [adapter (public-identity-domain-adapter)
+        query {:after {:kind :stable-edge :result-eid 0}}
+        gate
+        #(= 101
+            (get-in
+             (relay/internalize-prepared-page-query adapter query)
+             [:after :result-eid]))]
+    (and
+     (gate)
+     (false?
+      (with-redefs [backend/object-id->internal
+                    (fn [candidate public-id]
+                      (if (number? public-id)
+                        public-id
+                        (backend/invoke
+                         candidate :object-id->internal public-id)))]
+        (gate))))))
+
+(defn false-stable-edge-presence-killed?
+  []
+  (let [adapter (public-identity-domain-adapter)
+        query {:after {:kind :stable-edge :result-eid false}}
+        gate
+        #(= 102
+            (get-in
+             (relay/internalize-prepared-page-query adapter query)
+             [:after :result-eid]))]
+    (and
+     (gate)
+     (false?
+      (with-redefs [relay/edge-id-present? boolean]
+        (gate))))))
+
+(defn- invalid-execution-control?
+  [request key]
+  (try
+    (execution/normalize {:execution-timeout-ms 100} :can? request)
+    false
+    (catch #?(:clj clojure.lang.ExceptionInfo
+              :cljs cljs.core.ExceptionInfo) error
+      (let [data (ex-data error)]
+        (and (= :eacl.execution/invalid-contract (:eacl/error data))
+             (= key (:key data)))))))
+
+(defn false-evaluation-control-killed?
+  []
+  (let [gate #(invalid-execution-control? {:evaluation false} :evaluation)
+        original execution/normalize-evaluation]
+    (and
+     (gate)
+     (false?
+      (with-redefs [execution/normalize-evaluation
+                    (fn [value]
+                      (if (false? value) :demand (original value)))]
+        (gate))))))
+
+(defn false-timeout-control-killed?
+  []
+  (let [gate #(invalid-execution-control? {:timeout-ms false} :timeout-ms)
+        original execution/normalize-timeout-ms]
+    (and
+     (gate)
+     (false?
+      (with-redefs [execution/normalize-timeout-ms
+                    (fn [value]
+                      (if (false? value) 100 (original value)))]
+        (gate))))))
+
+(defn false-cancellation-control-killed?
+  []
+  (let [gate #(invalid-execution-control?
+               {:cancellation-token false} :cancellation-token)
+        original execution/cancellation-token?]
+    (and
+     (gate)
+     (false?
+      (with-redefs [execution/cancellation-token?
+                    (fn [value]
+                      (or (false? value) (original value)))]
+        (gate))))))
+
+(defn unsupported-subject-relation-downgrade-killed?
+  []
+  (let [dispatches (atom 0)
+        reader
+        (reify eacl/IAuthorizationReader
+          (-check-permission [_ _]
+            (swap! dispatches inc)
+            {:allowed? true})
+          (-read-schema [_ _] nil)
+          (-read-relationships [_ _] nil)
+          (-lookup-resources [_ _] nil)
+          (-lookup-subjects [_ _] nil)
+          (-count-resources [_ _] nil)
+          (-count-subjects [_ _] nil)
+          (-expand-permission-tree [_ _] nil))
+        request {:subject {:type :user :id "u" :relation :member}
+                 :permission :view
+                 :resource {:type :document :id "d"}}
+        rejected-without-dispatch?
+        #(do
+           (reset! dispatches 0)
+           (try
+             (eacl/check-permission reader request)
+             false
+             (catch #?(:clj clojure.lang.ExceptionInfo
+                       :cljs cljs.core.ExceptionInfo) error
+               (and (= :eacl/unsupported-subject-relation
+                       (:type (ex-data error)))
+                    (= :unsupported-subject-relation
+                       (:reason (ex-data error)))
+                    (zero? @dispatches)))))
+        mutant-invoked? (atom false)]
+    (and
+     (rejected-without-dispatch?)
+     (false?
+      (with-redefs [eacl/validate-reader-request!
+                    (fn [_ candidate]
+                      (reset! mutant-invoked? true)
+                      candidate)]
+        (rejected-without-dispatch?)))
+     @mutant-invoked?)))
+
+(defn unknown-public-request-key-killed?
+  []
+  (let [original-check-permission eacl/check-permission
+        reader
+        (reify eacl/IAuthorizationReader
+          (-check-permission [_ _] {:allowed? true})
+          (-read-schema [_ _] nil)
+          (-read-relationships [_ _] nil)
+          (-lookup-resources [_ _] nil)
+          (-lookup-subjects [_ _] nil)
+          (-count-resources [_ _] nil)
+          (-count-subjects [_ _] nil)
+          (-expand-permission-tree [_ _] nil))
+        request {:subject {:type :user :id "u"}
+                 :permission :view
+                 :resource {:type :document :id "d"}
+                 :consistncy :fully-consistent}
+        rejected?
+        #(try
+           (eacl/check-permission reader request)
+           false
+           (catch #?(:clj clojure.lang.ExceptionInfo
+                     :cljs cljs.core.ExceptionInfo) error
+             (= :unknown-request-key (:reason (ex-data error)))))]
+    (and
+     (rejected?)
+     (false?
+      (with-redefs [eacl/check-permission
+                    (fn
+                      ([target candidate]
+                       (eacl/-check-permission target candidate))
+                      ([target subject permission resource]
+                       (original-check-permission
+                        target subject permission resource))
+                      ([target subject permission resource consistency]
+                       (original-check-permission
+                        target subject permission resource consistency)))]
+        (rejected?))))))
+
+(defn missing-required-read-field-killed?
+  []
+  (let [dispatches (atom 0)
+        reader
+        (reify eacl/IAuthorizationReader
+          (-check-permission [_ _]
+            (swap! dispatches inc)
+            {:allowed? true})
+          (-read-schema [_ _] nil)
+          (-read-relationships [_ _] nil)
+          (-lookup-resources [_ _] nil)
+          (-lookup-subjects [_ _] nil)
+          (-count-resources [_ _] nil)
+          (-count-subjects [_ _] nil)
+          (-expand-permission-tree [_ _] nil))
+        request {:permission :view
+                 :resource {:type :document :id "d"}}
+        rejected-without-dispatch?
+        #(do
+           (reset! dispatches 0)
+           (try
+             (eacl/check-permission reader request)
+             false
+             (catch #?(:clj clojure.lang.ExceptionInfo
+                       :cljs cljs.core.ExceptionInfo) error
+               (and (= :missing-request-key
+                       (:reason (ex-data error)))
+                    (zero? @dispatches)))))
+        mutant-invoked? (atom false)]
+    (and
+     (rejected-without-dispatch?)
+     (false?
+      (with-redefs [eacl/validate-reader-request!
+                    (fn [_ candidate]
+                      (reset! mutant-invoked? true)
+                      candidate)]
+        (rejected-without-dispatch?)))
+     @mutant-invoked?)))
+
+(defn fail-open-revocation-shape-killed?
+  []
+  (let [calls (atom [])
+        writer
+        (reify eacl/IAuthorizationWriter
+          (-write-schema! [_ _] nil)
+          (-write-relationships! [_ request]
+            (swap! calls conj request)
+            {:zed/token "mutation-control"})
+          (-delete-object! [_ _] nil))
+        relationship
+        (eacl/->Relationship
+         {:type :user :id "u"}
+         :viewer
+         {:type :document :id "d"})
+        rejected-without-dispatch?
+        #(do
+           (reset! calls [])
+           (try
+             (eacl/delete-relationships! writer relationship)
+             false
+             (catch #?(:clj clojure.lang.ExceptionInfo
+                       :cljs cljs.core.ExceptionInfo) error
+               (and (= :invalid-request-shape
+                       (:reason (ex-data error)))
+                    (empty? @calls)))))]
+    (and
+     (rejected-without-dispatch?)
+     (false?
+      (with-redefs [eacl/delete-relationships!
+                    (fn [target relationships]
+                      (eacl/write-relationships!
+                       target
+                       (mapv #(eacl/->RelationshipUpdate :delete %)
+                             (:data relationships))))]
+        (rejected-without-dispatch?))))))
+
+(defn relationship-write-qualifier-typo-killed?
+  []
+  (let [original-write-relationship! eacl/write-relationship!
+        calls (atom [])
+        writer
+        (reify eacl/IAuthorizationWriter
+          (-write-schema! [_ _] nil)
+          (-write-relationships! [_ request]
+            (swap! calls conj request)
+            {:zed/token "mutation-control"})
+          (-delete-object! [_ _] nil))
+        update
+        {:operation :touch
+         :subject {:type :user :id "u"}
+         :relation :viewer
+         :resource {:type :document :id "d"}
+         :valid-until-mss 0}
+        rejected-without-dispatch?
+        #(do
+           (reset! calls [])
+           (try
+             (eacl/write-relationship! writer update)
+             false
+             (catch #?(:clj clojure.lang.ExceptionInfo
+                       :cljs cljs.core.ExceptionInfo) error
+               (and (= :unknown-request-key
+                       (:reason (ex-data error)))
+                    (empty? @calls)))))]
+    (and
+     (rejected-without-dispatch?)
+     (false?
+      (with-redefs
+       [eacl/write-relationship!
+        (fn
+          ([target candidate]
+           (let [{:keys [operation subject relation resource]} candidate]
+             (eacl/write-relationships!
+              target
+              [(eacl/->RelationshipUpdate
+                operation
+                (merge
+                 (eacl/->Relationship subject relation resource)
+                 (select-keys
+                  candidate [:caveat :caveat-context :valid-until-ms])))])))
+          ([target operation subject relation resource]
+           (original-write-relationship!
+            target operation subject relation resource)))]
+        (rejected-without-dispatch?))))))
+
+(defn nested-relationship-update-validation-killed?
+  []
+  (let [calls (atom [])
+        writer
+        (reify eacl/IAuthorizationWriter
+          (-write-schema! [_ _] nil)
+          (-write-relationships! [_ request]
+            (swap! calls conj request)
+            {:zed/token "mutation-control"})
+          (-delete-object! [_ _] nil))
+        updates
+        [{:operation :touch
+          :relationship
+          {:subject {:type :user :id "u"}
+           :relation :viewer
+           :resource {:type :document :id "d"}
+           :valid-until-mss 0}}
+         {:operation :touch
+          :relationship
+          {:subject {:type :user :id "u"}
+           :relation :viewer}}]
+        rejected-without-dispatch?
+        (fn [update]
+          (reset! calls [])
+          (try
+            (eacl/write-relationships! writer [update])
+            false
+            (catch #?(:clj clojure.lang.ExceptionInfo
+                      :cljs cljs.core.ExceptionInfo) error
+              (and (= :eacl/invalid-relationship-qualifier
+                      (:type (ex-data error)))
+                   (empty? @calls)))))]
+    (and
+     (every? rejected-without-dispatch? updates)
+     (false?
+      (with-redefs [relationship-mutations/normalize-public-updates identity]
+        (every? rejected-without-dispatch? updates))))))
+
+(defn nil-public-object-delete-killed?
+  []
+  (let [calls (atom [])
+        writer
+        (reify eacl/IAuthorizationWriter
+          (-write-schema! [_ _] nil)
+          (-write-relationships! [_ _] nil)
+          (-delete-object! [_ request]
+            (swap! calls conj request)
+            {:retracted-datoms 0}))
+        object {:type :user :id nil}
+        rejected-without-dispatch?
+        #(do
+           (reset! calls [])
+           (try
+             (eacl/delete-object! writer object)
+             false
+             (catch #?(:clj clojure.lang.ExceptionInfo
+                       :cljs cljs.core.ExceptionInfo) error
+               (and (= :invalid-object-shape
+                       (:reason (ex-data error)))
+                    (empty? @calls)))))]
+    (and
+     (rejected-without-dispatch?)
+     (false?
+      (with-redefs [eacl/delete-object!
+                    (fn [target candidate]
+                      (eacl/-delete-object! target {:object candidate}))]
+        (rejected-without-dispatch?))))))
+
+(defn snapshot-option-injection-killed?
+  []
+  (let [injected
+        {:spice-object->internal
+         (fn [_ object] (assoc object :id :attacker-selected))}
+        rejected?
+        #(try
+           (orchestration/validate-public-snapshot-options! injected)
+           false
+           (catch #?(:clj clojure.lang.ExceptionInfo
+                     :cljs cljs.core.ExceptionInfo) error
+             (= :unknown-request-key (:reason (ex-data error)))))]
+    (and
+     (= {} (orchestration/validate-public-snapshot-options! {}))
+     (rejected?)
+     (false?
+      (with-redefs [orchestration/validate-public-snapshot-options! identity]
+        (rejected?))))))
+
+(defn reserved-live-page-basis-killed?
+  []
+  (let [reader
+        (reify eacl/IAuthorizationReader
+          (-check-permission [_ _] nil)
+          (-read-schema [_ _] nil)
+          (-read-relationships [_ _] nil)
+          (-lookup-resources [_ _] {:data []})
+          (-lookup-subjects [_ _] nil)
+          (-count-resources [_ _] nil)
+          (-count-subjects [_ _] nil)
+          (-expand-permission-tree [_ _] nil))
+        request {:subject {:type :user :id "u"}
+                 :permission :view
+                 :resource/type :document
+                 :first 1
+                 :page/basis :live}
+        rejected?
+        #(try
+           (eacl/lookup-resources reader request)
+           false
+           (catch #?(:clj clojure.lang.ExceptionInfo
+                     :cljs cljs.core.ExceptionInfo) error
+             (= :unsupported-page-basis (:reason (ex-data error)))))]
+    (and
+     (rejected?)
+     (false?
+      (with-redefs [eacl/lookup-resources
+                    (fn [target candidate]
+                      (eacl/-lookup-resources target candidate))]
+        (rejected?))))))
+
+(defn public-empty-schema-opt-in-killed?
+  []
+  (let [calls (atom [])
+        writer
+        (reify eacl/IAuthorizationWriter
+          (-write-schema! [_ request]
+            (swap! calls conj request)
+            {:zed/token "mutation-control"})
+          (-write-relationships! [_ _] nil)
+          (-delete-object! [_ _] nil))
+        request {:schema "definition user {}"
+                 :allow-empty-schema? true}
+        rejected-without-dispatch?
+        #(do
+           (reset! calls [])
+           (try
+             (eacl/write-schema! writer request)
+             false
+             (catch #?(:clj clojure.lang.ExceptionInfo
+                       :cljs cljs.core.ExceptionInfo) error
+               (and (= :unknown-request-key (:reason (ex-data error)))
+                    (empty? @calls)))))]
+    (and
+     (rejected-without-dispatch?)
+     (false?
+      (with-redefs [eacl/write-schema!
+                    (fn [target candidate]
+                      (eacl/-write-schema! target candidate))]
+        (rejected-without-dispatch?))))))
+
 (defn aggregate-deadline-renewal-killed?
   []
   (let [contract {:operation :check-permissions
@@ -744,122 +1260,12 @@
 ;;; executed the mutated definition at least once.
 
 (defn- operator-probe-adapter-from-validated
-  "Builds a v8 adapter over `validated` schema whose relationship tuples are
-  exactly `relationships`: a set of
-  `[subject-type subject-eid relation-name resource-type resource-eid]`.
-  Relation names resolve to the deterministic relation ids the sealed plan
-  sees, and both scan directions honor strict eid order and exclusive or
-  inclusive bounds."
   [validated relationships]
-  (let [candidate (persistence/candidate-schema validated)
-        relation-key (juxt :eacl.relation/resource-type
-                           :eacl.relation/relation-name
-                           :eacl.relation/subject-type)
-        rows (->> (:relations candidate)
-                  (sort-by relation-key)
-                  (map-indexed
-                   (fn [index relation]
-                     {:relation-id (+ 100 index)
-                      :resource-type (:eacl.relation/resource-type relation)
-                      :relation-name (:eacl.relation/relation-name relation)
-                      :subject-type (:eacl.relation/subject-type relation)}))
-                  vec)
-        relation-ids (into {}
-                           (map (fn [row]
-                                  [[(:resource-type row)
-                                    (:relation-name row)]
-                                   (:relation-id row)]))
-                           rows)
-        relations (group-by (juxt :resource-type :relation-name) rows)
-        expressions (into {}
-                          (map (fn [entity]
-                                 [[(:eacl.permission/resource-type entity)
-                                   (:eacl.permission/permission-name entity)]
-                                  entity]))
-                          (:permissions candidate))
-        tuples (into #{}
-                     (map (fn [[subject-type subject-eid relation-name
-                                resource-type resource-eid]]
-                            [subject-type subject-eid
-                             (get relation-ids
-                                  [resource-type relation-name])
-                             resource-type resource-eid]))
-                     relationships)
-        scan (fn [match-fn extract-fn]
-               (fn [type-a eid-a relation-id type-b
-                    {:keys [direction bound-eid inclusive-bound?]}]
-                 (let [eids (->> tuples
-                                 (filter #(match-fn % type-a eid-a
-                                                    relation-id type-b))
-                                 (map extract-fn)
-                                 sort
-                                 vec)
-                       eids (if (= :desc direction)
-                              (vec (reverse eids))
-                              eids)]
-                   (cond->> eids
-                     (some? bound-eid)
-                     (filterv
-                      (fn [eid]
-                        (if (= :desc direction)
-                          (if inclusive-bound?
-                            (<= eid bound-eid)
-                            (< eid bound-eid))
-                          (if inclusive-bound?
-                            (>= eid bound-eid)
-                            (> eid bound-eid)))))))))]
-    (backend/make-adapter
-     {:id :operator-mutation-control
-      :capabilities backend/empty-capabilities
-      :operations
-      (merge
-       (operation-map)
-       {:snapshot-id (constantly {:snapshot :operator-mutation-control})
-        :basis-kind (constantly :ordinary)
-        :native-revision (constantly {:revision 1})
-        :order-hint (constantly 1)
-        :exact-locator (constantly nil)
-        :object-id->internal identity
-        :internal-id->object identity
-        :relation-defs
-        (fn [resource-type relation-name]
-          (mapv #(select-keys % [:relation-id :resource-type
-                                 :relation-name :subject-type])
-                (get relations [resource-type relation-name] [])))
-        :permission-expression
-        (fn [resource-type permission-name]
-          (get expressions [resource-type permission-name]))
-        :permission-defs
-        (fn [resource-type permission-name]
-          (when-let [entity (get expressions
-                                 [resource-type permission-name])]
-            (persistence/union-compatible-definitions
-             (:eacl/id entity)
-             (persistence/decode-entity entity))))
-        :subject->resources
-        (scan (fn [[subject-type subject-eid relation resource-type _]
-                   type-a eid-a relation-id type-b]
-                (and (= subject-type type-a) (= subject-eid eid-a)
-                     (= relation relation-id) (= resource-type type-b)))
-              (fn [[_ _ _ _ resource-eid]] resource-eid))
-        :resource->subjects
-        (scan (fn [[subject-type _ relation resource-type resource-eid]
-                   type-a eid-a relation-id type-b]
-                (and (= resource-type type-a) (= resource-eid eid-a)
-                     (= relation relation-id) (= subject-type type-b)))
-              (fn [[_ subject-eid _ _ _]] subject-eid))
-        :direct-match?
-        (fn [subject-type subject-eid relation-eid
-             resource-type resource-eid]
-          (contains? tuples [subject-type subject-eid relation-eid
-                             resource-type resource-eid]))
-        :all-permission-nodes (constantly (set (keys expressions)))})})))
+  (tuple-adapter/from-validated validated relationships))
 
 (defn- operator-probe-adapter
   [schema-source relationships]
-  (operator-probe-adapter-from-validated
-   (resolver/validate-schema schema-source)
-   relationships))
+  (tuple-adapter/from-schema schema-source relationships))
 
 (defn- operator-typed-or
   "Runs `probe`, returning its value or `{:typed <:eacl/error>}` when it
@@ -1096,8 +1502,8 @@ definition doc {
         :anchor-states (get-in result [:counters :anchor-states])}))))
 
 (def ^:private operator-duplicate-schema
-  "One cyclic component {b, both} in which `adir` (the join anchor) and `b`
-  are both in the join's facts when it reserves, so `b`'s in-component
+  "One cyclic component {back, both} in which `adir` (the join anchor) and
+  `back` are both in the join's facts when it reserves, so `back`'s in-component
   delivery then re-admits an already-satisfied slot."
   "definition user {}
 definition doc {
@@ -1105,8 +1511,8 @@ definition doc {
   relation bdir: user
   relation cdir: user
   permission cperm = cdir
-  permission b = bdir + both
-  permission both = adir & b & cperm
+  permission back = bdir + both
+  permission both = adir & back & cperm
   permission member = both
 }")
 
@@ -1924,15 +2330,18 @@ definition document {
         original uuid/capture invoked (atom false)]
     (and (gate)
          (false? (with-redefs [uuid/capture (fn [value]
-                                            (reset! invoked true)
-                                            (some-> (original value) uuid/text))]
+                                              (reset! invoked true)
+                                              (some-> (original value) uuid/text))]
                    (gate)))
          @invoked)))
 
 (defn uuid-comparator-collision-killed? []
   (let [input {#uuid "854e138f-b8a4-42ee-a8f9-49c01ac19fc1" :uuid
                "854e138f-b8a4-42ee-a8f9-49c01ac19fc1" :string}
-        gate #(= 2 (count (secure/canonicalize input)))
+        ;; Canonicalization rejects keys that its comparator merges, so a
+        ;; collapsing comparator fails loudly rather than dropping one.
+        gate #(= 2 (try (count (secure/canonicalize input))
+                        (catch #?(:clj Exception :cljs :default) _ 0)))
         invoked (atom false)]
     (and (gate)
          (false? (with-redefs [secure/canonical-comparator (fn [_ _] (reset! invoked true) 0)]
@@ -1944,8 +2353,8 @@ definition document {
         invoked (atom false)]
     (and (gate)
          (false? (with-redefs [uuid/text (fn [value]
-                                         (reset! invoked true)
-                                         (transform (original value)))]
+                                           (reset! invoked true)
+                                           (transform (original value)))]
                    (gate)))
          @invoked)))
 
@@ -1977,19 +2386,723 @@ definition document {
                :cljs (js/parseInt hex 16)))))))
 
 (defn uuid-noncanonical-alias-killed? []
+  ;; Byte-canonical decoding would also reject this alias after reading it.
+  ;; The gate therefore requires the strict UUID reader itself to refuse the
+  ;; text (`:malformed`), before any comparison with the canonical rendering
+  ;; (`:noncanonical`) is reached.
   (let [wire "#uuid \"854E138F-b8a4-42ee-a8f9-49c01ac19fc1\""
-        gate #(try (secure/decode-canonical wire) false
-                   (catch #?(:clj Exception :cljs :default) _ true))
+        gate #(= :malformed
+                 (try (secure/decode-canonical wire) nil
+                      (catch #?(:clj Exception :cljs :default) error
+                        (:reason (ex-data error)))))
         original uuid/canonical-text? invoked (atom false)]
     (and (gate)
          (false? (with-redefs [uuid/canonical-text?
-                              (fn [text] (reset! invoked true)
-                                (and (string? text) (original (str/lower-case text))))]
+                               (fn [text] (reset! invoked true)
+                                 (and (string? text) (original (str/lower-case text))))]
                    (gate)))
          @invoked)))
 
+;;; ---------------------------------------------------------------------------
+;;; Memoized membership search controls
+;;;
+;;; Each mutant runs the executable refinement campaign of
+;;; `eacl.engine.memoized-membership-refinement-test`, which requires equal
+;;; decisions, retained answers and possible nodes to MemoizedMembership.dfy's
+;;; `Search` after every call. The last control cannot change a decision; only
+;;; the retained-state comparison sees it.
+
+(defn- membership-refinement-kills?
+  "The unmutated search refines the model on the control seeds, and the
+  mutated one diverges from it."
+  [mutated-campaign]
+  (and (nil? (:failure (membership-refinement/run-campaign 1 12)))
+       (some? (:failure (mutated-campaign)))))
+
+(defn membership-possible-node-dropped-killed?
+  []
+  (let [original route/possible-nodes]
+    (membership-refinement-kills?
+     #(with-redefs [route/possible-nodes
+                    (fn [reverse-rules subject-type holdings]
+                      (let [possible (original reverse-rules subject-type holdings)]
+                        (disj possible (first (sort-by pr-str possible)))))]
+        (membership-refinement/run-campaign 1 12)))))
+
+(defn membership-first-rule-skipped-killed?
+  []
+  (let [original route/push-successors]
+    (membership-refinement-kills?
+     #(with-redefs [route/push-successors
+                    (fn [stack rules eid subject-type holdings possible]
+                      (original stack (vec (rest rules)) eid subject-type
+                                holdings possible))]
+        (membership-refinement/run-campaign 1 12)))))
+
+(defn membership-found-root-retained-negative-killed?
+  []
+  (let [original route/decide-leveled]
+    (membership-refinement-kills?
+     #(with-redefs [route/decide-leveled
+                    (fn [search entry resource-eid]
+                      (let [decision (original search entry resource-eid)]
+                        (when (true? decision)
+                          (vswap! (:memo entry) assoc
+                                  [(:root search) resource-eid] false))
+                        decision))]
+        (membership-refinement/run-campaign 1 12)))))
+
+(defn membership-exhausted-root-forgotten-killed?
+  []
+  (let [original route/decide-leveled]
+    (membership-refinement-kills?
+     #(with-redefs [route/decide-leveled
+                    (fn [search entry resource-eid]
+                      (let [decision (original search entry resource-eid)]
+                        (when (false? decision)
+                          (vswap! (:memo entry) dissoc
+                                  [(:root search) resource-eid]))
+                        decision))]
+        (membership-refinement/run-campaign 1 12)))))
+
+;;; ---------------------------------------------------------------------------
+;;; Operator delegation controls
+;;;
+;;; 100 is the parent of 101, of 102, of 103; 104 and 105 are each other's
+;;; parent. User 300 deletes from 100 down, reads from 101 down, and is
+;;; eligible at 102, 104 and 105: `removable` is 101-103, `prune` is 100,
+;;; `either_top`, a union at an operator's root, is 101-105, and `inherited`,
+;;; whose operator recurses, is 101-102 (the 104-105 cycle grants nothing).
+;;; 300 is blocked at 102, so `pruned` is 101, and views at 101 and 104, so
+;;; `seen_top` is 100, 102, 104 and 105. `shared` recurses through two
+;;; operands of one intersection and is 101-103.
+
+(def ^:private delegation-control-schema
+  "definition user {}
+definition folder {
+  relation parent: folder
+  relation reader: user
+  relation deleter: user
+  relation eligible: user
+  relation blocked: user
+  relation viewer: user
+  permission readable = reader + parent->readable
+  permission granted = deleter + parent->granted
+  permission removable = granted & readable
+  permission prune = granted - readable
+  permission either_top = eligible + (granted & readable)
+  permission inherited = reader + (parent->inherited & eligible)
+  permission pruned = reader + (parent->pruned - blocked)
+  permission seen = viewer + parent->seen
+  permission seen_top = deleter + (seen & eligible)
+  permission shared = reader + (parent->shared & gate)
+  permission gate = eligible + parent->shared
+}")
+
+(def ^:private delegation-control-relationships
+  #{[:folder 100 :parent :folder 101] [:folder 101 :parent :folder 102]
+    [:folder 102 :parent :folder 103]
+    [:folder 104 :parent :folder 105] [:folder 105 :parent :folder 104]
+    [:user 300 :deleter :folder 100] [:user 300 :reader :folder 101]
+    [:user 300 :eligible :folder 102] [:user 300 :eligible :folder 104]
+    [:user 300 :eligible :folder 105] [:user 300 :blocked :folder 102]
+    [:user 300 :viewer :folder 101] [:user 300 :viewer :folder 104]})
+
+(defn- delegation-control-lookup
+  [permission]
+  (operator-typed-or
+   #(mapv :id (:data (engine/lookup-resources
+                      (operator-probe-adapter delegation-control-schema
+                                              delegation-control-relationships)
+                      {:subject {:type :user :id 300} :permission permission
+                       :resource/type :folder :first 10})))))
+
+(defn- delegation-control-set
+  "The lookup's resources as a set; a typed error unchanged."
+  [permission]
+  (let [ids (delegation-control-lookup permission)]
+    (if (vector? ids) (set ids) ids)))
+
+(defn operator-delegation-admits-operator-cycle-killed?
+  []
+  (let [original operator-plan/delegated-permissions
+        expected #{101 102}]
+    (and
+     (= expected (delegation-control-set :inherited))
+     ;; Delegating a plan whose operator lies on a cycle hands a recursive
+     ;; operator to the acyclic evaluator.
+     (not= expected
+           (with-redefs [operator-plan/delegated-permissions
+                         (fn [plan]
+                           (or (original plan)
+                               (into (sorted-set)
+                                     (keep (fn [{:keys [permission dag]}]
+                                             (when-not (some #(contains? #{:intersection
+                                                                           :exclusion}
+                                                                         (first %))
+                                                             (:nodes dag))
+                                               permission)))
+                                     (:expressions plan))))]
+             (delegation-control-set :inherited))))))
+
+;;; Folded operators (EACL-FORMAL-098). `viewer & viewer` normalizes to
+;;; `viewer` in the semantic DAG, but the stored expression keeps the
+;;; intersection, which the union engine refuses. Classifying `manage` by its
+;;; DAG alone delegates both permissions of the cycle to their own union plans:
+;;; the check then denies the viewer and the lookup fails.
+
+(def ^:private folded-control-schema
+  "definition user {}
+definition project {
+  relation viewer: user
+  permission access = manage
+  permission manage = (viewer & viewer) + access
+}")
+
+(defn- folded-control-run []
+  (let [adapter (operator-probe-adapter folded-control-schema #{[:user 1 :viewer :project 10]})]
+    [(operator-typed-or #(engine/can? adapter {:type :user :id 1} :manage {:type :project :id 10}))
+     (operator-typed-or #(mapv :id (:data (engine/lookup-resources
+                                           adapter {:subject {:type :user :id 1} :permission :manage
+                                                    :resource/type :project :first 10}))))]))
+
+(defn operator-delegation-takes-folded-operator-for-union-only-killed?
+  []
+  (let [original operator-plan/operator-permission?]
+    (and (= [true [10]] (folded-control-run))
+         (not= [true [10]]
+               (with-redefs [operator-plan/operator-permission?
+                             (fn [expression] (original (dissoc expression :folded-operator?)))]
+                 (folded-control-run))))))
+
+;;; Static operand order (design D2). Evaluators decide a union's operands in
+;;; the sealed cost order, `operator-plan/operand-order`, and stop at the first
+;;; decisive one. Every operand must still be reachable: in `open = (viewer +
+;;; parent->viewer) - banned` the arrow comes last, and user 9's only grant on
+;;; folder 2 is its parent's viewer. A fault must not stop the walk: in `open =
+;;; (reader + writer) - banned` the reader grant faults and comes first, and
+;;; the plain writer grant must absorb it.
+
+(def ^:private operand-order-control-schema
+  "definition user {}
+definition folder {
+  relation parent: folder
+  relation viewer: user
+  relation banned: user
+  permission open = (viewer + parent->viewer) - banned
+}")
+
+(defn- operand-order-control-run []
+  (let [adapter (operator-probe-adapter operand-order-control-schema
+                                        #{[:folder 1 :parent :folder 2] [:user 9 :viewer :folder 1]})]
+    (operator-typed-or #(engine/can? adapter {:type :user :id 9} :open {:type :folder :id 2}))))
+
+(defn operand-order-drops-a-child-killed?
+  []
+  (let [original operator-plan/operand-order]
+    (and (true? (operand-order-control-run))
+         (not (true? (with-redefs [operator-plan/operand-order
+                                   (fn [plan permission node-id predicate]
+                                     (vec (butlast (original plan permission node-id predicate))))]
+                       (operand-order-control-run)))))))
+
+(def ^:private operand-fault-control-schema
+  "definition user {}
+definition doc {
+  relation reader: user
+  relation writer: user
+  relation banned: user
+  permission open = (reader + writer) - banned
+}")
+
+(defn- operand-fault-control-run []
+  ;; The probe adapter has no qualified direct-edge read; the stored compact
+  ;; edges below stand in for it: the reader grant carries qualifier 7.
+  (let [adapter (operator-probe-adapter operand-fault-control-schema
+                                        #{[:user 1 :reader :doc 20 7] [:user 1 :writer :doc 20]})
+        relation-id (fn [relation] (:relation-id (first (backend/invoke adapter :relation-defs :doc relation))))
+        stored {[:user 1 (relation-id :reader) :doc 20] [20 7]
+                [:user 1 (relation-id :writer) :doc 20] 20}
+        fault (evidence/fault :eacl.caveat/evaluation :missing-map-key)]
+    (with-redefs [backend/direct-edge-invoker (fn [_] (fn [& point] (get stored (vec point))))
+                  qualification/qualify
+                  (fn [_ _ compact-edge]
+                    (if (vector? compact-edge) fault (some? compact-edge)))]
+      (operator-typed-or
+       #(evidence/value
+         (first (vector-evaluator/check-many-eids
+                 {:adapter adapter
+                  :plan (operator-plan/seal-plan adapter [:doc :open])
+                  :qualification {:time 0}
+                  :candidates [{:direction :forward :subject-type :user :subject-eid 1
+                                :resource-type :doc :resource-eid 20}]})))))))
+
+(defn operand-order-takes-a-fault-as-decisive-killed?
+  []
+  (let [original vector-evaluator/decisive?]
+    (and (true? (operand-fault-control-run))
+         (not (true? (with-redefs [vector-evaluator/decisive?
+                                   (fn [op result]
+                                     (or (evidence/fault? result) (original op result)))]
+                       (operand-fault-control-run)))))))
+
+(defn operator-delegated-generator-wrong-operand-killed?
+  []
+  (let [original operator-plan/delegated-generator
+        expected [100]]
+    (and
+     (= expected (delegation-control-lookup :prune))
+     ;; Generating `granted - readable` from `readable` never offers a
+     ;; candidate the exclusion admits.
+     (not= expected
+           (with-redefs [operator-plan/delegated-generator
+                         (fn [plan permission delegated]
+                           (let [generator (original plan permission delegated)]
+                             (or (first (remove #{generator} delegated))
+                                 generator)))]
+             (delegation-control-lookup :prune))))))
+
+(defn operator-generator-drops-union-term-killed?
+  []
+  (let [original cover-plan/generator-terms
+        expected #{101 102 103 104 105}
+        answer #(let [ids (delegation-control-lookup :either_top)]
+                  (if (vector? ids) (set ids) ids))]
+    (and
+     (= expected (answer))
+     ;; Each term of `eligible + (granted & readable)` reaches resources the
+     ;; other does not, so a flattened generator without either one never
+     ;; offers some of the root's results.
+     (not= expected
+           (with-redefs [cover-plan/generator-terms
+                         (fn [plan permission]
+                           (let [terms (original plan permission)]
+                             (if (< 1 (count terms)) (pop terms) terms)))]
+             (answer))))))
+
+(defn operator-holdings-truncated-as-complete-killed?
+  []
+  (let [original route/subject-holdings
+        expected #{101 102 103 104 105}
+        answer #(let [ids (delegation-control-lookup :either_top)]
+                  (if (vector? ids) (set ids) ids))]
+    (with-redefs [route/holdings-limit 2]
+      (and
+       (= expected (answer))
+       ;; User 300 is eligible at 102, 104 and 105. A holdings scan bounded
+       ;; at two is incomplete; taking it as complete loses 105, which only
+       ;; the `eligible` leaf grants.
+       (not= expected
+             (with-redefs [route/subject-holdings
+                           (fn [options subject-type subject-eid relation-eid resource-type]
+                             (assoc (original options subject-type subject-eid
+                                              relation-eid resource-type)
+                                    :complete? true))]
+               (answer)))))))
+
+(defn operator-guard-ignored-killed?
+  []
+  (let [check #(operator-typed-or
+                (fn []
+                  (engine/can? (operator-probe-adapter delegation-control-schema
+                                                       delegation-control-relationships)
+                               {:type :user :id 300} :inherited {:type :folder :id 103})))]
+    (and
+     (false? (check))
+     ;; 300 holds `inherited` on 103's parent but is not eligible at 103.
+     ;; Without the guard, the check follows the parent anyway. (A lookup
+     ;; would not show it: its generator, `reader + eligible`, never offers
+     ;; 103.)
+     (not (false? (with-redefs [route/guards-outcome
+                                (fn [_ _ _ _ _] :eacl.engine.stable-route/kept)]
+                    (check)))))))
+
+(defn operator-subtracted-guard-flipped-killed?
+  []
+  (let [original route/guards-outcome
+        expected #{101}]
+    (and
+     (= expected (delegation-control-set :pruned))
+     ;; Read as a positive guard, `blocked` admits 102 instead of removing it.
+     (not= expected
+           (with-redefs [route/guards-outcome
+                         (fn [search notes level guards eid]
+                           (original search notes level
+                                     (mapv #(update % :sign {:negative :positive
+                                                             :positive :negative})
+                                           guards)
+                                     eid))]
+             (delegation-control-set :pruned))))))
+
+(defn operator-nonlinear-recursion-guarded-killed?
+  []
+  (let [routed (fn []
+                 (let [stats (atom {})
+                       ids (binding [operator-recursive/*recursive-stats* stats]
+                             (delegation-control-set :shared))]
+                   [ids (pos? (:questions @stats 0))]))
+        expected [#{101 102 103} true]]
+    (and
+     (= expected (routed))
+     ;; Taking the first of two recursive operands as the only one lets the
+     ;; other become a guard, so a non-linear component leaves the tabled
+     ;; evaluator it needs.
+     (not= expected
+           (with-redefs [operator-plan/recursive-operand
+                         (fn [depends? children] (first (filter depends? children)))]
+             (routed))))))
+
+(defn membership-truncated-holdings-beyond-bound-killed?
+  []
+  (let [expected #{100 102 104 105}
+        check-many route/check-many-eids]
+    ;; Production chooses a bound for its point/page workload. Force the
+    ;; actual request's bound so this control still exercises truncation.
+    (with-redefs [route/check-many-eids
+                  (fn [options] (check-many (assoc options :holding-limit 1)))]
+      (and
+       (= expected (delegation-control-set :seen_top))
+       ;; 300 views 101 and 104. A scan truncated at 101 does not decide 104;
+       ;; reading it as absent loses `seen` there and at its cycle partner.
+       (not= expected
+             (with-redefs [route/held-edge
+                           (fn [held _ _ _ _ eid _] (get (:edges held) eid))]
+               (delegation-control-set :seen_top)))))))
+
+(defn operator-delegation-withheld-killed?
+  []
+  (let [routed (fn []
+                 (let [stats (atom {})
+                       ids (binding [operator-recursive/*recursive-stats* stats]
+                             (delegation-control-lookup :removable))]
+                   [ids (empty? @stats)]))
+        expected [[101 102 103] true]]
+    (and
+     (= expected (routed))
+     ;; Withholding delegation keeps every answer but routes the operands
+     ;; back through the tabled recursive evaluator.
+     (not= expected
+           (with-redefs [operator-plan/delegated-permissions (fn [_] nil)]
+             (routed))))))
+
+;;; ---------------------------------------------------------------------------
+;;; Leveled membership search controls
+;;;
+;;; Document 10 has three parents: 11 through an edge until 500, whose reader
+;;; grant lasts until 800; 12 through a plain edge, whose reader grant lasts
+;;; until 200; and 14 through an edge until 900, with no grant. Its grant
+;;; therefore ends at 500, the widest witness, while the first level searched
+;;; below the plain one is 900. Document 13 is read only under a caveat. The
+;;; relationships' evidence comes from a table standing in for
+;;; qualification.
+
+(def ^:private leveled-control-schema
+  "definition user {}
+definition doc {
+  relation reader: user
+  relation parent: doc
+  permission view = reader + parent->view
+}")
+
+(def ^:private leveled-control-relationships
+  "Qualifier ids: 1 is the edge from 11 (until 500), 2 the edge from 14
+  (until 900), 3 and 4 the reader grants on 11 (until 800) and 12 (until
+  200), and 5 the caveated reader grant on 13."
+  #{[:doc 11 :parent :doc 10 1] [:doc 12 :parent :doc 10] [:doc 14 :parent :doc 10 2]
+    [:user 1 :reader :doc 11 3] [:user 1 :reader :doc 12 4] [:user 1 :reader :doc 13 5]})
+
+(defn- leveled-control-run
+  "`view` for user 1 on documents 10 and 13, batched, beside the point check
+  of 13."
+  []
+  (let [adapter (operator-probe-adapter leveled-control-schema
+                                        leveled-control-relationships)
+        table {1 (evidence/with-certificate true 500 true)
+               2 (evidence/with-certificate true 900 true)
+               3 (evidence/with-certificate true 800 true)
+               4 (evidence/with-certificate true 200 true)
+               5 (evidence/conditional [:leveled-control-caveat] ["flag"])}
+        options {:adapter adapter
+                 :plan (sealed-plan/seal-plan adapter [:doc :view])
+                 :subject-type :user :subject-eid 1 :qualification {:time 0}}]
+    (with-redefs [qualification/qualify
+                  (fn [_ _ compact-edge]
+                    (if (vector? compact-edge)
+                      (get table (second compact-edge))
+                      (some? compact-edge)))]
+      {:many (route/check-many-eids (assoc options :resource-eids [10 13]
+                                           :context (route/membership-context)))
+       :point (route/check-eids (assoc options :resource-eid 13))})))
+
+(defn- leveled-control-correct?
+  [{:keys [many point]}]
+  (and (= [500 (evidence/valid-until point)]
+          [(evidence/valid-until (first many)) (evidence/valid-until (second many))])
+       (evidence/has? (first many))
+       (= point (second many))))
+
+(defn- leveled-control-kills?
+  [mutated-run]
+  (and (leveled-control-correct? (leveled-control-run))
+       (not (leveled-control-correct? (mutated-run)))))
+
+(defn membership-level-below-latest-skip-killed?
+  []
+  (let [original route/search-level]
+    (leveled-control-kills?
+     #(with-redefs [route/search-level
+                    (fn [search entry level root-state]
+                      (let [outcome (original search entry level root-state)]
+                        (if (and (map? outcome) (:skipped outcome))
+                          (update outcome :skipped dec)
+                          outcome)))]
+        (leveled-control-run)))))
+
+(defn membership-first-level-certificate-killed?
+  []
+  (let [original route/decide-leveled]
+    (leveled-control-kills?
+     #(with-redefs [route/decide-leveled
+                    (fn [search entry resource-eid]
+                      (let [decision (original search entry resource-eid)
+                            first-level (first (get-in @(:skips entry)
+                                                       [:eacl.engine.stable-route/plain
+                                                        [(:root search) resource-eid]]))]
+                        (if (and (evidence/has? decision) (not (true? decision)) first-level)
+                          (evidence/with-certificate true first-level true)
+                          decision)))]
+        (leveled-control-run)))))
+
+(defn membership-conditional-answered-false-killed?
+  []
+  (let [original route/decide-leveled]
+    (leveled-control-kills?
+     #(with-redefs [route/decide-leveled
+                    (fn [search entry resource-eid]
+                      (let [decision (original search entry resource-eid)]
+                        (if (keyword? decision) false decision)))]
+        (leveled-control-run)))))
+
+;;; A guarded member that consults another. User 300 views 100, the parent of
+;;; 101, so `kept` reaches 101 unless `banned` holds there. The oracle stands
+;;; in for `banned`: false on 101 only until 200, when a subtracted grant
+;;; expires.
+
+(def ^:private consulting-control-schema
+  "definition user {}
+definition folder {
+  relation parent: folder
+  relation viewer: user
+  relation owner: user
+  relation suspended: user
+  permission banned = owner + (parent->banned - suspended)
+  permission kept = viewer + (parent->kept - banned)
+}")
+
+(defn- consulting-control-run
+  "`kept` for user 300 on 101 by the guarded search, with the resources it
+  defers to the exact evaluation marked ::deferred."
+  []
+  (let [adapter (operator-probe-adapter
+                 consulting-control-schema
+                 #{[:folder 100 :parent :folder 101] [:user 300 :viewer :folder 100]})
+        plan (operator-plan/seal-plan adapter [:folder :kept])]
+    (operator-typed-or
+     #(route/check-many-eids
+       {:adapter adapter :plan (operator-plan/guarded-program plan [:folder :kept])
+        :subject-type :user :subject-eid 300 :resource-eids [101]
+        :context (route/membership-context)
+        :oracle (fn [_ eid] (if (= 101 eid) (evidence/with-certificate false 200 true) false))
+        :fallback (fn [_] ::deferred)}))))
+
+(defn membership-consulted-false-until-absent-killed?
+  []
+  (let [original route/oracle-class]
+    (and (= [::deferred] (consulting-control-run))
+         ;; Taking the consulted false as absent ignores that `banned` holds
+         ;; from 200 on, and certifies 101 forever.
+         (= [true]
+            (with-redefs [route/oracle-class
+                          (fn [value] (if (evidence/no? value) :absent (original value)))]
+              (consulting-control-run))))))
+
+;;; Strong-Kleene faults. In `view = reader + parent->view`, document 20 has a
+;;; faulting reader grant (qualifier 7) and the plain parent 21, which user 1
+;;; reads plainly: the grant absorbs the fault. Document 31's only path
+;;; crosses the faulting parent edge from 30 (qualifier 8), which nobody
+;;; reads: the absent target absorbs the fault. The production point route
+;;; must answer true and false; a fault-dominant composition answers faults.
+
+(def ^:private kleene-control-relationships
+  #{[:user 1 :reader :doc 20 7] [:doc 21 :parent :doc 20] [:user 1 :reader :doc 21]
+    [:doc 30 :parent :doc 31 8]})
+
+(defn- kleene-control-run []
+  (let [adapter (operator-probe-adapter leveled-control-schema kleene-control-relationships)
+        fault (evidence/fault :eacl.caveat/evaluation :missing-map-key)
+        options {:adapter adapter
+                 :plan (sealed-plan/seal-plan adapter [:doc :view])
+                 :subject-type :user :subject-eid 1 :qualification {:time 0}}]
+    (with-redefs [qualification/qualify
+                  (fn [_ _ compact-edge]
+                    (if (vector? compact-edge) fault (some? compact-edge)))]
+      (mapv #(evidence/value (route/check-eids (assoc options :resource-eid %))) [20 31]))))
+
+(defn kleene-fault-dominates-absorber-killed?
+  []
+  (let [original evidence/combine]
+    (and (= [true false] (kleene-control-run))
+         (not= [true false]
+               (with-redefs [evidence/combine
+                             (fn [op a b]
+                               (if (or (evidence/fault? a) (evidence/fault? b))
+                                 (evidence/fault :eacl.caveat/evaluation :dominant)
+                                 (original op a b)))]
+                 (kleene-control-run))))))
+
+;;; Set-algebra result reuse. A request at 100 publishes its decisions under
+;;; certified point keys; a later request looks them up under its own
+;;; certified scope. `expiring` is certified until 200 and `incomplete` has an
+;;; incomplete certificate.
+
+(defn- reuse-control-storage-key
+  [semantic]
+  (cache-key/exact-denotation-key
+   {:tier :denotation
+    :source-lifecycle #uuid "7f3c62e4-51b2-4c43-9a8e-2f0c7d5e1a90"
+    :abi :reuse-control-v1
+    :semantic semantic
+    :reuse [:basis 1]}))
+
+(defn- reuse-control
+  "Publishes `decision` at 100 under `computed-context`; returns the decision
+  a request at `time` under `context` reuses (or ::miss) and that request's
+  certificate."
+  [decision computed-context time context]
+  (binding [subproblem/*store* (subproblem/store {:denotation-max-entries 4
+                                                  :answer-max-entries 1})
+            subproblem/*exact-denotation-key-fn* reuse-control-storage-key]
+    (let [key-of #(point-reuse/scoped-key [:reuse-control] (point-reuse/scope %))
+          computed (qualification-fixtures/request {:time 100 :context computed-context})
+          later (qualification-fixtures/request {:time time :context context})]
+      (point-reuse/publish! computed [[(key-of computed) decision]])
+      {:reused (first (point-reuse/reuse! later [(key-of later)] ::miss))
+       :certificate (qualification/certificate later)})))
+
+(defn reuse-past-certificate-end-killed?
+  []
+  (let [expiring (evidence/with-certificate true 200 true)
+        observe #(:reused (reuse-control expiring {} 200 {}))]
+    (and (= expiring (:reused (reuse-control expiring {} 199 {})))
+         (= ::miss (observe))
+         ;; Admitting the certificate's end reuses a grant at the instant it
+         ;; expires; observing it then fails the request as invalid evidence.
+         (not= ::miss
+               (operator-typed-or
+                #(with-redefs [temporal/reusable?
+                               (fn [answer time _]
+                                 (and (<= (:start-ms answer) time)
+                                      (let [end (:valid-until-ms answer)]
+                                        (or (nil? end) (<= time end)))
+                                      (:complete? answer)))]
+                   (observe)))))))
+
+(defn reuse-key-without-caveat-context-killed?
+  []
+  (let [observe #(:reused (reuse-control true {"flag" true} 150 {"flag" false}))]
+    (and (true? (:reused (reuse-control true {"flag" true} 150 {"flag" true})))
+         (= ::miss (observe))
+         ;; A scope without the caveat context shares one key across
+         ;; contexts, so a decision made under one is reused under another.
+         (not= ::miss
+               (with-redefs [qualification/certified-denotation-scope
+                             (fn [request]
+                               (let [[format _ _ _ evaluator]
+                                     (qualification/exact-reuse-identity request)]
+                                 [:certified-point evidence/format-version format evaluator]))]
+                 (observe))))))
+
+(defn reuse-incomplete-certificate-later-killed?
+  []
+  (let [incomplete (evidence/with-certificate true nil false)
+        observe #(:reused (reuse-control incomplete {} 150 {}))]
+    (and (= incomplete (:reused (reuse-control incomplete {} 100 {})))
+         (= ::miss (observe))
+         ;; Ignoring completeness reuses a certificate that does not cover
+         ;; any later time.
+         (not= ::miss
+               (with-redefs [temporal/reusable?
+                             (fn [answer time _]
+                               (and (<= (:start-ms answer) time)
+                                    (evidence/before? time (:valid-until-ms answer))))]
+                 (observe))))))
+
+(defn reused-certificate-unobserved-killed?
+  []
+  (let [expiring (evidence/with-certificate true 200 true)
+        observe #(get-in (reuse-control expiring {} 150 {}) [:certificate :valid-until-ms])]
+    (and (= 200 (observe))
+         ;; Without observing it, a request answered from a reused decision
+         ;; claims a certificate beyond that decision's own.
+         (not= 200
+               (with-redefs [qualification/observe-evidence! (fn [_ value] value)]
+                 (observe))))))
+
+;;; ---------------------------------------------------------------------------
+;;; SpiceDB `use self`: the identity relation the adapter boundary serves
+
+(def ^:private self-identity-schema
+  "use self
+definition doc {
+  relation viewer: doc
+  permission view = viewer + self
+}")
+
+(defn- self-identity-walk
+  "doc:1's `view` resources, one per page, followed to the last page: doc:1
+  through `self` and doc:2 through `viewer`."
+  []
+  (operator-typed-or
+   (fn []
+     (let [adapter (operator-probe-adapter self-identity-schema
+                                           #{[:doc 1 :viewer :doc 2]})
+           query {:subject {:type :doc :id 1} :permission :view
+                  :resource/type :doc :first 1}]
+       (loop [page (engine/lookup-resources adapter query)
+              ids []
+              pages 1]
+         (let [ids (into ids (map :id) (:data page))]
+           (if (and (get-in page [:page-info :has-next-page?]) (< pages 4))
+             (recur (engine/lookup-resources
+                     adapter
+                     (assoc query :after (get-in page [:page-info :end-cursor])))
+                    ids
+                    (inc pages))
+             ids)))))))
+
+(defn self-identity-scan-ignores-bound-killed?
+  []
+  (let [original backend/identity-scan
+        executed (volatile! 0)]
+    (and (= #{1 2}
+            (let [ids (with-redefs [backend/identity-scan
+                                    (fn [anchor options]
+                                      (vswap! executed inc)
+                                      (original anchor options))]
+                        (self-identity-walk))]
+              (when (and (vector? ids) (apply distinct? ids)) (set ids))))
+         (pos? @executed)
+         ;; A scan that ignores its bound replays the anchor on every page
+         ;; after it: the walk repeats doc:1.
+         (not= [1 2]
+               (vec (sort (with-redefs [backend/identity-scan
+                                        (fn [anchor _] [anchor])]
+                            (let [ids (self-identity-walk)]
+                              (if (vector? ids) ids [ids])))))))))
+
 (def controls
   {:wrong-arrow-direction wrong-arrow-direction-killed?
+   :self-identity-scan-ignores-bound self-identity-scan-ignores-bound-killed?
    :uuid-type-coercion uuid-type-coercion-killed?
    :uuid-comparator-collision uuid-comparator-collision-killed?
    :uuid-dropped-high-half uuid-dropped-high-half-killed?
@@ -2027,6 +3140,30 @@ definition document {
    checkpoint-admissions-counter-drop-killed?
    :aggregate-counter-reset aggregate-counter-reset-killed?
    :batch-cross-demand-contamination batch-cross-demand-contamination-killed?
+   :public-identity-representation-alias
+   public-identity-representation-alias-killed?
+   :unresolved-relationship-coalescing
+   unresolved-relationship-coalescing-killed?
+   :false-public-identity-presence false-public-identity-presence-killed?
+   :numeric-public-id-native-eid-alias
+   numeric-public-id-native-eid-alias-killed?
+   :false-stable-edge-presence false-stable-edge-presence-killed?
+   :false-evaluation-control false-evaluation-control-killed?
+   :false-timeout-control false-timeout-control-killed?
+   :false-cancellation-control false-cancellation-control-killed?
+   :unsupported-subject-relation-downgrade
+   unsupported-subject-relation-downgrade-killed?
+   :unknown-public-request-key unknown-public-request-key-killed?
+   :missing-required-read-field missing-required-read-field-killed?
+   :fail-open-revocation-shape fail-open-revocation-shape-killed?
+   :relationship-write-qualifier-typo
+   relationship-write-qualifier-typo-killed?
+   :nested-relationship-update-validation
+   nested-relationship-update-validation-killed?
+   :nil-public-object-delete nil-public-object-delete-killed?
+   :snapshot-option-injection snapshot-option-injection-killed?
+   :reserved-live-page-basis reserved-live-page-basis-killed?
+   :public-empty-schema-opt-in public-empty-schema-opt-in-killed?
    :aggregate-deadline-renewal aggregate-deadline-renewal-killed?
    :operator-wrong-precedence operator-wrong-precedence-killed?
    :operator-swapped-exclusion operator-swapped-exclusion-killed?
@@ -2066,7 +3203,43 @@ definition document {
    :range-window-past-segment-served-as-complete
    range-window-past-segment-served-as-complete-killed?
    :range-composition-order
-   range-composition-order-killed?})
+   range-composition-order-killed?
+   :membership-possible-node-dropped membership-possible-node-dropped-killed?
+   :membership-first-rule-skipped membership-first-rule-skipped-killed?
+   :membership-found-root-retained-negative
+   membership-found-root-retained-negative-killed?
+   :membership-exhausted-root-forgotten
+   membership-exhausted-root-forgotten-killed?
+   :operator-delegation-admits-operator-cycle
+   operator-delegation-admits-operator-cycle-killed?
+   :operator-delegated-generator-wrong-operand
+   operator-delegated-generator-wrong-operand-killed?
+   :operator-delegation-withheld operator-delegation-withheld-killed?
+   :operator-generator-drops-union-term
+   operator-generator-drops-union-term-killed?
+   :operator-holdings-truncated-as-complete
+   operator-holdings-truncated-as-complete-killed?
+   :operator-guard-ignored operator-guard-ignored-killed?
+   :operator-subtracted-guard-flipped operator-subtracted-guard-flipped-killed?
+   :operator-nonlinear-recursion-guarded
+   operator-nonlinear-recursion-guarded-killed?
+   :membership-truncated-holdings-beyond-bound
+   membership-truncated-holdings-beyond-bound-killed?
+   :membership-level-below-latest-skip membership-level-below-latest-skip-killed?
+   :membership-first-level-certificate membership-first-level-certificate-killed?
+   :membership-conditional-answered-false
+   membership-conditional-answered-false-killed?
+   :membership-consulted-false-until-absent
+   membership-consulted-false-until-absent-killed?
+   :reuse-past-certificate-end reuse-past-certificate-end-killed?
+   :reuse-key-without-caveat-context reuse-key-without-caveat-context-killed?
+   :reuse-incomplete-certificate-later reuse-incomplete-certificate-later-killed?
+   :reused-certificate-unobserved reused-certificate-unobserved-killed?
+   :kleene-fault-dominates-absorber kleene-fault-dominates-absorber-killed?
+   :operator-delegation-takes-folded-operator-for-union-only
+   operator-delegation-takes-folded-operator-for-union-only-killed?
+   :operand-order-drops-a-child operand-order-drops-a-child-killed?
+   :operand-order-takes-a-fault-as-decisive operand-order-takes-a-fault-as-decisive-killed?})
 
 (deftest every-portable-production-mutant-is-killed-test
   (doseq [[id detector] controls]

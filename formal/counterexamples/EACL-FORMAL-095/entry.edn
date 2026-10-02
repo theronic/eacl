@@ -1,0 +1,18 @@
+{:id :EACL-FORMAL-095
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace "eacl-rust/EACL-RS-001/semicolon-terminators"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions
+ ["v8.0.0 commit a698b3bdf15e61be9bfd1324d7d7c67dc82176be"]
+ :affected-backends [:shared]
+ :root-cause
+ "The Instaparse schema grammar was line-oriented: a relation or permission ended only at a line break, so SpiceDB's ';' statement terminators were a parse error and valid SpiceDB schemas that use them could not be written."
+ :fix
+ "Replace the grammar with a lexer and recursive-descent parser that follow SpiceDB v1.56.0's schemadsl: a statement ends at ';' or at a line end after a name, keyword, ')', '}' or '*' (SpiceDB's synthetic semicolon). A top-level declaration takes at most one terminator, a definition body accepts empty statements, and the last statement before '}' needs a terminator, as in SpiceDB."
+ :closing-evidence
+ ["eacl.spicedb.compatibility-corpus-test/semicolon-terminators-test"
+  "eacl.spicedb.compatibility-corpus-test/spicedb-verdicts-test"]
+ :notes
+ "Found by the eacl-rust port (BUGS.md EACL-RS-001), verified against main a698b3bd and SpiceDB v1.56.0."}

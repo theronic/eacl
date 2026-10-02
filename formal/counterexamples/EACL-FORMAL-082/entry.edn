@@ -1,0 +1,23 @@
+{:id :EACL-FORMAL-082
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace "eacl-rust BUGS.md EACL-RS-007 (rs007-acyclic, rs007-recursive)"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions
+ ["v8.0 pre-release before strong-Kleene fault semantics"]
+ :affected-backends [:shared :datomic :datascript :datahike]
+ :root-cause
+ "Reverse enumeration qualified every released scan row and threw on a fault before learning whether the row led to any resource. A faulting edge that reached no resource failed lookups and counts on both the least-path and first-discovery routes, while every point check answered no-permission."
+ :fix
+ "Faults are Kleene unknowns carried as path evidence. A row is joined with its continuation like any other row, so a faulting edge with no matching arrow target composes to false. Only a consumed candidate whose complete decision faults fails a page or count."
+ :closing-evidence
+ ["eacl.datascript.kleene-fault-test/a-faulting-edge-that-reaches-no-resource-never-fails-a-walk"
+  "eacl.datascript.kleene-fault-test/only-a-consumed-candidate-can-fail-a-page"
+  "eacl.datascript.kleene-fault-test/a-faulting-subject-is-excluded-from-the-wildcard-and-fails-only-the-page-that-consumes-it"
+  "eacl.datascript.caveat-context-admission-test/the-eacl-rust-context-type-repros-are-rejected-at-admission"
+  "eacl.engine.least-path-evidence-test/legacy-node-evidence-is-bounded-and-demanded-faults-survive"
+  "QualifiedEvidence.FaultsAreNotDecisive"
+  "QualifiedEvidence.FoldsMustNotStopAtAFault"]
+ :notes
+ "The original repro faults through a context-type mismatch, which fail-fast admission now rejects before evaluation. The closing fixture uses a missing map key, which only evaluation can detect."}

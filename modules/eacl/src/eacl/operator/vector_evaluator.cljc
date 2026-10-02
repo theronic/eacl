@@ -1,6 +1,7 @@
 (ns eacl.operator.vector-evaluator
   "Aligned mask-driven predicates for bounded acyclic candidate vectors."
   (:require [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.point-reuse :as point-reuse]
             [eacl.authorization.qualification :as qualification]
             [eacl.backend.direct-membership :as direct]
             [eacl.backend.v8 :as backend]
@@ -125,10 +126,10 @@
        (fn [bytes [node value]]
          (execution/check! :evidence-witness)
          (when-not (and (vector? node) (= 2 (count node))
-                       (get-in (:predicate-programs plan) node))
+                        (get-in (:predicate-programs plan) node))
            (invalid! :invalid-witness-node "Evidence witness is outside the sealed plan." {:node node}))
          (let [bytes (+ bytes (if (boolean? value) 1
-                                 (caveat-values/utf8-size (evidence/encode value))))]
+                                  (caveat-values/utf8-size (evidence/encode value))))]
            (when (> bytes maximum-evidence-witness-bytes)
              (invalid! :witness-size "Evidence witnesses exceed the vector byte bound." {:bytes bytes}))
            (when-not (evidence/before? (:time qualification) (evidence/valid-until value))
@@ -137,23 +138,57 @@
        0 (mapcat :evidence-witnesses candidates))))
   nil)
 
-(defn- direct-probe [candidate descriptor]
-  (when-let [{:keys [relation-id]}
-             (operator-plan/relation-partition
-              descriptor (:subject-type candidate))]
-    (if (= :forward (:direction candidate))
-      {:direction :forward
-       :descriptor {:subject-type (:subject-type candidate)
-                    :subject-eid (:subject-eid candidate)
-                    :relation-eid relation-id
-                    :resource-type (:resource-type candidate)}
-       :candidate [(:resource-type candidate) (:resource-eid candidate)]}
-      {:direction :reverse
-       :descriptor {:resource-type (:resource-type candidate)
-                    :resource-eid (:resource-eid candidate)
-                    :relation-eid relation-id
-                    :subject-type (:subject-type candidate)}
-       :candidate [(:subject-type candidate) (:subject-eid candidate)]})))
+(defn- direct-probe [candidate relation-id subject-eid]
+  (if (= :forward (:direction candidate))
+    {:direction :forward
+     :descriptor {:subject-type (:subject-type candidate)
+                  :subject-eid subject-eid
+                  :relation-eid relation-id
+                  :resource-type (:resource-type candidate)}
+     :candidate [(:resource-type candidate) (:resource-eid candidate)]}
+    {:direction :reverse
+     :descriptor {:resource-type (:resource-type candidate)
+                  :resource-eid (:resource-eid candidate)
+                  :relation-eid relation-id
+                  :subject-type (:subject-type candidate)}
+     :candidate [(:subject-type candidate) subject-eid]}))
+
+(defn- direct-probes
+  "The physical probes deciding one candidate's direct membership: the
+  subject's own tuple, and the wildcard subject's tuple when the relation
+  declares `T:*`. The dispatcher deduplicates the shared wildcard probes."
+  [candidate descriptor]
+  (if-let [{:keys [relation-id wildcard-eid]}
+           (operator-plan/relation-partition
+            descriptor (:subject-type candidate))]
+    (cond-> [(direct-probe candidate relation-id (:subject-eid candidate))]
+      (and (some? wildcard-eid) (not= wildcard-eid (:subject-eid candidate)))
+      (conj (direct-probe candidate relation-id wildcard-eid)))
+    []))
+
+(defn- held-decisions
+  "Decisions for direct probes from the subject's retained holdings
+  (`holdings`, see `stable-route/subject-holdings`), or nil to probe. Only
+  forward probes of one subject and relation slice qualify, and only when
+  the subject's holdings of that slice are complete. Each decision is the
+  one the probe gives: the stored compact edge, qualified on the request."
+  [holdings qualification probes]
+  (when holdings
+    (let [{:keys [direction descriptor]} (first probes)]
+      (when (and (= :forward direction)
+                 (every? #(and (= :forward (:direction %))
+                               (= descriptor (:descriptor %)))
+                         probes))
+        (let [{:keys [subject-type subject-eid relation-eid resource-type]} descriptor
+              {:keys [complete? edges]}
+              (holdings subject-type subject-eid relation-eid resource-type)]
+          (when complete?
+            (mapv (fn [{[_ resource-eid] :candidate}]
+                    (let [compact-edge (get edges resource-eid)]
+                      (if qualification
+                        (qualification/qualify qualification relation-eid compact-edge)
+                        (some? compact-edge))))
+                  probes)))))))
 
 (defn- root-masks
   "Observation-only aligned masks for one resolved row, derived from the memo
@@ -172,19 +207,13 @@
 
 (declare check-many-normalized)
 
-(defn- decisive? [op result]
-  (or (evidence/fault? result)
-      (if (= :union op) (evidence/has? result) (evidence/no? result))))
-
-(defn- demanded-witness-fault [candidate]
-  ;; These faults have already been encountered by traversal. Neither a
-  ;; cached answer nor a later Boolean absorber may erase that demand.
-  (when-let [proofs (:evidence-witnesses candidate)]
-    (reduce-kv (fn [fault _ value]
-                 (if (evidence/fault? value)
-                   (if fault (evidence/combine :union fault value) value)
-                   fault))
-               nil proofs)))
+(defn ^:no-doc decisive?
+  "A definite absorber: `true` for a union, `false` for an intersection or
+  an exclusion's left operand. A fault is never decisive: an evaluator that
+  stops at the first decisive operand of its static order must read past a
+  faulting one."
+  [op result]
+  (if (= :union op) (evidence/has? result) (evidence/no? result)))
 
 (defn check-many-eids
   "Evaluates a distinct vector of complete typed candidate contexts and
@@ -202,11 +231,31 @@
     (validate-evidence-witnesses! options candidates)
     (check-many-normalized (assoc options :candidates candidates))))
 
+(declare check-many-normalized)
+
+(defn ^:no-doc check-many-trusted
+  "`check-many-eids` for an engine caller that has already validated each
+  candidate's typed point context and deduplicated the vector, and supplies
+  every candidate with its `:true-nodes` set. Skips only that re-validation;
+  witness validation and evaluation are unchanged."
+  [{:keys [plan candidates] :as options}]
+  (when-not (operator-plan/operator-plan? plan)
+    (invalid! :operator-plan-required
+              "Vector evaluation requires a sealed operator plan."
+              {:plan-domain (:domain plan)}))
+  (when (> (count candidates) backend/maximum-direct-membership-batch-width)
+    (invalid! :candidate-width
+              "Vector candidate width exceeds the physical maximum."
+              {:width (count candidates)
+               :maximum-width backend/maximum-direct-membership-batch-width}))
+  (validate-evidence-witnesses! options candidates)
+  (check-many-normalized options))
+
 (defn- check-many-normalized
   "Trusted core of `check-many-eids`: the candidate vector is already
   normalized (each caller normalizes exactly once at its boundary)."
   [{:keys [adapter plan candidates cache-lookup cache-publish-many!
-           limits permission node-id qualification]}]
+           limits permission node-id qualification delegate holdings]}]
   (let [width (count candidates)]
     (if (zero? width)
       []
@@ -243,15 +292,15 @@
                 ;; its depth must not consume the JVM or JavaScript stack.
                 (evaluate! [[permission node-id :as node-key] indexes continue]
                   (let [initial (get @memo node-key unresolved-row)
+                        ;; An exact node witness, a faulting one included, is
+                        ;; that node's value; composition decides whether a
+                        ;; definite sibling absorbs its fault.
                         witnessed
                         (reduce
                          (fn [values index]
                            (let [candidate (nth candidates index)
-                                 proofs (:evidence-witnesses candidate)
-                                 fault (when (and proofs (= permission root-permission) (= node-id root-id))
-                                         (demanded-witness-fault candidate))]
+                                 proofs (:evidence-witnesses candidate)]
                              (cond
-                               fault (assoc values index fault)
                                (contains? proofs node-key) (assoc values index (get proofs node-key))
                                (contains? (:true-nodes candidate) node-key) (assoc values index true)
                                :else values)))
@@ -262,12 +311,17 @@
                     (if (empty? pending)
                       (fn [] (continue witnessed))
                       (do
-                        (let [active-now @active]
-                          (doseq [index pending]
-                            (when (contains? active-now [node-key index])
-                              (scalar/active-recursion-outcome
-                               {:node node-key :candidate-index index}))))
-                        (vswap! active into (map #(vector node-key %) pending))
+                        ;; The active nodes are exactly the unfinished
+                        ;; ancestors of this evaluation: children run one at a
+                        ;; time, each on a subset of its parent's pending
+                        ;; candidates. Re-entering an active node with pending
+                        ;; candidates is therefore a cycle for each of them,
+                        ;; so one membership test per node replaces one per
+                        ;; node and candidate.
+                        (when (contains? @active node-key)
+                          (scalar/active-recursion-outcome
+                           {:node node-key :candidate-index (first pending)}))
+                        (vswap! active conj node-key)
                         (add-stat! :node-candidate-evaluations (count pending))
                         (let [predicate
                               (get-in predicate-programs
@@ -275,43 +329,66 @@
                               instruction (:instruction predicate)
                               finish!
                               (fn [values]
-                                (vswap! active #(reduce disj %
-                                                        (map (fn [index] [node-key index]) pending)))
+                                (vswap! active disj node-key)
                                 (let [resolved (commit! node-key values pending)]
                                   (fn [] (continue resolved))))]
                           (case instruction
                             :direct-membership
                             (let [indexed-probes
-                                  (keep (fn [index]
-                                          (when-let [probe
-                                                     (direct-probe
-                                                      (nth candidates index)
-                                                      (:descriptor predicate))]
-                                            [index probe]))
+                                  (into []
+                                        (keep (fn [index]
+                                                (let [probes (direct-probes
+                                                              (nth candidates index)
+                                                              (:descriptor predicate))]
+                                                  (when (seq probes) [index probes]))))
                                         pending)
-                                  probe-indexes (mapv first indexed-probes)
-                                  probes (mapv second indexed-probes)
-                                  decisions
-                                  (if (seq probes)
-                                    (if qualification
-                                      (mapv (fn [probe compact-edge]
-                                              (qualification/qualify qualification
-                                                                     (get-in probe [:descriptor :relation-eid])
-                                                                     compact-edge))
-                                            probes (direct/dispatch-edges adapter probes))
-                                      (direct/dispatch adapter probes cache-lookup))
-                                    [])]
-                              ;; Retain exact leaf decisions privately until
-                              ;; every demanded subgroup in the vector has
-                              ;; completed. A later failure therefore cannot
-                              ;; publish a successful prefix.
-                              (vswap! completed-leaves into
-                                      (mapv vector probes decisions))
+                                  dispatch!
+                                  (fn [probes]
+                                    ;; Own probes share one subject's slice,
+                                    ;; as do wildcard probes, so each group
+                                    ;; can be decided from retained holdings.
+                                    (let [decisions
+                                          (if (seq probes)
+                                            (or (held-decisions holdings qualification probes)
+                                                (if qualification
+                                                  (mapv (fn [probe compact-edge]
+                                                          (qualification/qualify qualification
+                                                                                 (get-in probe [:descriptor :relation-eid])
+                                                                                 compact-edge))
+                                                        probes (direct/dispatch-edges adapter probes))
+                                                  (direct/dispatch adapter probes cache-lookup)))
+                                            [])]
+                                      ;; Publish only after every demanded
+                                      ;; subgroup in the vector succeeds.
+                                      (vswap! completed-leaves into (mapv vector probes decisions))
+                                      decisions))
+                                  own-decisions (dispatch! (mapv (comp first second) indexed-probes))
+                                  wildcard-probes
+                                  (into []
+                                        (keep (fn [[[index probes] own]]
+                                                (when (and (second probes)
+                                                           (not (evidence/has? own)))
+                                                  [index (second probes)])))
+                                        (map vector indexed-probes own-decisions))
+                                  ;; Match scalar union demand: a definite own
+                                  ;; grant decides alone. A faulting own tuple
+                                  ;; still demands the wildcard, whose grant
+                                  ;; absorbs the fault (strong Kleene).
+                                  decisions (into own-decisions
+                                                  (dispatch! (mapv second wildcard-probes)))
+                                  probe-indexes (into (mapv first indexed-probes)
+                                                      (map first wildcard-probes))]
                               (finish!
                                (reduce (fn [result index]
                                          (assoc result index false))
+                                       ;; A wildcard probe unions with the
+                                       ;; candidate's own probe.
                                        (reduce (fn [result [index decision]]
-                                                 (assoc result index decision))
+                                                 (let [prior (nth result index)]
+                                                   (assoc result index
+                                                          (if (= unresolved prior)
+                                                            decision
+                                                            (evidence/combine :union prior decision)))))
                                                witnessed
                                                (map vector probe-indexes
                                                     decisions))
@@ -344,9 +421,30 @@
                                                 :subject-eid (:subject-eid candidate)
                                                 :resource-eid
                                                 (:resource-eid candidate)
-                                                :limits limits :qualification qualification})]
+                                                :limits limits :qualification qualification
+                                                :delegate delegate})]
                                           (assoc result index decision)))
                                       witnessed pending))
+
+                            :delegated-membership
+                            ;; A union-only operand of a delegated view: the
+                            ;; oracle decides every pending candidate at once
+                            ;; through that permission's own sealed union plan.
+                            (let [decisions
+                                  (when delegate
+                                    (vec (delegate (:permission predicate)
+                                                   (mapv #(nth candidates %) pending))))]
+                              (when-not (and decisions
+                                             (= (count pending) (count decisions)))
+                                (invalid! :invalid-delegated-decisions
+                                          "A delegated operand returned no aligned decisions."
+                                          {:node node-key
+                                           :expected (count pending)
+                                           :actual (count decisions)}))
+                              (finish! (reduce (fn [result [index decision]]
+                                                 (assoc result index decision))
+                                               witnessed
+                                               (map vector pending decisions))))
 
                             (:any-true :all-true)
                             (let [op (if (= :any-true instruction) :union :intersection)]
@@ -364,7 +462,8 @@
                                                                     result remaining)
                                                      remaining (filterv #(not (decisive? op (nth result %))) remaining)]
                                                  (children! (subvec children 1) remaining result)))))))]
-                                (children! (:children predicate) pending
+                                (children! (operator-plan/operand-order plan permission node-id predicate)
+                                           pending
                                            (reduce #(assoc %1 %2 (not= op :union)) witnessed pending))))
 
                             :left-and-not-right
@@ -407,16 +506,13 @@
               (add-stat! :failed-vectors 1)
               (throw error))))))))
 
-(def ^:private point-cache-options
-  {:valid? boolean?})
-
-(def ^:private qualified-point-cache-options {:valid? string?})
-
 (defn- point-cache-key
   [plan permission node-id scope-identity candidate]
   [:operator-acyclic-point 1
    (:fingerprint plan) permission node-id scope-identity
-   (semantic-candidate-key candidate)])
+   (-> (semantic-candidate-key candidate)
+       (update :subject-eid point-reuse/canonical-id)
+       (update :resource-eid point-reuse/canonical-id))])
 
 (defn check-cached-many-eids
   "Evaluates an aligned acyclic vector with proof-compatible completed point
@@ -436,56 +532,33 @@
         options (assoc options :candidates candidates
                        :permission permission :node-id node-id)
         store subproblem/*store*
-        scope-identity (if (and store qualification)
-                         [:qualified-point evidence/format-version scope-identity
-                          (qualification/exact-reuse-identity qualification)]
-                         scope-identity)]
+        ;; A qualified decision is keyed without its evaluation time and
+        ;; stored with its certified interval, so a later request reuses it
+        ;; while that interval admits the later time.
+        scope (when store (point-reuse/scope qualification))]
     (if (or (nil? store) (empty? candidates))
       (check-many-normalized options)
-      (let [looked-up
-            (mapv
-             (fn [candidate]
-               (let [key (point-cache-key
-                          plan permission node-id scope-identity candidate)]
-                 (if-let [resolved
-                          (when-not (demanded-witness-fault candidate)
-                            (subproblem/lookup-denotation! key))]
-                   (do
-                     (subproblem/record-avoided-backend-operation! store)
-                     {:candidate candidate :key key
-                      :decision (if qualification (qualification/observe-evidence! qualification (evidence/decode (:value resolved))) (:value resolved))
-                      :cached? true})
-                   {:candidate candidate :key key :cached? false})))
-             candidates)
-            miss-records (filterv (complement :cached?) looked-up)
-            misses (mapv :candidate miss-records)
-            ;; Miss decisions align positionally with `miss-records`, so the
-            ;; scatter back into candidate order walks one miss index rather
-            ;; than hashing each candidate's semantic identity twice.
+      (let [indexes (range (count candidates))
+            keys (mapv #(point-reuse/scoped-key
+                         (point-cache-key plan permission node-id scope-identity %) scope)
+                       candidates)
+            reused (point-reuse/reuse! qualification keys ::miss)
+            miss-indexes (filterv #(= ::miss (nth reused %)) indexes)
+            misses (mapv candidates miss-indexes)
             miss-decisions
             (if (seq misses)
               (check-many-normalized (assoc options :candidates misses))
               [])
             decisions
-            (loop [index 0 miss-index 0 decisions (transient [])]
-              (if (= index (count looked-up))
-                (persistent! decisions)
-                (let [{:keys [decision cached?]} (nth looked-up index)]
-                  (if cached?
-                    (recur (inc index) miss-index (conj! decisions decision))
-                    (recur (inc index) (inc miss-index)
-                           (conj! decisions
-                                  (nth miss-decisions miss-index)))))))]
+            (persistent!
+             (reduce (fn [decisions [index decision]] (assoc! decisions index decision))
+                     (transient reused)
+                     (map vector miss-indexes miss-decisions)))]
         ;; The full miss vector and its leaf subgroups have succeeded before
         ;; any completed point becomes externally reusable.
-        (when (and subproblem/*populate?* (not-any? evidence/fault? miss-decisions))
-          (dotimes [miss-index (count miss-records)]
-            (let [decision (nth miss-decisions miss-index)]
-              (when-not (evidence/fault? decision)
-                (subproblem/publish-denotation!
-                 (:key (nth miss-records miss-index))
-                 (if qualification qualified-point-cache-options point-cache-options)
-                 (if qualification (evidence/encode decision) decision))))))
-        (add-stat! :point-cache-hits (- (count looked-up) (count misses)))
+        (when (not-any? evidence/fault? miss-decisions)
+          (point-reuse/publish! qualification (map (fn [index decision] [(nth keys index) decision])
+                                                   miss-indexes miss-decisions)))
+        (add-stat! :point-cache-hits (- (count candidates) (count misses)))
         (add-stat! :point-cache-misses (count misses))
         decisions))))

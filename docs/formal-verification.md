@@ -5,8 +5,9 @@ adapter, runtime, and cryptographic assumptions. It does not verify Clojure,
 ClojureScript, storage engines, compilers, cryptographic primitives, or a
 customer's policy intent. The current release manifest reports
 `:conditionally-verified`: production routing, cross-adapter campaigns, and
-performance gates pass, while independent security/formal-methods review
-remains an explicit unmet release obligation. Two verified bodies now coexist.
+performance gates pass, while mechanized host, cache, ClojureScript, and
+backend-adapter source refinements remain open. Independent review is deferred
+to a later external-certification stage. Two verified bodies now coexist.
 Enumeration, point checks, and counts run on the hand-written CLJC
 stable-discovery engine (`eacl.engine.sealed-plan`, `stable-reducer`,
 `stable-page`, `stable-route`) on both targets; its evidence is the
@@ -114,6 +115,7 @@ starts no test JVM and only evaluates a supplied form in an existing server.
 | `NativeGenerationCoherence.dfy` | forward native-generation frame, empty dependencies, stale endpoint exclusion, component cleanup/stamping, and lifecycle isolation |
 | `ScalarFrontierCoherence.dfy` | globally ordered native generations, full canonical dependency-generation identity, derived scalar-frontier soundness, complete proof frames, demand identity, and completed-only publication, and the singleton dependency frontier (one relation's generation) that scopes the shared scan-response cache |
 | `SchemaPlanCost.dfy` | one recursive-plan compilation per permission root/schema generation and bounded page-sensitive stream batches |
+| `SelfIdentity.dfy` | SpiceDB's `self` leaf is the typed identity relation, each identity scan the adapter boundary answers is the bounded, limited scan of that relation, and the leaf is never unknown |
 | `TemporalSafety.dfy` | unbounded cache/cursor transition predicates |
 | `WireFormat.dfy` | strict abstract boundary variants and bounds |
 | `PermissionTree.dfy` | typed shallow expansion topology, denotation, active-path cycles, structural budgets, and all-or-error outcomes |
@@ -149,6 +151,66 @@ are enabled by default. CI executes the exact evidence and writes current
 source digests to the ignored generated manifest; operational semantics and
 measured limits are in [Permission set algebra](permission-set-algebra.md).
 
+Recursive operator plans whose recursion lies inside union-only operands
+decide those operands with the union engine. `MemoizedMembership.dfy` proves
+the memoized search that decides many resources for one subject exact, and
+proves its retained answers sound.
+
+`LeveledMembership.dfy` extends it to expiring relationships. It proves that
+the level sequence finds the widest decisive witness, and that the
+certificate ending at that witness's first expiry is the exact end of the
+grant.
+
+`GuardedMembership.dfy` covers recursion through linearly guarded operators.
+It proves three things:
+
+- flattening a member's expression into guarded rules preserves its
+  denotation;
+- reachability in the guarded graph equals the component's least fixed
+  point, defined independently as membership in every pre-fixed point;
+- a guarded rule lasts at a level exactly when all its evidence does.
+
+The first two models therefore apply to the guarded graph unchanged.
+
+Four campaigns connect the production code to these models and to the
+set-algebra semantics:
+
+- `eacl.engine.memoized-membership-refinement-test` runs the production
+  search beside a transcription of the model's `Search` over random
+  union-only programs. After every call it compares the decisions, the
+  retained answers and the possible nodes.
+- `eacl.engine.leveled-membership-refinement-test` does the same with random
+  expiring and caveated relationships. It compares per-level memos and
+  retained skip bounds, and checks every certificate against an independent
+  widest-witness fixed point.
+- `eacl.engine.guarded-membership-refinement-test` runs the guarded search
+  beside a transcription over random guarded programs with qualified
+  relationships. It compares decisions, memos, skips and deferrals, checks
+  certificates against an independent widest witness, and checks every
+  permissionship against the tabled evaluator.
+- `eacl.operator.delegation-refinement-test` covers random operator schemas.
+  It checks the delegation and guarded analyses against independent oracles.
+  It evaluates each flattened generator's rows with its own semantics and
+  requires them to cover the root. It checks every lookup, count, check and
+  reverse lookup against a stratified least fixed point, and against the
+  tabled evaluator.
+
+Registered mutation controls run the campaigns' obligations on the JVM and
+in ClojureScript. The Clojure search itself has no mechanized proof.
+
+A client reuses these decisions across its requests. `CertifiedPointReuse.dfy`
+proves that a decision computed at one time and reused at a later time within
+its certificate, on the same basis and caveat context, equals the decision a
+fresh evaluation makes then; that an incomplete certificate is reused only at
+its own time; and that a replaced entry had no reuse left.
+`eacl.datascript.set-algebra-reuse-differential-test` compares every cached
+answer with the same request under `:cache? false` at the same time, over
+random operator and guarded schemas, plain, expiring and caveated
+relationships, an advancing clock, and a cache exported and restored midway.
+Four mutation controls cover reuse at a certificate's end, a key without the
+caveat context, an incomplete certificate reused later, and a reused
+certificate left unobserved.
+
 ### Permission-tree assurance boundary
 
 `PermissionTree.dfy` contributes 62 locked obligations. The theorem map covers
@@ -162,7 +224,13 @@ identity, partial success, and over-limit success.
 
 The formal model is proof-only. Production
 `modules/eacl/src/eacl/permission_tree.cljc` is handwritten and has no claimed
-mechanical Dafny-to-Clojure refinement. Correspondence evidence lives in
+mechanical Dafny-to-Clojure refinement. The model's `Relationship` has no
+qualifier dimension: a leaf is exactly the stored matching Relationships,
+caveated and expiring ones included, which production lists. The qualifier
+keys production adds to a leaf subject or arrow child are display metadata
+outside the model; executable tests check them against an annotating reference
+evaluator and check that erasing them leaves the reference topology
+(EACL-FORMAL-081). Correspondence evidence lives in
 `modules/eacl/test/eacl/permission_tree_test.cljc` (independent evaluator,
 bounded generators, permutation and hostile-realization checks),
 `modules/eacl/test/eacl/contract_support.cljc` plus each backend contract, and
@@ -171,6 +239,50 @@ CLJ and CLJS run the same portable kernel. Adapter schema/scan completeness,
 codec round trips, immutable selection, causal-token authentication,
 monotonic-clock behavior, host exact-integer/runtime semantics, and arbitrary
 source states remain trusted or empirically certified rather than proved.
+
+### Wildcard-subject assurance boundary
+
+`WildcardSubjects.dfy` contributes 15 obligations. Membership of a concrete
+subject joins its own relationship with the wildcard's when the relation
+declares `T:*`, over the Caveat worlds of `QualifiedEvidence.dfy`. The model
+proves that a subject without a relationship in a permission's touch cover
+(every intersection and exclusion relaxed to a union) is indistinguishable
+from the wildcard; that a subject lookup which decides every touch-cover
+subject exactly and excludes from `*` those it does not grant definitely
+denotes every subject's permission exactly under both result policies; that
+a union-only listing of own derivations beside `*` needs no exclusions; and,
+by a witness, that the definite form of that listing can omit a subject that
+only two conditional derivations grant together. Three model mutants were
+checked by hand and are not registered mutation controls: leaving an
+exclusion's right operand out of the touch cover, dropping the wildcard
+membership, and excluding only denied subjects each falsify a theorem.
+
+The model is proof-only and bounds recursion by fuel. The engine
+correspondence is empirical: `formal/fixtures/wildcards/` (SpiceDB v1.56.0
+answers to 72 requests, compared by
+`eacl.datascript.wildcard-spicedb-golden-test`), the independent evaluator
+`modules/eacl/test/eacl/wildcard_reference.cljc` over seeded stores
+(`eacl.datascript.wildcard-differential-test`, CLJ and CLJS), and the backend
+contract in `modules/eacl/test/eacl/wildcard_contract_support.cljc`.
+
+### Caveat comprehension assurance boundary
+
+EACL CEL profile 2 adds `exists` and `all`. `CaveatOutcomes.dfy` defines them
+as folds of the four-valued `Or` from `Falsity` and `And` from `Truth`, and
+proves that a deciding element absorbs faults and missing fields, that a
+fault otherwise wins, that the remaining outcome is the union of the elements'
+missing fields, that keeping only the undecided elements (the residual)
+preserves the outcome, and that the outcome does not depend on the order of
+the elements. `CaveatProfile.dfy` proves that comprehension work saturates at
+the limit, charges every element and multiplies through nesting. The finite
+oracle `formal/caveats/model.clj` evaluates plans independently; the gate
+compares it with the production partial evaluator and the JVM adapter on
+exhaustive element-outcome sequences, scoping and shadowing, residual codec
+round trips and work, and registers three mutation controls for fold
+absorption, absent-range missing fields and per-element work. Production is
+handwritten, and SpiceDB conformance is empirical:
+`formal/fixtures/caveat-comprehensions/` records SpiceDB v1.56.0's answers to
+the shared corpus, compared by `eacl.caveats.portable.spicedb-test`.
 
 ## Temporal models
 
@@ -241,8 +353,11 @@ size, and decoded cache-entry decisions are routed through that boundary. The
 indexed relationship engine retains only an authenticated
 physical edge and consumes at most one page plus lookahead; executable
 forward/backward walk tests establish stable, complete, duplicate-free
-composition over certified adapter scans. This is deliberately not a theorem
-of a global or cross-backend result order.
+composition over certified adapter scans. For owner-unanchored scans the edge
+includes the boundary row's qualifier eid, because the value index orders one
+endpoint's rows by qualifier before owner, and the engine rejects adapter rows
+that do not advance strictly in that order (EACL-FORMAL-080). This is
+deliberately not a theorem of a global or cross-backend result order.
 
 The pre-cutover shadow campaign and its minimized counterexamples remain
 evidence, not executable production behavior. Test-only injection seams run

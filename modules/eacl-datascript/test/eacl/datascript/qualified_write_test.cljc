@@ -1,11 +1,14 @@
 (ns eacl.datascript.qualified-write-test
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is]]
+            [clojure.string :as str]
             [datascript.core :as ds]
             [eacl.caveats.publication-batch-contract :as batch]
             [eacl.caveats.public-write-contract :as public]
             [eacl.caveats.write-contention-contract :as contention]
             [eacl.caveats.schema-allowance-contract :as allowance]
             [eacl.caveats.inspection-contract :as inspection]
+            [eacl.caveats.partial-scan-contract :as partial-scan]
+            [eacl.caveats.permission-tree-contract :as permission-tree]
             [eacl.caveats.deletion-contract :as deletion]
             [eacl.caveats.cache-trace-contract :as cache-trace]
             [eacl.core :as eacl]
@@ -17,6 +20,49 @@
             [eacl.datascript.schema :as schema]
             [eacl.datascript.storage :as admission]
             [eacl.datascript.qualifiers :as qualifiers]))
+
+(def ^:private reuse-schema
+  "definition user {}\ndefinition doc {\n relation viewer: user\n relation owner: user\n permission view = viewer + owner\n permission edit = owner\n}")
+
+(defn- schema-reads
+  "Runs `f` and returns how many times it read the stored authorization schema."
+  [f]
+  (let [read schema/read-authorization-schema
+        calls (atom 0)]
+    (with-redefs [schema/read-authorization-schema (fn [db] (swap! calls inc) (read db))]
+      (f))
+    @calls))
+
+(deftest writes-read-the-authorization-schema-once-per-generation
+  ;; A write validates against the stored authorization schema. It is read
+  ;; once per schema generation into the client's derived-schema partitions;
+  ;; later writes of the generation reuse it, a schema write starts a new
+  ;; generation, and writes stay validated against the current schema.
+  (let [conn (schema/create-conn)
+        client (api/make-client conn {:caveat-evaluator (fixtures/portable-evaluator (atom 0))})
+        user (eacl/spice-object :user "reuse/u")
+        relationship #(eacl/->Relationship user :viewer (eacl/spice-object :doc %))
+        write! #(eacl/write-relationships! client [{:operation %1 :relationship (relationship %2)}])]
+    (eacl/write-schema! client reuse-schema)
+    (ds/transact! conn (mapv #(hash-map :eacl/id %) ["reuse/u" "reuse/d1" "reuse/d2" "reuse/d3"]))
+    (is (= 1 (schema-reads #(write! :create "reuse/d1"))) "the first write of a generation reads the schema")
+    (is (= 0 (schema-reads #(do (write! :create "reuse/d2")
+                                (write! :delete "reuse/d1")
+                                (eacl/write-relationships!
+                                 client [{:operation :touch :relationship (relationship "reuse/d3")}]))))
+        "later writes of the generation reuse it")
+    (eacl/write-schema! client (str/replace reuse-schema "permission edit = owner" "permission edit = owner + viewer"))
+    (is (= 1 (schema-reads #(do (write! :create "reuse/d1") (write! :delete "reuse/d1"))))
+        "a new generation is read again")
+    (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core/ExceptionInfo)
+                 (eacl/write-relationships!
+                  client [{:operation :create
+                           :relationship (eacl/->Relationship user :reviewer (eacl/spice-object :doc "reuse/d1"))}]))
+        "writes are still validated against the current schema")
+    (is (= [true true false]
+           (mapv #(:allowed? (eacl/check-permission client {:subject user :permission :edit
+                                                            :resource (eacl/spice-object :doc %)}))
+                 ["reuse/d2" "reuse/d3" "reuse/d1"])))))
 
 (deftest qualified-batches-publish-atomically
   (let [conn (schema/create-conn {:app/flag {}})]
@@ -52,6 +98,55 @@
                                       :caveat-evaluator (fixtures/portable-evaluator (atom 0))})]
     (inspection/check! {:client client :writer #(qualifiers/writer conn) :entid ds/entid :now now})))
 
+(deftest partial-relationship-walks-over-qualified-rows-are-total-and-terminate
+  (let [conn (schema/create-conn)
+        now (atom 1000)
+        client (api/make-client conn {:clock #(deref now)
+                                      :caveat-evaluator (fixtures/portable-evaluator (atom 0))})]
+    (partial-scan/check! {:client client :writer #(qualifiers/writer conn) :now now})))
+
+(deftest permission-trees-list-qualified-relationships-without-evaluating-them
+  (let [conn (schema/create-conn)
+        now (atom 1000)
+        client (api/make-client conn {:clock #(deref now)
+                                      :caveat-evaluator (fixtures/portable-evaluator (atom 0))})]
+    (permission-tree/check! {:client client :writer #(qualifiers/writer conn) :now now})))
+
+(deftest eacl-rs-005-expansions-list-expiring-and-caveated-relationships
+  ;; eacl-rust BUGS.md EACL-RS-005 and PR206-F1: each expansion failed with
+  ;; :eacl.permission-tree/adapter-contract-violation, also after the grant
+  ;; expired, while the plain control expanded.
+  (binding [orchestration/*qualified-authorization-enabled?* true]
+    (doseq [{:keys [schema qualifier]}
+            [{:schema "definition user {}\ndefinition doc {\n  relation viewer: user\n  permission view = viewer\n}\n"
+              :qualifier {:valid-until-ms 5000}}
+             {:schema "caveat c1(flag bool) {\n  flag\n}\ndefinition user {}\ndefinition doc {\n  relation viewer: user | user with c1\n  permission view = viewer\n}\n"
+              :qualifier {:caveat "c1"}}
+             {:schema "definition user {}\ndefinition doc {\n  relation viewer: user\n  permission view = viewer\n}\n"
+              :qualifier {}}]]
+      (let [conn (schema/create-conn)
+            now (atom 1000)
+            client (api/make-client conn {:clock #(deref now)
+                                          :caveat-evaluator (fixtures/portable-evaluator (atom 0))})
+            a (eacl/spice-object :user "a")
+            b (eacl/spice-object :user "b")
+            d (eacl/spice-object :doc "d")
+            viewers {:expanded-object d :expanded-relation :viewer
+                     :leaf {:subjects [(merge a qualifier) b]}}
+            view {:expanded-object d :expanded-relation :view
+                  :intermediate {:operation :union :children [viewers]}}
+            expand #(:tree-root (eacl/expand-permission-tree client {:resource d :permission %}))]
+        (eacl/write-schema! client schema)
+        (ds/transact! conn [{:eacl/id "a"} {:eacl/id "b"} {:eacl/id "d"}])
+        (eacl/write-relationships!
+         client [{:operation :create :relationship (merge (eacl/->Relationship a :viewer d) qualifier)}
+                 {:operation :create :relationship (eacl/->Relationship b :viewer d)}])
+        (is (= viewers (expand :viewer)) (pr-str qualifier))
+        (is (= view (expand :view)) (pr-str qualifier))
+        (reset! now 9000)
+        (is (= view (expand :view)) "an expired grant stays listed with its deadline")
+        (is (true? (eacl/can? client b :view d)))))))
+
 (deftest qualified-object-deletion-is-atomic-and-bounded
   (let [conn (schema/create-conn)
         client (api/make-client conn {:clock (constantly 200)
@@ -79,10 +174,40 @@
         (is (identical? before (ds/db conn)))
         (ds/transact! conn [[:db/retractEntity sid]])
         (is (= 1 (count (ds/datoms (ds/db conn) :aevt storage/reverse-attribute))))
-        (eacl/delete-object! client (eacl/spice-object :user sid))
+        (eacl/delete-object-by-eid! client sid)
         (is (empty? (ds/datoms (ds/db conn) :aevt storage/reverse-attribute)))
         (is (empty? (ds/datoms (ds/db conn) :eavt qid)))
         (is (not (contains? (cache-trace/outcome #(eacl/write-schema! client {:schema replacement})) :fault)))))))
+
+(deftest a-v8-0-0-caveat-source-is-rewritten-once
+  ;; EACL v8.0.0 stored a Caveat's whole body; EACL now stores the CEL
+  ;; expression SpiceDB reads from it. The first write of the unchanged schema
+  ;; rewrites the stored source in place, and the next one is a no-op.
+  (let [conn (schema/create-conn)
+        client (api/make-client conn {:clock (constantly 50)
+                                      :caveat-evaluator (fixtures/portable-evaluator (atom 0))})
+        text "caveat enabled(flag bool) {\n  flag\n}\ndefinition user {}\ndefinition doc {\n relation member: user | user with enabled\n permission view = member\n}"
+        subject (eacl/spice-object :user "upgrade/u")
+        resource (eacl/spice-object :doc "upgrade/doc")
+        caveat-eid #(ds/entid (ds/db conn) [:eacl.caveat/name "enabled"])
+        source #(:eacl.caveat/expression-source (ds/entity (ds/db conn) (caveat-eid)))
+        permissionship #(:permissionship (eacl/check-permission
+                                          client {:subject subject :permission :view :resource resource
+                                                  :caveat-context {"flag" true} :cache? false}))]
+    (binding [orchestration/*qualified-authorization-enabled?* true]
+      (eacl/write-schema! client text)
+      (is (= "flag\n" (source)))
+      (ds/transact! conn [{:eacl/id "upgrade/u"} {:eacl/id "upgrade/doc"}])
+      (eacl/create-relationship! client (assoc (eacl/->Relationship subject :member resource)
+                                               :caveat "enabled"))
+      (let [eid (caveat-eid)]
+        (ds/transact! conn [[:db/add eid :eacl.caveat/expression-source "\n  flag\n"]])
+        (is (= :has-permission (permissionship)) "a v8.0.0 source evaluates")
+        (is (false? (:eacl.schema/no-op? (eacl/write-schema! client text))))
+        (is (= "flag\n" (source)))
+        (is (= eid (caveat-eid)) "the Caveat keeps its identity")
+        (is (= :has-permission (permissionship)))
+        (is (true? (:eacl.schema/no-op? (eacl/write-schema! client text))))))))
 
 (deftest qualified-native-cas-contention-replans-from-a-new-basis
   (let [conn (schema/create-conn)

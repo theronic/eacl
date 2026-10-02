@@ -24,12 +24,14 @@
     silent cap. An order-insensitive specialization remains permitted only
     behind an independent denotation-equivalence proof (none exists yet)."
   (:require [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.point-reuse :as point-reuse]
             [eacl.authorization.qualification :as qualification]
             [eacl.execution :as execution]
             [eacl.backend.v8 :as backend]
             [eacl.engine.stable-reducer :as reducer]
             [eacl.relationships.edge :as edge]
-            [eacl.request.counters :as request-counters]))
+            [eacl.request.counters :as request-counters]
+            [eacl.subproblem-cache :as subproblem]))
 
 (def exhaustion-target
   "Alias of `eacl.engine.stable-reducer/exhaustion-target`: exhaustive routes
@@ -120,9 +122,14 @@
   Qualification annotates the same physical paths with bounded residuals
   and temporal evidence. A visited state retains the union of its incoming
   path prefixes, and only a changed full value/certificate revisits it.
-  Conditional matches continue the existing search; definite witnesses and
-  demanded faults terminate it. Either exhausted side of a bidirectional
-  arm covers every matching pair, including its qualified evidence."
+  Path values compose with strong-Kleene connectives (the union of path
+  conjunctions equals the tree's value in every completion), so the answer
+  does not depend on rule or scan order. A definite witness terminates the
+  search; a conditional or faulting path never does, because a later
+  witness can still absorb it. A faulting via edge is still joined with its
+  target, which can make the path false. Either exhausted side of a
+  bidirectional arm covers every matching pair, including its qualified
+  evidence."
   [{:keys [adapter fetch-fn plan subject-type subject-eid resource-eid
            cut-point! physical-chunk-size qualification
            max-admissions max-commands max-transitions max-values max-stack]
@@ -133,7 +140,13 @@
          max-values reducer/default-max-values
          max-stack reducer/default-max-stack}
     :as options}]
-  (let [known-witness (validate-known-witness! options)
+  (let [;; Wildcard variants derive through the wildcard subject's own tuple.
+        ;; A reverse witness asks for the subject's own derivations only.
+        wildcards? (not (false? (:wildcards? options)))
+        active-rule? (fn [rule]
+                       (or wildcards? (not (contains? rule :wildcard-eid))))
+        holder-of (fn [rule] (or (:wildcard-eid rule) subject-eid))
+        known-witness (validate-known-witness! options)
         start-node (or (:start-node options) (:root plan))
         known-rule? (fn [node eid rule]
                       (and known-witness (= start-node node) (= resource-eid eid)
@@ -143,7 +156,9 @@
         qualify (if qualification
                   (fn [relation value] (qualification/qualify qualification relation value))
                   (fn [_ value] (some? value)))
-        done? (fn [value] (or (evidence/has? value) (evidence/fault? value)))
+        ;; Only a definite grant ends the search. A fault is a Kleene unknown:
+        ;; a later witness may still absorb it.
+        done? evidence/has?
         counters (volatile! {:admissions 0 :transitions 0 :commands 0
                              :fetched-values 0})
         fetch! (fn [descriptor]
@@ -173,12 +188,12 @@
         matching-edge (fn [candidate values]
                         (let [value (first values)]
                           (when (= candidate (edge/endpoint value)) value)))
-        probe? (fn [resource-type eid relation-eid]
+        probe? (fn [holder resource-type eid relation-eid]
                  (qualify relation-eid
-                          (matching-edge subject-eid
+                          (matching-edge holder
                                          (fetch! (reverse-scan resource-type eid
                                                                relation-eid subject-type
-                                                               (dec subject-eid) 1)))))
+                                                               (dec holder) 1)))))
         intermediates (fn [resource-type eid via-relation-eid intermediate-type]
                         (loop [bound nil acc (transient [])]
                           (let [chunk (fetch! (reverse-scan resource-type eid
@@ -194,10 +209,10 @@
         ;; (BidirectionalArrowIntersection.dfy): a via candidate is decided
         ;; on the subject's forward index, a holding candidate on the
         ;; resource's reverse index.
-        holding-probe? (fn [target-relation-eid intermediate-type candidate]
+        holding-probe? (fn [holder target-relation-eid intermediate-type candidate]
                          (matching-edge candidate
                                         (fetch! (forward-scan
-                                                 subject-type subject-eid
+                                                 subject-type holder
                                                  target-relation-eid
                                                  intermediate-type
                                                  (dec candidate) 1))))
@@ -216,7 +231,7 @@
         ;; buffered in physical chunks, probing stays per candidate, so the
         ;; cost is bounded by the smaller side plus one chunk per side.
         intersect-arm?
-        (fn [resource-type eid via-relation-eid intermediate-type
+        (fn [holder resource-type eid via-relation-eid intermediate-type
              target-relation-eid skip-intermediate]
           (loop [vias [] via-index 0 via-bound nil vias-done? false
                  holdings [] holding-index 0 holding-bound nil
@@ -238,12 +253,14 @@
                 (let [via-edge (nth vias via-index)
                       via (if (= skip-intermediate (edge/endpoint via-edge))
                             false (qualify via-relation-eid via-edge))
-                      path (if (or (evidence/no? via) (evidence/fault? via))
+                      ;; A faulting via is still joined with its target: an
+                      ;; absent target makes the path false.
+                      path (if (evidence/no? via)
                              via
                              (evidence/combine
                               :arrow via
                               (qualify target-relation-eid
-                                       (holding-probe? target-relation-eid intermediate-type
+                                       (holding-probe? holder target-relation-eid intermediate-type
                                                        (edge/endpoint via-edge)))))
                       answer (evidence/combine :union answer path)]
                   (cond
@@ -253,7 +270,7 @@
                           (if (and (>= holding-index (count holdings))
                                    (not holdings-done?))
                             (let [chunk (fetch! (forward-scan
-                                                 subject-type subject-eid
+                                                 subject-type holder
                                                  target-relation-eid
                                                  intermediate-type
                                                  holding-bound
@@ -271,7 +288,7 @@
                                     (qualify via-relation-eid
                                              (via-probe? resource-type eid via-relation-eid
                                                          intermediate-type (edge/endpoint holding-edge))))
-                              path (if (or (evidence/no? via) (evidence/fault? via))
+                              path (if (evidence/no? via)
                                      via
                                      (evidence/combine :arrow via
                                                        (qualify target-relation-eid holding-edge)))
@@ -346,9 +363,11 @@
                   (reduce (fn [answer rule]
                             (let [answer (if (and (= :relation (:rule rule))
                                                   (= subject-type (:subject-type rule))
+                                                  (active-rule? rule)
                                                   (not (known-rule? node eid rule)))
                                            (join-path answer
-                                                      (probe? (:resource-type rule) eid
+                                                      (probe? (holder-of rule)
+                                                              (:resource-type rule) eid
                                                               (:relation-eid rule)))
                                            answer)]
                               (if (done? answer) (reduced answer) answer)))
@@ -378,9 +397,11 @@
                              ;; via fan-in.
                                    (do
                                      (reduce (fn [_ target-rule]
-                                               (when (= subject-type (:subject-type target-rule))
+                                               (when (and (= subject-type (:subject-type target-rule))
+                                                          (active-rule? target-rule))
                                                  (vswap! answer join-path
                                                          (intersect-arm?
+                                                          (holder-of target-rule)
                                                           (:resource-type rule) eid
                                                           (:via-relation-eid rule)
                                                           (:intermediate-type rule)
@@ -397,7 +418,7 @@
                                                          (evidence/combine
                                                           :arrow prefix
                                                           (qualify (:via-relation-eid rule) compact-edge)))]
-                                               (if (or (evidence/no? via) (evidence/fault? via))
+                                               (if (evidence/no? via)
                                                  (do (vswap! answer #(evidence/combine :union % via))
                                                      (if (done? @answer) (reduced successors) successors))
                                                  (conj successors
@@ -410,9 +431,11 @@
 
                                  :arrow-relation
                                  (do
-                                   (when (= subject-type (:target-subject-type rule))
+                                   (when (and (= subject-type (:target-subject-type rule))
+                                              (active-rule? rule))
                                      (vswap! answer join-path
                                              (intersect-arm?
+                                              (holder-of rule)
                                               (:resource-type rule) eid
                                               (:via-relation-eid rule)
                                               (:intermediate-type rule)
@@ -446,6 +469,32 @@
                                          :staged (count outcome)}))
                       (recur stack visited @answer))))))))))))
 
+(declare add-membership-stats!)
+
+;; ---------------------------------------------------------------------------
+;; Membership decisions in the client cache
+;; ---------------------------------------------------------------------------
+
+(def ^:private membership-point-version 2)
+
+(defn- membership-key
+  "The subproblem key of one subject's membership in the root of the plan
+  (a sealed union plan or a guarded program) fingerprinted `fingerprint`, at
+  one resource. `scope` is the request's certified qualification scope, or
+  nil; a qualified value records the interval its evidence certifies.
+
+  `exact-certificate?` selects a separate lane for the point check's ordered
+  first-witness certificate. The shared lane may contain a batched search's
+  wider certificate, which proves the same permissionship but cannot replace
+  the point certificate inside a conditional operator residual."
+  [fingerprint scope subject-type subject-eid resource-eid exact-certificate?]
+  (point-reuse/scoped-key
+   (cond-> [:membership-point membership-point-version fingerprint
+            subject-type (point-reuse/canonical-id subject-eid)
+            (point-reuse/canonical-id resource-eid)]
+     exact-certificate? (conj :exact-certificate))
+   scope))
+
 (defn check-eids
   "Anchored point check over pre-resolved internal ids: does the subject
   hold the plan's root permission on the resource? Decided by the
@@ -453,11 +502,882 @@
   With `:qualification`, returns conditional/temporal Evidence or a plain
   timeless Boolean; callers must project through evidence/has?. A scoped
   `:known-witness` contributes one rule or arrow binding; the same search
-  completes all remaining alternatives without repeating that path."
-  [{:keys [subject-eid resource-eid] :as options}]
+  completes all remaining alternatives without repeating that path.
+
+  With a subproblem store bound, a decision this client cached for the same
+  plan, subject and resource is reused while its certificate admits the
+  request's time, and a computed decision is published for later requests.
+  Internal conditional-operator reconstruction sets `:exact-certificate?`
+  to exclude wider certificates produced by batched membership search."
+  [{:keys [plan subject-type subject-eid resource-eid qualification
+           exact-certificate?]
+    :as options}]
   (if (or (nil? subject-eid) (nil? resource-eid))
     false
-    (probe-check-eids options)))
+    (let [cache? (some? subproblem/*store*)
+          scope (when cache? (point-reuse/scope qualification))
+          shared-key (when cache?
+                       (membership-key (:fingerprint plan) scope
+                                       subject-type subject-eid resource-eid false))
+          exact-key (when cache?
+                      (membership-key (:fingerprint plan) scope
+                                      subject-type subject-eid resource-eid true))
+          key (if exact-certificate? exact-key shared-key)
+          cached (if key (first (point-reuse/reuse! qualification [key] ::miss)) ::miss)]
+      (if (not= ::miss cached)
+        (do (add-membership-stats! {:reused 1})
+            cached)
+        (do (add-membership-stats! {:searched 1})
+            (let [value (probe-check-eids options)]
+              ;; A point computation is valid in both lanes. A widened batch
+              ;; computation is published only to the shared lane below.
+              (when key
+                (point-reuse/publish! qualification
+                                      [[shared-key value] [exact-key value]]))
+              value))))))
+
+;; ---------------------------------------------------------------------------
+;; Memoized membership of one subject
+;; ---------------------------------------------------------------------------
+
+(def ^:dynamic *membership-stats*
+  "Optional observation-only atom for `check-eids` and `check-many-eids`:
+  resources decided, resources searched, resources reused from the client
+  cache, exact point-check fallbacks, extra evidence levels, and
+  subject-holding scans."
+  nil)
+
+(defn- add-membership-stats! [deltas]
+  (when-let [stats *membership-stats*]
+    (swap! stats #(merge-with + % deltas)))
+  nil)
+
+(def holdings-limit
+  "The default per-relation holding bound for one subject. Engine callers
+  may select `:holding-limit` for their point/page workload. Truncated slices
+  remain exact through bounded probes and extensions."
+  256)
+
+(defn membership-context
+  "Request-scoped state for `check-many-eids`. Its entries describe one
+  selected immutable basis and one qualification scope, so a caller creates
+  one per request and never shares it with another request."
+  []
+  (volatile! {}))
+
+(defn- holding-key
+  "The subject-anchored relation slice a base rule consults, or nil when the
+  rule can never match a subject of `subject-type`."
+  [subject-type rule]
+  (case (:rule rule)
+    :relation
+    (when (= subject-type (:subject-type rule))
+      (cond-> [(:relation-eid rule) (:resource-type rule)]
+        (:wildcard-eid rule) (conj (:wildcard-eid rule))))
+
+    :arrow-relation
+    (when (= subject-type (:target-subject-type rule))
+      (cond-> [(:target-relation-eid rule) (:intermediate-type rule)]
+        (:wildcard-eid rule) (conj (:wildcard-eid rule))))
+
+    (:self-permission :arrow-permission :oracle :arrow-oracle) nil
+
+    (throw
+     (ex-info "Membership check met an unrecognized sealed rule kind."
+              {:eacl/error :eacl.plan/unknown-rule-kind
+               :rule-kind (:rule rule)
+               :node (:node rule)}))))
+
+(defn ^:no-doc possible-nodes
+  "Plan nodes the subject can hold on some entity at this basis: the least
+  fixed point over the rule graph seeded by the relation slices in which the
+  subject holds at least one tuple. A node outside it is false for every
+  entity, so the search never enters it."
+  [reverse-rules subject-type holdings]
+  (loop [possible #{}]
+    (let [grown
+          (reduce-kv
+           (fn [result node rules]
+             (if (or (contains? result node)
+                     (some (fn [rule]
+                             (case (:rule rule)
+                               (:self-permission :arrow-permission)
+                               (contains? result (:target-node rule))
+
+                               ;; The oracle's permission is decided
+                               ;; elsewhere; assume the subject may hold it.
+                               (:oracle :arrow-oracle) true
+
+                               (when-let [key (holding-key subject-type rule)]
+                                 (:any? (get holdings key)))))
+                           rules))
+               (conj result node)
+               result))
+           possible
+           reverse-rules)]
+      (if (= (count grown) (count possible))
+        possible
+        (recur grown)))))
+
+(defn ^:no-doc push-successors
+  "Pushes a state's non-base successors so the frame of its first rule in
+  sealed order is on top, skipping rules that cannot reach the subject. A
+  state frame is [node eid]; an arrow frame is [rule eid], expanded when it
+  reaches the top of the stack."
+  [stack rules eid subject-type holdings possible]
+  (loop [index (dec (count rules))
+         stack stack]
+    (if (neg? index)
+      stack
+      (let [rule (nth rules index)]
+        (recur
+         (dec index)
+         (case (:rule rule)
+           (:relation :oracle) stack
+
+           :self-permission
+           (if (contains? possible (:target-node rule))
+             ;; A guarded reference is a rule frame: its guards are decided
+             ;; when the frame is expanded.
+             (conj stack (if (:guards rule) [rule eid] [(:target-node rule) eid]))
+             stack)
+
+           :arrow-permission
+           (if (contains? possible (:target-node rule))
+             (conj stack [rule eid])
+             stack)
+
+           :arrow-relation
+           (if (:any? (get holdings (holding-key subject-type rule)))
+             (conj stack [rule eid])
+             stack)
+
+           :arrow-oracle
+           (conj stack [rule eid])))))))
+
+(def ^:private plain-level
+  "The first evidence level: plain evidence only, which never expires. Every
+  later level is a deadline (see `decide-leveled`)."
+  ::plain)
+
+(defn- lasts?
+  "True when evidence ending at `deadline` (nil when plain) is kept at
+  `level`: the graph at a deadline keeps everything lasting at least that
+  long."
+  [deadline level]
+  (or (nil? deadline)
+      (and (not= plain-level level) (<= level deadline))))
+
+(defn- later
+  "The later of two skipped deadlines, either possibly nil."
+  [a b]
+  (cond (nil? a) b (nil? b) a :else (max a b)))
+
+(defn- evidence-class
+  "One qualified value as the leveled search sees it: `[:decisive deadline]`
+  for plain or time-limited `true` (deadline nil when plain), `:absent`,
+  `:conditional` (a caveat residual or incomplete evidence), or `:fault`."
+  [value]
+  (cond
+    (true? value) [:decisive nil]
+    (or (false? value) (nil? value)) :absent
+    (evidence/fault? value) :fault
+    (not (evidence/complete? value)) :conditional
+    (evidence/has? value) [:decisive (evidence/valid-until value)]
+    (evidence/no? value) :absent
+    :else :conditional))
+
+(defn ^:no-doc oracle-class
+  "An oracle's value as the leveled search sees it. A stored edge's false
+  never becomes true, but a permission decided elsewhere can be false only
+  until a deadline: an exclusion whose subtracted grant expires. Such a value
+  is conditional here, never absent, so a search that meets it cannot
+  certify a timeless answer; the exact evaluation decides that resource."
+  [value]
+  (if (and (evidence/no? value) (some? (evidence/valid-until value)))
+    :conditional
+    (evidence-class value)))
+
+(defn- joined-class
+  "An arrow's via edge and its target tuple together, as strong-Kleene
+  conjunction: absent when either is absent (even when the other faults),
+  otherwise a fault when either faults, conditional when either is, and
+  decisive until the earlier deadline only when both are decisive."
+  [via held]
+  (cond
+    (or (= :absent via) (= :absent held)) :absent
+    (or (= :fault via) (= :fault held)) :fault
+    (or (= :conditional via) (= :conditional held)) :conditional
+    :else [:decisive (let [a (second via) b (second held)]
+                       (cond (nil? a) b (nil? b) a :else (min a b)))]))
+
+(defn- note!
+  "One class's contribution at `level`: ::kept or ::absent. A decisive value
+  that ends before `level` notes its deadline as skipped. Conditional and
+  faulting evidence is noted as uncertain and otherwise treated as absent:
+  a fault never decides, so the search keeps looking for a witness that
+  absorbs it, and an exhausted search that met one is decided exactly."
+  [{:keys [skipped conditional?]} level class]
+  (if (keyword? class)
+    (case class
+      :absent ::absent
+      (:fault :conditional) (do (vreset! conditional? true) ::absent))
+    (if (lasts? (second class) level)
+      ::kept
+      (do (vswap! skipped later (second class)) ::absent))))
+
+(defn- membership-entry
+  "The subject's holdings and possible nodes for one sealed plan, read once
+  per request: one bounded forward scan per relation slice the plan's base
+  rules name for this subject type. The entry also retains, for the
+  request, each resource's decided answer and one memo per evidence level;
+  `:memo` is the plain level's."
+  [context fetch! plan subject-type subject-eid holding-limit]
+  (let [key [:subject (:fingerprint plan) subject-type subject-eid]]
+    (or (get @context key)
+        (let [reverse-rules (get-in plan [:indexes :reverse-rules])
+              slices (->> (vals reverse-rules)
+                          (mapcat identity)
+                          (mapcat (fn [rule]
+                                    (cons rule (mapcat :alternatives (:guards rule)))))
+                          (keep #(holding-key subject-type %))
+                          distinct
+                          sort)
+              holdings
+              (into {}
+                    (map (fn [[relation-eid resource-type wildcard-eid :as slice]]
+                           (let [edges (fetch! (forward-scan subject-type (or wildcard-eid subject-eid)
+                                                             relation-eid resource-type
+                                                             nil holding-limit))]
+                             [slice {:any? (boolean (seq edges))
+                                     :complete? (< (count edges) holding-limit)
+                                     ;; Inspect the scan vector once, even
+                                     ;; when several rules share this slice.
+                                     :plain? (and (< (count edges) holding-limit)
+                                                  (not-any? vector? edges))
+                                     ;; Scans are strictly ordered by endpoint,
+                                     ;; so a truncated scan still decides every
+                                     ;; endpoint up to its last.
+                                     :bound (some-> (peek edges) edge/endpoint)
+                                     :size (count edges)
+                                     :edges (into {} (map (juxt edge/endpoint identity))
+                                                  edges)}])))
+                    slices)
+              plain-relations
+              (into #{}
+                    (filter (fn [rule]
+                              (when (= :relation (:rule rule))
+                                (let [held (get holdings (holding-key subject-type rule))]
+                                  (:plain? held)))))
+                    (mapcat (fn [rule] (cons rule (mapcat :alternatives (:guards rule))))
+                            (mapcat identity (vals reverse-rules))))
+              plain-guards
+              (into #{}
+                    (filter #(every? plain-relations (:alternatives %)))
+                    (mapcat :guards (mapcat identity (vals reverse-rules))))
+              plain-memo (volatile! {})
+              entry {:reverse-rules reverse-rules
+                     :holdings holdings
+                     :plain-relations plain-relations
+                     :plain-guards plain-guards
+                     :possible (possible-nodes reverse-rules subject-type holdings)
+                     :memo plain-memo
+                     :memos (volatile! {plain-level plain-memo})
+                     :skips (volatile! {})
+                     :answers (volatile! {})
+                     :guard-classes (volatile! {})
+                     :extended (volatile! {})}]
+          (add-membership-stats! {:holding-scans (count slices)})
+          (vswap! context assoc key entry)
+          entry))))
+
+(def ^:private first-extension-probes
+  "Probes past a truncated holdings scan before the scan is extended."
+  16)
+
+(defn ^:no-doc held-edge
+  "The subject's stored edge on `eid` in one relation slice, or nil, from
+  its retained holdings. A truncated scan decides every endpoint up to its
+  last, since scans are strictly ordered. Past that, `probe!` asks for one
+  tuple; once a slice has needed `first-extension-probes` such probes, the
+  scan continues from its last endpoint with twice as many edges, and the
+  threshold doubles, so reading holdings never costs much more than the
+  probes it replaces."
+  [{:keys [complete? edges bound size]} extended fetch! scan-from slice eid probe!]
+  (if (or complete? (<= eid bound))
+    (get edges eid)
+    (let [state (or (get @extended slice)
+                    {:edges edges :bound bound :size size :complete? false
+                     :probes 0 :threshold first-extension-probes})]
+      (if (or (:complete? state) (<= eid (:bound state)))
+        (get (:edges state) eid)
+        (let [probes (inc (:probes state))]
+          (if (< probes (:threshold state))
+            (do (vswap! extended assoc slice (assoc state :probes probes))
+                (probe!))
+            (let [limit (* 2 (:size state))
+                  chunk (fetch! (scan-from (:bound state) limit))
+                  state {:edges (into (:edges state)
+                                      (map (juxt edge/endpoint identity)) chunk)
+                         :bound (if (seq chunk) (edge/endpoint (peek chunk)) (:bound state))
+                         :size limit
+                         :complete? (< (count chunk) limit)
+                         :probes 0
+                         :threshold (* 2 (:threshold state))}]
+              (vswap! extended assoc slice state)
+              (if (or (:complete? state) (<= eid (:bound state)))
+                (get (:edges state) eid)
+                (probe!)))))))))
+
+(defn- alternative-classes
+  "The evidence classes one rule without successors has at `eid`: one per
+  witness it can have there. A relation rule reads the subject's grant; an
+  oracle rule asks the oracle for its permission; an arrow rule joins each
+  intermediate's via edge with its target's value."
+  [{:keys [probe intermediates qualify oracle subject-type]} rule eid]
+  (case (:rule rule)
+    :relation
+    (if (= subject-type (:subject-type rule))
+      [(evidence-class (qualify (:relation-eid rule)
+                                (probe (:relation-eid rule) (:resource-type rule) eid
+                                       (:wildcard-eid rule))))]
+      [])
+
+    :oracle
+    [(oracle-class (oracle (:target-node rule) eid))]
+
+    (:arrow-relation :arrow-oracle)
+    (into []
+          (keep
+           (fn [compact-edge]
+             (let [via (evidence-class (qualify (:via-relation-eid rule) compact-edge))
+                   endpoint (edge/endpoint compact-edge)]
+               (cond
+                 (= :absent via) nil
+                 (= :arrow-oracle (:rule rule))
+                 (joined-class via (oracle-class (oracle (:target-node rule) endpoint)))
+                 (= subject-type (:target-subject-type rule))
+                 (joined-class via (evidence-class
+                                    (qualify (:target-relation-eid rule)
+                                             (probe (:target-relation-eid rule)
+                                                    (:intermediate-type rule) endpoint
+                                                    (:wildcard-eid rule)))))
+                 :else nil))))
+          (intermediates (:resource-type rule) eid (:via-relation-eid rule)
+                         (:intermediate-type rule)))))
+
+(defn- guard-classes
+  "The evidence classes of every alternative of `guard` at `eid`, computed
+  once per request: they do not depend on the level."
+  [{:keys [guard-classes] :as search} guard eid]
+  (let [key [(:key guard) eid]]
+    (or (get @guard-classes key)
+        (let [alternatives (:alternatives guard)
+              ;; A relation guard already returns the complete vector.
+              ;; Avoid a flattening transducer for the common single arm.
+              classes (if (= 1 (count alternatives))
+                        (alternative-classes search (first alternatives) eid)
+                        (into [] (mapcat #(alternative-classes search % eid))
+                              alternatives))]
+          (vswap! guard-classes assoc key classes)
+          classes))))
+
+(defn ^:no-doc guards-outcome
+  "Whether a rule's guards hold at `eid` at `level`: ::kept when every guard
+  holds, ::absent when one does not hold at this level, or ::undecided.
+
+  A guard holds when one of its alternatives lasts at `level`; the others
+  are noted as any skipped evidence is. A subtracted guard holds only when
+  it is plainly absent. A plainly present one closes the rule at every
+  level, even beside a faulting alternative. Any other value is ::undecided:
+  access could appear when it expires, or a fault leaves it unknown, so the
+  resource is decided exactly instead."
+  [{:keys [plain-guards probe] :as search} notes level guards eid]
+  (loop [index 0]
+    (if (= index (count guards))
+      ::kept
+      (let [guard (nth guards index)
+            outcome
+            (if (contains? plain-guards guard)
+              ;; Complete unqualified slices make every alternative a plain
+              ;; Boolean at every level. No evidence vector/cache is needed.
+              (let [present? (boolean
+                              (some (fn [rule]
+                                      (probe (:relation-eid rule) (:resource-type rule) eid
+                                             (:wildcard-eid rule)))
+                                    (:alternatives guard)))]
+                (if (= present? (= :negative (:sign guard))) ::absent ::kept))
+              (let [classes (guard-classes search guard eid)]
+                (if (= :negative (:sign guard))
+                  ;; A plainly present subtracted alternative closes the rule
+                  ;; at every level, whatever the others are (a fault
+                  ;; included). Any other present value, a fault or evidence
+                  ;; that can expire, is decided exactly.
+                  (cond
+                    (some #(and (vector? %) (nil? (second %))) classes) ::absent
+                    (some #(not= :absent %) classes) ::undecided
+                    :else ::kept)
+                  (loop [i 0]
+                    (if (= i (count classes))
+                      ::absent
+                      (let [outcome (note! notes level (nth classes i))]
+                        (if (= ::absent outcome) (recur (inc i)) outcome)))))))]
+        (if (= ::kept outcome) (recur (inc index)) outcome)))))
+
+(defn- expand-arrow
+  "Expands a rule frame onto `stack` at `level` once its guards hold there.
+  A guarded reference contributes its target state. For an arrow, each
+  intermediate whose via edge lasts at `level` contributes its target state
+  (arrow to a permission), or its target's decision (arrow to a relation or
+  to an oracle's permission). Returns the new stack, ::found, or ::undecided."
+  [{:keys [probe intermediates qualify oracle] :as search} notes level stack rule eid memo skips]
+  (let [guarded (if-let [guards (:guards rule)]
+                  (guards-outcome search notes level guards eid)
+                  ::kept)]
+    (cond
+      (= ::undecided guarded) ::undecided
+      (= ::absent guarded) stack
+      (= :self-permission (:rule rule)) (conj stack [(:target-node rule) eid])
+      :else
+      (let [edges (intermediates (:resource-type rule) eid (:via-relation-eid rule)
+                                 (:intermediate-type rule))
+            kind (:rule rule)]
+        (loop [index (dec (count edges))
+               stack stack]
+          (if (neg? index)
+            stack
+            (let [compact-edge (nth edges index)
+                  via (evidence-class (qualify (:via-relation-eid rule) compact-edge))]
+              (cond
+                (= :absent via) (recur (dec index) stack)
+
+                (= :arrow-permission kind)
+                (let [outcome (note! notes level via)]
+                  (cond
+                    (= ::kept outcome)
+                    (let [state [(:target-node rule) (edge/endpoint compact-edge)]
+                          known (when (= 1 (count edges)) (get @memo state))]
+                      ;; A sole successor would be popped next. Reuse its
+                      ;; answer here instead of allocating another stack and
+                      ;; transition, including the notes of a cached denial.
+                      (cond
+                        (true? known) ::found
+                        (false? known)
+                        (do
+                          (when-let [[skipped conditional?] (get-in @skips [level state])]
+                            (vswap! (:skipped notes) later skipped)
+                            (when conditional? (vreset! (:conditional? notes) true)))
+                          stack)
+                        :else (recur (dec index) (conj stack state))))
+                    :else (recur (dec index) stack)))
+
+                :else
+                (let [endpoint (edge/endpoint compact-edge)
+                      held (if (= :arrow-oracle kind)
+                             (oracle-class (oracle (:target-node rule) endpoint))
+                             (evidence-class
+                              (qualify (:target-relation-eid rule)
+                                       (probe (:target-relation-eid rule)
+                                              (:intermediate-type rule) endpoint
+                                              (:wildcard-eid rule)))))
+                      outcome (note! notes level (joined-class via held))]
+                  (if (= ::kept outcome)
+                    ::found
+                    (recur (dec index) stack)))))))))))
+
+(defn- base-outcome
+  "Decides a state's rules without successors at `level`: relation rules
+  from the subject's holdings and oracle rules from the oracle, each once
+  its guards hold. ::found when one lasts there, ::undecided, or nil."
+  [{:keys [probe qualify subject-type oracle] :as search} notes level rules eid]
+  (loop [index 0]
+    (when (< index (count rules))
+      (let [rule (nth rules index)
+            kind (:rule rule)]
+        (if (or (and (= :relation kind) (= subject-type (:subject-type rule)))
+                (= :oracle kind))
+          (let [guarded (if-let [guards (:guards rule)]
+                          (guards-outcome search notes level guards eid)
+                          ::kept)]
+            (cond
+              (= ::undecided guarded) ::undecided
+              (= ::absent guarded) (recur (inc index))
+              :else
+              (let [outcome (note! notes level
+                                   (if (= :oracle kind)
+                                     (oracle-class (oracle (:target-node rule) eid))
+                                     (evidence-class
+                                      (qualify (:relation-eid rule)
+                                               (probe (:relation-eid rule)
+                                                      (:resource-type rule) eid
+                                                      (:wildcard-eid rule))))))]
+                (if (= ::kept outcome)
+                  ::found
+                  (recur (inc index))))))
+          (recur (inc index)))))))
+
+(defn ^:no-doc search-level
+  "One depth-first search from `root-state` in the graph of evidence that
+  lasts at `level`, reusing and extending that level's memo. Returns
+  ::found, ::undecided, or, when exhausted, `{:skipped deadline :conditional?
+  flag}`: the latest deadline and whether any conditional evidence the
+  search skipped.
+
+  Within one level the graph is plain, so the memo is sound as in
+  MemoizedMembership.dfy: a search that exhausts visited every state
+  reachable from each state it admitted, so each is negative at this level;
+  a search that finds a witness proves its root. A retained negative keeps
+  its closure's skipped deadline and conditional flag, and a later search
+  that reuses it inherits them."
+  [{:keys [subject-type step! admit!] :as search}
+   {:keys [reverse-rules holdings possible memos skips]} level root-state]
+  (let [memo (or (get @memos level)
+                 (let [memo (volatile! {})] (vswap! memos assoc level memo) memo))
+        notes {:skipped (volatile! nil) :conditional? (volatile! false)}]
+    (loop [stack [root-state]
+           visited (transient #{})]
+      (if (zero? (count stack))
+        (let [visited (persistent! visited)
+              skipped @(:skipped notes)
+              conditional? @(:conditional? notes)]
+          (vswap! memo #(reduce (fn [m state] (assoc m state false)) % visited))
+          (when (or skipped conditional?)
+            (vswap! skips update level
+                    #(reduce (fn [m state] (assoc m state [skipped conditional?]))
+                             (or % {}) visited)))
+          {:skipped skipped :conditional? conditional?})
+        (let [frame (peek stack)
+              stack (pop stack)
+              _ (step! (count stack))
+              head (nth frame 0)]
+          (if (map? head)
+            (let [expanded (expand-arrow search notes level stack head (nth frame 1) memo skips)]
+              ;; A vector is the grown stack; `case` would hash it to
+              ;; dispatch, so the sentinels are tested explicitly.
+              (cond
+                (not (keyword? expanded)) (recur expanded visited)
+                (= ::found expanded) (do (vswap! memo assoc root-state true) ::found)
+                :else ::undecided))
+            (let [known (get @memo frame)]
+              (cond
+                (true? known) (do (vswap! memo assoc root-state true) ::found)
+
+                (false? known)
+                (do (when-let [[skipped conditional?] (get-in @skips [level frame])]
+                      (vswap! (:skipped notes) later skipped)
+                      (when conditional? (vreset! (:conditional? notes) true)))
+                    (recur stack visited))
+
+                (or (contains? visited frame)
+                    (not (contains? possible head)))
+                (recur stack visited)
+
+                :else
+                (let [eid (nth frame 1)
+                      rules (get reverse-rules head)
+                      _ (admit!)
+                      outcome (base-outcome search notes level rules eid)]
+                  (cond
+                    (= ::found outcome) (do (vswap! memo assoc root-state true) ::found)
+                    (= ::undecided outcome) ::undecided
+                    :else (recur (push-successors stack rules eid subject-type
+                                                  holdings possible)
+                                 (conj! visited frame))))))))))))
+
+(defn ^:no-doc decide-leveled
+  "Decides one resource level by level. The first search keeps only plain
+  evidence; each later one keeps the evidence lasting until the latest
+  deadline the previous search skipped. Found at the plain level: true.
+  Found at deadline `v`: evidence true until `v`. No witness path's
+  bottleneck lies strictly between `v` and the previous level, because its
+  first skipped edge would have raised the next level. So `v` is the latest
+  first-expiry over witness paths, the exact end of the grant. A definite
+  witness decides even beside faulting or conditional alternatives, because
+  a grant absorbs them (strong Kleene). Exhausted with nothing skipped:
+  false, which stays false because relationships only expire. ::qualified
+  when the search met a fault or conditional evidence and found no witness,
+  or met an undecided guard; the exact point check then decides the
+  resource."
+  [search entry resource-eid]
+  (let [root-state [(:root search) resource-eid]]
+    (loop [level plain-level]
+      (let [outcome (search-level search entry level root-state)]
+        (cond
+          (= ::found outcome)
+          (if (= plain-level level)
+            true
+            (evidence/with-certificate true level true))
+
+          (= ::undecided outcome) ::qualified
+
+          (:skipped outcome)
+          (do (add-membership-stats! {:levels 1})
+              (recur (:skipped outcome)))
+
+          (:conditional? outcome) ::qualified
+          :else false)))))
+
+(defn ^:no-doc subject-holdings
+  "One subject's grants of one relation slice, read by one forward scan of at
+  most `holdings-limit` edges and retained in the request's `context`:
+  `{:complete? flag :edges {endpoint compact-edge}}`. The edges are the
+  stored compact edges a direct probe of each resource returns. When the
+  subject holds the slice `holdings-limit` times or more, `:complete?` is
+  false and a caller probes instead."
+  [{:keys [fetch-fn adapter context qualification cut-point!]}
+   subject-type subject-eid relation-eid resource-type]
+  (let [key [:subject-holdings subject-type subject-eid relation-eid resource-type]]
+    (or (get @context key)
+        (let [fetch-fn (or fetch-fn (reducer/adapter-fetch-fn adapter))
+              _ (when cut-point! (cut-point! nil))
+              edges (reducer/bounded-vector
+                     (fetch-fn (cond-> (forward-scan subject-type subject-eid relation-eid
+                                                     resource-type nil holdings-limit)
+                                 qualification (assoc :include-qualifier? true)))
+                     holdings-limit)
+              holdings {:complete? (< (count edges) holdings-limit)
+                        :edges (into {} (map (juxt edge/endpoint identity)) edges)}]
+          (request-counters/add-commands! 1)
+          (request-counters/add-fetched-values! (count edges))
+          (vswap! context assoc key holdings)
+          holdings))))
+
+(defn check-many-eids
+  "Decides one subject's membership in the plan's root permission for many
+  resources: one value per resource, with the permissionship `check-eids`
+  returns for that point.
+
+  The search reorders alternatives freely: under strong-Kleene fault
+  semantics the decision does not depend on the order in which witnesses
+  are found, and a fault never stops it.
+
+  - A decisive answer is plain true, or true until the latest first-expiry
+    over its witness paths (`decide-leveled`). That certificate is sound and
+    may end later than the point check's, which is the first witness it
+    happened to find.
+  - Plain false stays false, because relationships only expire.
+  - A resource whose search met a fault or conditional evidence without a
+    definite witness gets `check-eids`' own value.
+
+  The request-scoped `:context` (from `membership-context`) holds what later
+  calls reuse over the same basis:
+
+  - the subject's holdings of each relation slice the plan names, one bounded
+    forward scan per slice;
+  - the plan nodes those holdings can reach at all;
+  - each arrow's intermediates;
+  - one memo per evidence level;
+  - completed answers.
+
+  A base rule is decided from the retained holdings instead of an adapter
+  probe, a node the subject cannot hold is never entered, and an ancestor
+  shared by many resources is decided once per level. Typed limits apply per
+  call, with the point check's meanings.
+
+  `plan` may also be a guarded program (`operator-plan/guarded-delegation`):
+  rules whose guards must hold at the state's entity, and `:oracle` and
+  `:arrow-oracle` rules that ask `oracle`, `(fn [permission eid] value)`, for
+  a permission decided elsewhere. Such a program has no point check, so it
+  supplies `fallback`, `(fn [resource-eid] value)`, the exact value of a
+  resource the search defers. An oracle's false that ends at a deadline is
+  conditional (`oracle-class`), so a search that meets it defers too."
+  [{:keys [fetch-fn adapter plan subject-type subject-eid resource-eids
+           context cut-point! physical-chunk-size qualification oracle fallback
+           holding-limit
+           max-admissions max-commands max-transitions max-values max-stack]
+    :or {holding-limit holdings-limit
+         physical-chunk-size reducer/default-physical-chunk-size
+         max-admissions reducer/default-max-admissions
+         max-commands reducer/default-max-commands
+         max-transitions reducer/default-max-transitions
+         max-values reducer/default-max-values
+         max-stack reducer/default-max-stack}
+    :as options}]
+  (if (nil? subject-eid)
+    (vec (repeat (count resource-eids) false))
+    (let [fetch-fn (or fetch-fn (reducer/adapter-fetch-fn adapter))
+          context (or context (membership-context))
+          ;; admissions, transitions, commands, fetched values. The zeros are
+          ;; explicit: ClojureScript fills an unsized long-array with nil.
+          counts (long-array 4 0)
+          counters (fn []
+                     {:admissions (aget counts 0) :transitions (aget counts 1)
+                      :commands (aget counts 2) :fetched-values (aget counts 3)})
+          fetch! (fn [descriptor]
+                   (when cut-point! (cut-point! nil))
+                   (when (>= (aget counts 2) max-commands)
+                     (limit-failure! :max-commands (counters)
+                                     {:max-commands max-commands}))
+                   (let [values (reducer/bounded-vector
+                                 (fetch-fn (cond-> descriptor qualification
+                                                   (assoc :include-qualifier? true)))
+                                 (:limit descriptor))]
+                     (when (> (+ (aget counts 3) (count values)) max-values)
+                       (limit-failure! :max-values (counters)
+                                       {:max-values max-values
+                                        :staged (count values)}))
+                     (aset counts 2 (inc (aget counts 2)))
+                     (aset counts 3 (+ (aget counts 3) (count values)))
+                     values))
+          entry (membership-entry context fetch! plan subject-type subject-eid holding-limit)
+          holdings (:holdings entry)
+          answers (:answers entry)
+          root (:root plan)
+          search
+          {:root root
+           :subject-type subject-type
+           :plain-guards (:plain-guards entry)
+           :oracle oracle
+           :guard-classes (:guard-classes entry)
+           :probe
+           (fn [relation-eid resource-type eid wildcard-eid]
+             (let [subject-eid (or wildcard-eid subject-eid)
+                   slice (cond-> [relation-eid resource-type] wildcard-eid (conj wildcard-eid))
+                   held (get holdings slice)]
+               (cond
+                 (not (:any? held)) nil
+                 ;; Almost every probe is decided by the retained scan.
+                 (or (:complete? held) (<= eid (:bound held))) (get (:edges held) eid)
+                 :else
+                 (held-edge
+                  held (:extended entry) fetch!
+                  (fn [bound limit]
+                    (forward-scan subject-type subject-eid relation-eid resource-type
+                                  bound limit))
+                  slice eid
+                  (fn []
+                    (let [value (first (fetch! (reverse-scan resource-type eid
+                                                             relation-eid subject-type
+                                                             (dec subject-eid) 1)))]
+                      (when (= subject-eid (some-> value edge/endpoint))
+                        value)))))))
+           :intermediates
+           (fn [resource-type eid via-relation-eid intermediate-type]
+             (let [key [:intermediates resource-type eid via-relation-eid
+                        intermediate-type]]
+               (or (get @context key)
+                   (let [values
+                         (loop [bound nil acc (transient [])]
+                           (let [chunk (fetch! (reverse-scan resource-type eid
+                                                             via-relation-eid
+                                                             intermediate-type
+                                                             bound
+                                                             physical-chunk-size))
+                                 acc (reduce conj! acc chunk)]
+                             (if (< (count chunk) physical-chunk-size)
+                               (persistent! acc)
+                               (recur (edge/endpoint (peek chunk)) acc))))]
+                     (vswap! context assoc key values)
+                     values))))
+           :qualify (if qualification
+                      (fn [relation value]
+                        (qualification/qualify qualification relation value))
+                      (fn [_ value] (some? value)))
+           :step! (fn [depth]
+                    (when (>= (aget counts 1) max-transitions)
+                      (limit-failure! :max-transitions (counters)
+                                      {:max-transitions max-transitions}))
+                    (when (> depth max-stack)
+                      (limit-failure! :max-stack (counters)
+                                      {:max-stack max-stack
+                                       :staged depth}))
+                    (aset counts 1 (inc (aget counts 1)))
+                    (when cut-point! (cut-point! nil)))
+           :admit! (fn []
+                     (when (>= (aget counts 0) max-admissions)
+                       (limit-failure! :max-admissions (counters)
+                                       {:max-admissions max-admissions
+                                        :staged 1}))
+                     (aset counts 0 (inc (aget counts 0))))}
+          searched (volatile! 0)
+          reused (volatile! 0)
+          computed (volatile! #{})
+          cache? (some? subproblem/*store*)
+          key-of (when cache?
+                   (let [fingerprint (:fingerprint plan)
+                         scope (point-reuse/scope qualification)]
+                     #(membership-key fingerprint scope subject-type subject-eid % false)))
+          exact-key-of (when cache?
+                         (let [fingerprint (:fingerprint plan)
+                               scope (point-reuse/scope qualification)]
+                           #(membership-key fingerprint scope subject-type subject-eid % true)))
+          ;; One client-cache lookup for the distinct resources this request
+          ;; has not answered yet.
+          unknown (when cache?
+                    (into [] (comp (remove nil?) (remove #(contains? @answers %)) (distinct))
+                          resource-eids))
+          stored (if (seq unknown)
+                   (zipmap unknown (point-reuse/reuse! qualification (mapv key-of unknown) ::miss))
+                   {})
+          decided
+          (mapv (fn [resource-eid]
+                  (if (nil? resource-eid)
+                    false
+                    (let [known (get @answers resource-eid ::unknown)]
+                      (if (not= ::unknown known)
+                        known
+                        (let [cached (get stored resource-eid ::miss)]
+                          (if (not= ::miss cached)
+                            (do (vswap! reused inc)
+                                (vswap! answers assoc resource-eid cached)
+                                cached)
+                            (let [value (decide-leveled search entry resource-eid)]
+                              (vswap! searched inc)
+                              (vswap! computed conj resource-eid)
+                              (when-not (= ::qualified value)
+                                (vswap! answers assoc resource-eid value))
+                              value)))))))
+                resource-eids)
+          fallbacks (count (filter #{::qualified} decided))]
+      (request-counters/add-commands! (aget counts 2))
+      (request-counters/add-fetched-values! (aget counts 3))
+      (when (or reducer/*observer-stats* reducer/*reducer-work-stats*)
+        (reducer/report-work-stats!
+         [reducer/*observer-stats* reducer/*reducer-work-stats*]
+         {:derived-grants (aget counts 0)
+          :advanced-datoms (aget counts 2)
+          :queued-work (aget counts 1)
+          :fetched-values (aget counts 3)}))
+      (add-membership-stats! {:decided (count resource-eids)
+                              :searched (+ @searched fallbacks)
+                              :reused @reused
+                              :fallbacks fallbacks})
+      (let [values
+            (if (zero? fallbacks)
+              decided
+              (mapv (fn [resource-eid value]
+                      (if (= ::qualified value)
+                        (if fallback
+                          (fallback resource-eid)
+                          (probe-check-eids (-> options
+                                                (dissoc :resource-eids :context)
+                                                (assoc :fetch-fn fetch-fn
+                                                       :resource-eid resource-eid))))
+                        value))
+                    resource-eids decided))]
+        ;; Every decision is complete once the call has succeeded: publish
+        ;; each computed one once. Exact fallback values also populate the
+        ;; point-only certificate lane; leveled values populate only the
+        ;; shared lane because their wider certificate is not substitutable
+        ;; inside a conditional operator residual.
+        (when (and cache? (seq @computed))
+          (point-reuse/publish!
+           qualification
+           (vals
+            (reduce (fn [entries [resource-eid value original]]
+                      (if (contains? @computed resource-eid)
+                        (reduce (fn [entries key]
+                                  (if (contains? entries key)
+                                    entries
+                                    (assoc entries key [key value])))
+                                entries
+                                (cond-> [(key-of resource-eid)]
+                                  (= ::qualified original)
+                                  (conj (exact-key-of resource-eid))))
+                        entries))
+                    {}
+                    (map vector resource-eids values decided)))))
+        values))))
 
 (defn derives-from-node?
   "The membership-probe point check anchored at an arbitrary plan node:
@@ -483,13 +1403,19 @@
     false
     (let [seen (volatile! 0)
           caller-cut-point! (:cut-point! options)
+          ;; A reverse run emits the wildcard subject when a wildcard tuple
+          ;; reaches the resource; it stands for every subject of its type.
+          wildcard-eid (some :wildcard-eid (get-in options [:plan :rules]))
+          member? (fn [eid]
+                    (or (= subject-eid eid)
+                        (and (some? wildcard-eid) (= wildcard-eid eid))))
           watch (fn [state]
                   (when caller-cut-point! (caller-cut-point! state))
                   (let [results (:results state)
                         n (count results)]
                     (when (> n @seen)
                       (vreset! seen n)
-                      (when (= subject-eid (nth results (dec n)))
+                      (when (member? (nth results (dec n)))
                         (found!)))))]
       (try
         (let [finished (reducer/run-reverse
@@ -497,7 +1423,7 @@
                                {:resource-eid resource-eid
                                 :target exhaustion-target
                                 :cut-point! watch}))]
-          (boolean (some #{subject-eid} (:results finished))))
+          (boolean (some member? (:results finished))))
         (catch #?(:clj clojure.lang.ExceptionInfo
                   :cljs cljs.core/ExceptionInfo) error
           (if (::found (ex-data error))
@@ -509,10 +1435,8 @@
   [{:keys [adapter subject-id resource-id] :as options}]
   (check-eids
    (assoc options
-          :subject-eid (backend/invoke adapter :object-id->internal
-                                       subject-id)
-          :resource-eid (backend/invoke adapter :object-id->internal
-                                        resource-id))))
+          :subject-eid (backend/object-id->internal adapter subject-id)
+          :resource-eid (backend/object-id->internal adapter resource-id))))
 
 (defn discovery-options
   "Completes conditional first-discovery candidates with the existing point
@@ -562,17 +1486,31 @@
                  :conditional-count (- (:conditional-count finished)
                                        (if (and truncated? (:last-conditional? finished)) 1 0))))))))
 
+(defn count-resources-eids
+  "Exact count from an already-resolved subject EID."
+  [{:keys [subject-eid] :as options}]
+  (exhaustive-count reducer/run-forward :subject-eid
+                    subject-eid
+                    options))
+
 (defn count-resources
   "Exact count by exhausting the reducer; :count-limit truncates with an
   explicit marker exactly like the current public contract."
   [{:keys [adapter subject-id] :as options}]
-  (exhaustive-count reducer/run-forward :subject-eid
-                    (backend/invoke adapter :object-id->internal subject-id)
+  (count-resources-eids
+   (assoc options
+          :subject-eid (backend/object-id->internal adapter subject-id))))
+
+(defn count-subjects-eids
+  "Exact reverse count from an already-resolved resource EID."
+  [{:keys [resource-eid] :as options}]
+  (exhaustive-count reducer/run-reverse :resource-eid
+                    resource-eid
                     options))
 
 (defn count-subjects
   "Exact reverse count by exhaustion, mirroring count-resources."
   [{:keys [adapter resource-id] :as options}]
-  (exhaustive-count reducer/run-reverse :resource-eid
-                    (backend/invoke adapter :object-id->internal resource-id)
-                    options))
+  (count-subjects-eids
+   (assoc options
+          :resource-eid (backend/object-id->internal adapter resource-id))))

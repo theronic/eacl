@@ -15,6 +15,18 @@
       (is (= (model/evaluate parameters expression context bound)
              (evaluator/evaluate engine entity context bound))))))
 
+(deftest comprehension-jvm-refinement
+  ;; Complete contexts run the JVM adapter's fold over cel-parser programs;
+  ;; incomplete ones the portable evaluator. Both must be the model.
+  (let [engine (jvm/evaluator)]
+    (doseq [expression plans/comprehensions
+            :let [entity (definition/entity "comprehension" plans/comprehension-parameters
+                                            (plans/source expression))]
+            context plans/comprehension-contexts bound [{} {"ys" ["t"]}]]
+      (is (= (model/evaluate plans/comprehension-parameters expression context bound)
+             (evaluator/evaluate engine entity context bound))
+          (pr-str [expression context bound])))))
+
 (deftest generated-jvm-values-and-work
   (let [engine (jvm/evaluator) rng (java.util.Random. 9042026)
         parameters {"x" :int "xs" [:list :int] "text" :string "needle" :string

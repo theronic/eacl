@@ -6,8 +6,8 @@ Rebuild `eacl/read-relationships` so it matches the public return shape of
 `lookup-resources` and `lookup-subjects`:
 
 ```clojure
-{:data [Relationship ...]
- :cursor "eacl1_..." | nil}
+{:data   [Relationship ...]
+ :cursor "eacl1_..."        | nil}
 ```
 
 The implementation should default `:limit` to `1000`, use bounded v7 tuple

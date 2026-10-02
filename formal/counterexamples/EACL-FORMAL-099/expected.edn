@@ -1,0 +1,10 @@
+{:accepted true
+ :checks [[:doc "1" :view :doc "1" true]
+          [:doc "1" :view :user "a" true]
+          [:doc "1" :view :doc "2" false]
+          [:doc "1" :only :user "1" false]]
+ :lookup-resources [[:doc :view :doc "2" ["2"]]]
+ :lookup-subjects [[:doc "1" :only :doc ["1"]]
+                   [:doc "1" :only :user []]]
+ :agrees-with :spicedb-v1.56.0
+ :except [:lookup-subjects-of-another-type]}

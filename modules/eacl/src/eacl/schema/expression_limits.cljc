@@ -56,7 +56,7 @@
             op (:op node)
             children
             (case op
-              (:identifier :relation :permission :arrow) []
+              (:identifier :relation :permission :arrow :self) []
               (:union :intersection) (:children node)
               :exclusion [(:left node) (:right node)]
               (throw (ex-info "Unknown source expression node."
@@ -151,6 +151,13 @@
           [state right] (normalize-to-record state (:right node))]
       (intern-record state [:exclusion left right]))
 
+    ;; `self` is the definition's identity relation (`expression/self-relation`):
+    ;; plans evaluate it as a direct relation whose only subject type is the
+    ;; resource type.
+    :self
+    (intern-record state [:relation expression/self-relation
+                          [(:resource-type state)]])
+
     (throw (ex-info "Unknown canonical expression node."
              {:type :eacl.schema/invalid-permission-expression
               :eacl/error :eacl.schema/invalid-permission-expression
@@ -223,7 +230,8 @@
   [resolved-expression]
   (let [resolved-expression (expression/canonicalize resolved-expression)
         [provisional root]
-        (normalize-to-record {:records [] :heights [] :record->id {}}
+        (normalize-to-record {:records [] :heights [] :record->id {}
+                              :resource-type (:resource-type resolved-expression)}
                              (:root resolved-expression))
         {:keys [old->new records]} (canonical-record-table provisional root)
         child-slot-count (reduce + 0 (map record-slot-count records))
@@ -256,9 +264,11 @@
     result))
 
 (defn expression-byte-size
-  "Returns the exact portable UTF-8 byte size of the canonical source payload."
+  "Returns the exact portable UTF-8 byte size of the canonical source payload.
+   It is measured without rendering, so a payload beyond the codec's own
+   ceilings still reaches the typed :encoded-byte-size comparison."
   [resolved-expression]
-  (count (secure/utf8-bytes (expression/encode resolved-expression))))
+  (expression/encoded-byte-size resolved-expression))
 
 (defn check-expression-bytes!
   [resolved-expression limits]

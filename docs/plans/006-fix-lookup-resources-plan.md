@@ -27,8 +27,8 @@ The plan is designed to be fool-proof, with detailed steps, explanations, and ch
      (:require [clojure.tools.logging :as log]
                [datomic.api :as d]
                [eacl.core :refer [spice-object]]
-               [eacl.datomic.schema :as schema]
-               [eacl.datomic.impl-base :as base]))
+               [eacl.datomic.schema]
+               [eacl.datomic.impl-base]))
    ```
 [ ] Copy necessary records from impl_base.clj: Cursor, Relation, Permission, Relationship.
 
@@ -95,4 +95,4 @@ Use merged lazy sorted by eid for stable order.
 [ ] Update README if needed.
 [ ] Commit changes with detailed messages.
 
-This plan ensures all requirements are met without modifying tests or schema." 
+This plan ensures all requirements are met without modifying tests or schema."

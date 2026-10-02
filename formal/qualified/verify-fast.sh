@@ -13,7 +13,8 @@ mkdir -p "$output"
 node formal/qualified/check-boundary.mjs
 time_limit=$(json_value formal/qualified/gate.json verificationTimeLimitSeconds)
 resource_limit=$(json_value formal/qualified/gate.json proofResourceLimit)
-"$dafny" verify --verification-time-limit "$time_limit" --resource-limit "$resource_limit" \
+"$dafny" verify --manual-lemma-induction \
+  --verification-time-limit "$time_limit" --resource-limit "$resource_limit" \
   formal/dafny/QualifiedEvidence.dfy formal/dafny/QualifiedTemporal.dfy formal/dafny/QualifiedReuse.dfy \
   > "$output/proofs.log" 2>&1 || { cat "$output/proofs.log"; exit 1; }
 cat "$output/proofs.log"
@@ -100,6 +101,8 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
      (require 'eacl.datascript.qualified-inspection-test :reload)
      (require 'eacl.datomic.qualified-write-test :reload)
      (require 'eacl.datahike.qualified-write-test :reload)
+     (require 'eacl.datascript.kleene-fault-test :reload)
+     (require 'eacl.datascript.caveat-context-admission-test :reload)
      (load-file \"formal/qualified/production_mutations.clj\")
      (let [r (clojure.test/run-tests 'eacl.formal.qualified.model-test 'eacl.formal.qualified.mutation-test
                                    'eacl.formal.qualified.discovery-model-test 'eacl.formal.qualified.discovery-bridge
@@ -126,6 +129,8 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
                                    'eacl.authorization.inspection-test
                                    'eacl.datascript.qualified-inspection-test 'eacl.datomic.qualified-write-test
                                    'eacl.datahike.qualified-write-test
+                                   'eacl.datascript.kleene-fault-test
+                                   'eacl.datascript.caveat-context-admission-test
                                    'eacl.formal.qualified.production-mutations)]
        (when (or (pos? (+ (:fail r) (:error r))) (not (pos? (:pass r))))
          (throw (ex-info \"Qualified finite gate failed or ran no assertions\" r)))

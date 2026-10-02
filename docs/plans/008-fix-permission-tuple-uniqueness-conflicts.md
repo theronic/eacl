@@ -16,7 +16,7 @@ The current schema has **two unique constraints** on permissions:
 1. **4-element tuple (currently failing):**
    ```clojure
    [:eacl.permission/resource-type
-    :eacl.permission/target-type  
+    :eacl.permission/target-type
     :eacl.permission/target-name
     :eacl.permission/permission-name]
    ```
@@ -63,38 +63,38 @@ The user specified requirements:
 1. **Remove the failing 4-element tuple:**
    ```clojure
    ;; REMOVE this tuple that's causing conflicts:
-   {:db/ident :eacl.permission/resource-type+target-type+target-name+permission-name
+   {:db/ident  :eacl.permission/resource-type+target-type+target-name+permission-name
     :db/unique :db.unique/identity}
    ```
 
 2. **Ensure 5-element tuple handles all cases:**
    ```clojure
    ;; Keep this tuple (already exists) for all permissions:
-   {:db/ident :eacl.permission/resource-type+source-relation-name+target-type+target-name+permission-name
+   {:db/ident  :eacl.permission/resource-type+source-relation-name+target-type+target-name+permission-name
     :db/unique :db.unique/identity}
    ```
 
 3. **Add separate indices for efficient enumeration:**
    ```clojure
    ;; For enumerating permission-type arrows
-   {:db/ident :eacl.permission/resource-type+source-relation-name+target-type+permission-name
-    :db/valueType :db.type/tuple
-    :db/tupleAttrs [:eacl.permission/resource-type
-                    :eacl.permission/source-relation-name
-                    :eacl.permission/target-type
-                    :eacl.permission/permission-name]
+   {:db/ident       :eacl.permission/resource-type+source-relation-name+target-type+permission-name
+    :db/valueType   :db.type/tuple
+    :db/tupleAttrs  [:eacl.permission/resource-type
+                     :eacl.permission/source-relation-name
+                     :eacl.permission/target-type
+                     :eacl.permission/permission-name]
     :db/cardinality :db.cardinality/one
-    :db/index true}
-   
+    :db/index       true}
+
    ;; For enumerating relation-type arrows  
-   {:db/ident :eacl.permission/resource-type+source-relation-name+target-type+target-name
-    :db/valueType :db.type/tuple
-    :db/tupleAttrs [:eacl.permission/resource-type
-                    :eacl.permission/source-relation-name
-                    :eacl.permission/target-type
-                    :eacl.permission/target-name]
+   {:db/ident       :eacl.permission/resource-type+source-relation-name+target-type+target-name
+    :db/valueType   :db.type/tuple
+    :db/tupleAttrs  [:eacl.permission/resource-type
+                     :eacl.permission/source-relation-name
+                     :eacl.permission/target-type
+                     :eacl.permission/target-name]
     :db/cardinality :db.cardinality/one
-    :db/index true}
+    :db/index       true}
    ```
 
 ### Phase 2: Update Permission Function
@@ -104,7 +104,7 @@ The user specified requirements:
    ;; For direct permissions: {:relation relation-name}
    {:eacl.permission/source-relation-name :self  ; <-- Add this
     ...}
-   
+
    ;; Arrow permissions already set source-relation-name correctly
    ```
 
@@ -114,7 +114,7 @@ The user specified requirements:
    ```clojure
    ;; Change from:
    [(missing? $ ?perm-def :eacl.permission/source-relation-name)]
-   
+
    ;; To:
    [?perm-def :eacl.permission/source-relation-name :self]
    ```

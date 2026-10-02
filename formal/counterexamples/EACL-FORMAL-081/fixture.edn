@@ -1,0 +1,25 @@
+{:operation :expand-permission-tree
+ :backend :datascript
+ :schema "definition user {}\ndefinition doc {\n  relation viewer: user\n  permission view = viewer\n}\n"
+ :objects-in-eid-order ["a" "b" "d"]
+ :clock-ms 1000
+ :relationships
+ [{:subject {:type :user :id "a"} :relation :viewer :resource {:type :doc :id "d"}
+   :valid-until-ms 5000}
+  {:subject {:type :user :id "b"} :relation :viewer :resource {:type :doc :id "d"}}]
+ :steps
+ [{:expand {:resource {:type :doc :id "d"} :permission :viewer}}
+  {:expand {:resource {:type :doc :id "d"} :permission :view}}
+  {:set-clock 9000}
+  {:expand {:resource {:type :doc :id "d"} :permission :view}}
+  {:check {:subject {:type :user :id "b"} :permission :view :resource {:type :doc :id "d"}}}]
+ :caveated-variant
+ {:schema "caveat c1(flag bool) {\n  flag\n}\ndefinition user {}\ndefinition doc {\n  relation viewer: user | user with c1\n  permission view = viewer\n}\n"
+  :relationship {:subject {:type :user :id "a"} :relation :viewer
+                 :resource {:type :doc :id "d"} :caveat "c1"}
+  :step {:expand {:resource {:type :doc :id "d"} :permission :view}}}
+ :before
+ {:every-expansion {:error :eacl.permission-tree/adapter-contract-violation
+                    :reason :adapter-operation-failed}
+  :check :has-permission
+  :plain-control {:viewer-leaf ["a" "b"]}}}

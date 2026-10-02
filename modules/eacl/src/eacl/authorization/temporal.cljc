@@ -14,10 +14,18 @@
    :kind (evidence/permissionship proof)
    :value (evidence/encode proof)})
 
+(defn- point-answer-shape?
+  "Exactly the six point-answer keys, without allocating a key set: every
+  subproblem publication validates one."
+  [answer]
+  (and (map? answer) (== 6 (count answer))
+       (contains? answer :format) (contains? answer :start-ms)
+       (contains? answer :valid-until-ms) (contains? answer :complete?)
+       (contains? answer :kind) (contains? answer :value)))
+
 (defn point-answer-valid? [answer]
   (try
-    (and (map? answer)
-         (= #{:format :start-ms :valid-until-ms :complete? :kind :value} (set (keys answer)))
+    (and (point-answer-shape? answer)
          (= point-format (:format answer))
          (values/valid-time? (:start-ms answer))
          (evidence/before? (:start-ms answer) (:valid-until-ms answer))
@@ -46,6 +54,15 @@
   (when-let [certificate (answer-interval answer)]
     (reusable? certificate time exact-basis?)))
 
+(defn reusable-point
+  "The evidence of a resident point answer at `time`, when its certified
+   interval admits that time on the answer's own exact basis; nil otherwise."
+  [answer time]
+  (when (and (map? answer)
+             (= point-format (:format answer))
+             (reusable? answer time true))
+    (evidence/decode (:value answer))))
+
 (defn supersedes?
   "A later computation can replace a resident interval it could not reuse.
    Older pinned computations never evict a newer answer under the same key."
@@ -59,8 +76,10 @@
   {:start-ms time :valid-until-ms end :complete? complete?})
 
 (defn interval-valid? [value]
-  (and (map? value)
-       (= #{:start-ms :valid-until-ms :complete?} (set (keys value)))
+  ;; Every reused qualified decision observes one interval: check the closed
+  ;; shape without allocating a key set.
+  (and (map? value) (== 3 (count value))
+       (contains? value :start-ms) (contains? value :valid-until-ms) (contains? value :complete?)
        (values/valid-time? (:start-ms value))
        (or (nil? (:valid-until-ms value)) (values/valid-time? (:valid-until-ms value)))
        (boolean? (:complete? value))
@@ -100,3 +119,9 @@
   (if (= :pinned (:mode certificate))
     (= time (:original-time-ms certificate))
     (reusable? certificate time true)))
+
+(def point-publication-options
+  "Publication options for exact-basis point answers: completed values only,
+   and a later computation replaces an entry it could not reuse."
+  {:valid? point-answer-valid?
+   :replace? (fn [prior next] (supersedes? prior next))})

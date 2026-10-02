@@ -1,0 +1,9 @@
+{:results
+ [{:type :eacl.schema/expression-limit :dimension :encoded-byte-size
+   :maximum 131072 :actual 2137862}
+  {:type :eacl.schema/expression-limit :dimension :encoded-byte-size
+   :maximum 131072 :actual 4280966}
+  {:type :eacl.schema/invalid-name
+   :reason "SpiceDB names are at most 64 bytes per segment, so this shape is invalid SpiceDB"}]
+ :measured-size-equals-rendered-utf8-bytes true
+ :rendering-required-to-measure false}

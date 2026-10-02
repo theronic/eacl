@@ -1,0 +1,14 @@
+{:operation :eacl.core/-snapshot
+ :caller-options
+ {:spice-object->internal :attacker-controlled-function}
+ :before
+ {:ordinary-check :denied
+  :forged-snapshot-check :allowed
+  :mapping "Alice's public ID was resolved to Bob's internal entity ID"}
+ :after
+ {:empty-options :accepted
+  :any-caller-option :rejected-before-basis-selection}
+ :risk
+ [:privilege-escalation
+  :trusted-identity-codec-replacement
+  :authorization-decision-corruption]}

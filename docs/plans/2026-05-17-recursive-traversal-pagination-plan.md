@@ -133,7 +133,7 @@ Redesign:
 Relationship: stored authored edge.
 
 ```clojure
-{:subject {:type :user :id alice}
+{:subject  {:type :user :id alice}
  :relation :reader
  :resource {:type :folder :id root}}
 ```
@@ -147,27 +147,27 @@ Permission node:
 Grant: request-local derived permission fact.
 
 ```clojure
-{:subject-type :user
- :subject-eid 17592186045418
- :permission :read
+{:subject-type  :user
+ :subject-eid   17592186045418
+ :permission    :read
  :resource-type :folder
- :resource-eid 17592186045520}
+ :resource-eid  17592186045520}
 ```
 
 For `lookup-resources`, subject is fixed, so the traversal may store:
 
 ```clojure
-{:node [:folder :read]
+{:node         [:folder :read]
  :resource-eid 17592186045520}
 ```
 
 For `lookup-subjects`, resource is fixed, so the traversal stores:
 
 ```clojure
-{:node [:folder :read]
+{:node         [:folder :read]
  :resource-eid 17592186045520
  :subject-type :user
- :subject-eid 17592186045418}
+ :subject-eid  17592186045418}
 ```
 
 ## Traversal Routing
@@ -218,7 +218,7 @@ This order is stable for the same query, schema, relationship facts, Datomic bas
 ### Acyclic Lookup Cursor
 
 ```clojure
-{:kind :lookup-eid
+{:kind       :lookup-eid
  :result-eid 17592186045520}
 ```
 
@@ -227,25 +227,25 @@ This order is stable for the same query, schema, relationship facts, Datomic bas
 For `lookup-resources`:
 
 ```clojure
-{:kind :recursive-traversal
+{:kind           :recursive-traversal
  :engine-version 1
- :direction :forward
- :result-kind :resource
- :ordinal 42
- :result {:type :folder
-          :eid 17592186045520}}
+ :direction      :forward
+ :result-kind    :resource
+ :ordinal        42
+ :result         {:type :folder
+                  :eid  17592186045520}}
 ```
 
 For `lookup-subjects`:
 
 ```clojure
-{:kind :recursive-traversal
+{:kind           :recursive-traversal
  :engine-version 1
- :direction :reverse
- :result-kind :subject
- :ordinal 42
- :result {:type :user
-          :eid 17592186045418}}
+ :direction      :reverse
+ :result-kind    :subject
+ :ordinal        42
+ :result         {:type :user
+                  :eid  17592186045418}}
 ```
 
 Boundary rules:
@@ -273,7 +273,7 @@ Bare recursive `:last` is rejected with:
 
 ```clojure
 {:eacl/error :eacl.pagination/unsupported-recursive-last
- :reason :requires-full-traversal}
+ :reason     :requires-full-traversal}
 ```
 
 ## Page Token v4
@@ -281,18 +281,18 @@ Bare recursive `:last` is rejected with:
 Payload:
 
 ```clojure
-{:v 4
- :op :lookup-resources
+{:v           4
+ :op          :lookup-resources
  :query-shape "..."
- :basis :stable
- :basis-t 1234
- :edge {:kind :recursive-traversal
-        :engine-version 1
-        :direction :forward
-        :result-kind :resource
-        :ordinal 42
-        :result {:type :folder
-                 :eid 17592186045520}}}
+ :basis       :stable
+ :basis-t     1234
+ :edge        {:kind           :recursive-traversal
+               :engine-version 1
+               :direction      :forward
+               :result-kind    :resource
+               :ordinal        42
+               :result         {:type :folder
+                                :eid  17592186045520}}}
 ```
 
 Old v3 tokens fail as unsupported. There is no migration path.
@@ -304,38 +304,38 @@ Build a small rule IR from permission and relation definitions. `get-permission-
 Rule variants:
 
 ```clojure
-{:id [...]
- :rule :relation
- :node [resource-type permission]
- :relation-eid relation-eid
- :subject-type subject-type
+{:id            [...]
+ :rule          :relation
+ :node          [resource-type permission]
+ :relation-eid  relation-eid
+ :subject-type  subject-type
  :resource-type resource-type}
 ```
 
 ```clojure
-{:id [...]
- :rule :self-permission
- :node [resource-type permission]
+{:id          [...]
+ :rule        :self-permission
+ :node        [resource-type permission]
  :target-node [resource-type target-permission]}
 ```
 
 ```clojure
-{:id [...]
- :rule :arrow-relation
- :node [resource-type permission]
- :via-relation-eid via-relation-eid
- :intermediate-type intermediate-type
+{:id                  [...]
+ :rule                :arrow-relation
+ :node                [resource-type permission]
+ :via-relation-eid    via-relation-eid
+ :intermediate-type   intermediate-type
  :target-relation-eid target-relation-eid
  :target-subject-type subject-type}
 ```
 
 ```clojure
-{:id [...]
- :rule :arrow-permission
- :node [resource-type permission]
- :via-relation-eid via-relation-eid
+{:id                [...]
+ :rule              :arrow-permission
+ :node              [resource-type permission]
+ :via-relation-eid  via-relation-eid
  :intermediate-type intermediate-type
- :target-node [intermediate-type target-permission]}
+ :target-node       [intermediate-type target-permission]}
 ```
 
 ## Forward `lookup-resources` Worklist
@@ -400,7 +400,7 @@ Typed error:
 ```clojure
 {:eacl/error :eacl.recursive-traversal/limit-exceeded
  :limit-kind :derived-grants
- :limit 100000}
+ :limit      100000}
 ```
 
 Defaults should be high enough for normal use and documented as safety limits.
