@@ -1,14 +1,13 @@
 # Operator benchmark inputs
 
-[operator-engine-budgets.edn](operator-engine-budgets.edn) preserves the existing
+[operator-engine-budgets.edn](operator-engine-budgets.edn) holds the
 union-only regression limits, Datahike remote-store ceilings, and physical-route
 limits. These are authored inputs. No saved successful run is a test of the
 current implementation.
 
 The physical-route suite measures current first-page latency, allocation, and
-logical work against these limits on every run. Its local latency limit is
-0.56675 ms (the previous baseline plus its existing grace); the CI limit is
-5 ms. Neither limit was widened by removing the old measurement file.
+logical work against these limits on every run. Its local median-latency limit
+is 0.56675 ms; the CI limit is 5 ms.
 
 Use a project nREPL with the `:dev:test` aliases:
 

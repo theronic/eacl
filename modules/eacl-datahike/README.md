@@ -44,30 +44,12 @@ bound before decoding; EACL validates the trusted decoded snapshot and its
 count bound. Snapshots exclude Datahike database values and process-local
 identity. Restore validates before atomically replacing the visible cache.
 
-### Released-v7 permission migration
+### Existing databases
 
-EACL v8 rejects released-v7 flat permission rows at client construction. Run
-the explicit, bounded maintenance migration before starting ordinary v8
-clients:
-
-```clojure
-(require '[eacl.datahike.migrations.v7-to-v8])
-
-(eacl.datahike.migrations.v7-to-v8/migrate! conn)
-```
-
-The stored `:eacl/schema-string` is authoritative by default. A maintenance
-process may instead supply `{:schema schema-string :expression-limits {...}}`.
-Datahike migration requires exact relation identities and exact permission
-denotation: it is a storage conversion, not an authorization policy change.
-It reads and rewrites only schema-definition rows, never enumerates or rewrites
-relationship tuples, and commits the expression rows plus version stamp behind
-the existing schema-write fence. Legacy flat entities remain inert to avoid
-S3 persistent-index deletion amplification. On released-v7 rows, ordinary
-construction requires completed Relationship storage 8 and permission storage 8.
-After this permission-only step, run the explicit
-[Relationship migration](../../docs/relationship-storage-v7-to-v8.md). Client constructors
-reject `:auto-migrate-*` options.
+Client construction requires Relationship storage 8 and permission storage 8,
+rejects released-v7 flat permission rows, and accepts no `:auto-migrate-*`
+option. To upgrade a database written by an earlier EACL version, follow
+[Upgrading an existing database](../../docs/index.md#upgrading-an-existing-database).
 
 Relationships use the same physical layout as EACL's Datomic Pro adapter. One
 logical relationship is two cardinality-many heterogeneous tuple datoms:
@@ -86,7 +68,7 @@ Consumers must remove relationships through EACL before retracting a
 permissioned entity. `eacl.datahike.integrity/dangling-relationship-report`
 provides an explicit offline audit for violations of that contract.
 
-#For application-owned IDs, follow the [backend quickstart](../../README.md#datahike-quickstart). The deletion example below assumes that `:app/id` setup.
+For application-owned IDs, follow the [backend quickstart](../../README.md#datahike-quickstart). The deletion example below assumes that `:app/id` setup.
 
 ## Optional atomic entity retraction
 
@@ -187,18 +169,18 @@ statistics can be captured.
 ## Relationship storage 8
 
 This adapter uses five-slot endpoint pairs with a trailing nullable
-`qualifier-eid`. V8 supports
-[Caveats and expiring Relationships](../../docs/caveats.md) ; older readers must be drained first. Upgrades are explicit
-and restartable, and client construction requires a completed target store.
-Follow the [7-to-8 operator guide](../../docs/relationship-storage-v7-to-v8.md) before
-starting clients, then the v8 serving rollout guide before qualified writes.
+`qualifier-eid` that references a relationship's [Caveat or expiry](../../docs/caveats.md).
+Client construction requires completed storage 8; to upgrade older storage,
+see [Upgrading an existing database](../../docs/index.md#upgrading-an-existing-database).
+Complete the [serving rollout](../../docs/caveats.md#coordinated-rollout-and-rollback)
+before writing qualified relationships.
 
 The adapter's `create-conn` helper explicitly bootstraps fresh stores.
 
-## Live security keys (v8)
+## Live security keys
 
 `make-client` accepts `:security-keyring-controller` and an optional independent
-`:zed-token-keyring-controller`. Static key options remain supported. All
+`:zed-token-keyring-controller`. Static key options are also supported. All
 controllers use the backend-neutral `eacl.core` add/activate/retire/status APIs;
 updates change token acceptance without changing database or authorization
 identity. Authenticated cache export/restore is available through this module's

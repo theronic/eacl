@@ -37,16 +37,9 @@ recreate a database whose data you need to keep.
 
 ### Retained databases
 
-Back up the database and rehearse the upgrade on a copy. Stop authorization
-readers and writers for migration. Depending on the existing format, follow:
-
-1. [v6-to-v7 migration](migration-v6-to-v7.md), if using v6 relationship entities.
-2. [v7-to-v8 permission migration](migration-v7-to-v8.md).
-3. [Relationship storage 7-to-8 migration](relationship-storage-v7-to-v8.md).
-4. [Serving rollout](caveats.md#coordinated-rollout-and-rollback) before allowing
-   expiring or conditional relationships.
-
-Client construction does not migrate retained data. Running the fresh-database
+Follow [Upgrading an existing database](index.md#upgrading-an-existing-database),
+which lists the migrations in order and says when each applies. Client
+construction does not migrate retained data. Running the fresh-database
 installer is not a substitute for these migrations.
 
 If you use Datomic's saved deletion function, rerun
@@ -410,31 +403,17 @@ cursor ABI, and pass the aggregate conformance suite. An older published
 `eacl-spicedb` artifact is not source- or wire-compatible merely because scalar
 operations still compile.
 
-## Released v7 permission upgrade and unreleased-v8 reset
+## Permission storage
 
 Ordinary v8 permission rows contain one canonical expression payload. There is
-no flat-permission compatibility reader or dual-write representation. Datomic
-accepts released v7 flat permission rows only through the explicit
-`eacl.migrations.v7-to-v8/migrate!` maintenance path. The migration validates
-the complete replacement and authoritative attribute meanings, rejects any
-relation identity change, then atomically swaps permission rows and stamps
-permission storage version 8. Released v7 relationship attributes and tuples
-are reused without enumeration, backfill, rewrite, or rebuild. See
-[Migrating Datomic permissions from v7 to v8](migration-v7-to-v8.md).
-
-An ordinary v8 client fails closed on flat-only, mixed, duplicated,
-conflicting, corrupt, or unsupported-format permission storage. The optional
-`:auto-migrate-v7` client setting is explicit opt-in to the same migration,
-not a compatibility reader.
-
-If source control is rolled back across this expression-storage change,
-dispose of and recreate development databases with the schema belonging to the
-selected source revision. Do not open an expression-capable database with an
-older binary. No compatibility is claimed for persisted cursors across that
-rollback, and no migration or dual-write path is provided between superseded
-unreleased-v8 representations. This reset contract is distinct from the
-released v6-to-v7 relationship migration and released v7-to-v8 permission
-migration utilities.
+no flat-permission compatibility reader or dual-write representation. An
+ordinary v8 client fails closed on flat-only, mixed, duplicated, conflicting,
+corrupt, or unsupported-format permission storage, and client constructors
+reject `:auto-migrate-*` options. Datomic and Datahike convert released v7
+flat permission rows only through their explicit
+[permission migration](migration-v7-to-v8.md); see
+[Upgrading an existing database](index.md#upgrading-an-existing-database) for
+the complete order.
 
 ## V8 security-key updates
 

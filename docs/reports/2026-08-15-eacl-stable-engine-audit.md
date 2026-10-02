@@ -655,7 +655,9 @@ rewritten. Verified as stale and corrected:
   `formal/verification/temporal-model.md`,
   `formal/verification/final-assurance-audit.md`,
   `formal/verification/integration-spike.md`,
-  `docs/formal-verification-corrections.md` — stated the generated indexed
+  `docs/formal-verification-corrections.md` (since moved to
+  [`maintenance/history/`](../../maintenance/history/formal-verification-corrections.md))
+  — stated the generated indexed
   kernel as the JVM traversal authority, Kosaraju routing, the ordered merge
   and `can-uncached*` as production; quoted stale ledger counts (1,404
   definitions / 58 files / 21 keys / 63 roots) and `eacl.engine.v8/complete-logical-page`
@@ -680,8 +682,9 @@ rewritten. Verified as stale and corrected:
   2026-08-07 exploration prompt is moved from `adr/` to `plans/`.
 - `docs/benchmarks/v6-vs-v8.0.md` named a `:live-results` option that does
   not exist (`:remember-answers`) and is labelled historical;
-  `docs/bug-fix-arrow-to-relation-v7.md` names v7 functions and paths and is
-  labelled historical.
+  `docs/bug-fix-arrow-to-relation-v7.md` (since moved to
+  [`maintenance/history/`](../../maintenance/history/bug-fix-arrow-to-relation-v7.md))
+  names v7 functions and paths and is labelled historical.
 - Source docstrings: `eacl.relay/cursor-emission-order-version` described the
   merge engine's "scan waves"; `eacl.engine.v8/*recursive-traversal-stats*`
   described the routing invariant.

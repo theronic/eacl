@@ -83,11 +83,11 @@ The semantic answer and denotation tiers have independent capacities. The
 outer `:max-entries` sizes answers, exact rendered pages, and the adjacent
 continuation/cursor caches; all use 1,024 when it is omitted.
 `:denotation-max-entries` is the only additional cache-capacity setting.
-Logical weight estimators and byte
-budget claims were removed. Physical operator chunks, direct Boolean probes,
-and Relay identity conversion are request work rather than retained shared
-artifacts. Engine traversal, chunk, service-admission, and expression limits
-remain separate semantic or work bounds outside storage.
+Capacities count entries; EACL makes no byte-budget or logical-weight claim.
+Physical operator chunks, direct Boolean probes, and Relay identity conversion
+are request work rather than retained shared artifacts. Engine traversal,
+chunk, service-admission, and expression limits are separate semantic or work
+bounds outside storage.
 
 The common answer publication boundary retains completed pages only when they
 contain at most 1,000 result items. Larger valid pages are returned unchanged
@@ -101,9 +101,10 @@ answer. Validators and computations execute outside storage atomic scopes and
 are never repeated by cache retries. A local cache exception is a miss or
 failed publication, not an authorization error.
 
-## Snapshot v2
+## Snapshots
 
-Portable export is a deterministic flat entry sequence. It excludes
+Portable export is a deterministic flat entry sequence in the
+`:eacl.cache/basis-snapshot-v3` format. It excludes
 Caffeine/`cljs-cache` admission, priority, and recency state. Restore validates
 complete keys, managed-answer proof keys, revisions, operation-specific completed value
 contracts, duplicate keys, and count capacity before constructing fresh cache tiers
@@ -115,8 +116,9 @@ not exported without their live validating transition; the corresponding
 managed mapping remains portable.
 
 The decoded value is a trusted API input. Hosts must authenticate and
-encoded-size-bound external bytes before decoding. Snapshot v1 and malformed
-v2 values are rejected without changing the live lifecycle.
+encoded-size-bound external bytes before decoding. Restore rejects malformed
+values without changing the live lifecycle, and rejects the v1 and v2 formats
+of builds that predate 8.0.0 with `:eacl/cache-snapshot-upgrade-required`.
 
 ## Evidence
 

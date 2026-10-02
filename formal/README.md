@@ -160,7 +160,7 @@ The operational guide, theorem navigation, adapter certification,
 counterexample workflow, generated-engine cutover policy, and assurance wording are in
 [`../docs/formal-verification.md`](../docs/formal-verification.md). Behavior
 changes discovered by this work are listed in
-[`../docs/formal-verification-corrections.md`](../docs/formal-verification-corrections.md).
+[`../maintenance/history/formal-verification-corrections.md`](../maintenance/history/formal-verification-corrections.md).
 The issue-111 implementation/proof loophole loop and residual boundary are in
 [`verification/permission-tree-final-audit.md`](verification/permission-tree-final-audit.md).
 

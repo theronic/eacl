@@ -1,8 +1,7 @@
-# v8 basis-source migration
+# Backend basis sources
 
-EACL v8 clients construct a long-lived `eacl.backend.source`
-instead of reading a database value during client construction or at every
-orchestration checkpoint. The source publishes snapshot-free capability,
+An EACL client holds a long-lived `eacl.backend.source`, not a database value
+retained from construction. The source publishes snapshot-free capability,
 topology, traversal, ownership, and execution metadata. Each public request
 then acquires one selected immutable adapter and releases it after proof,
 cache, cursor, token, ID conversion, and response realization are complete.
@@ -12,8 +11,7 @@ cache, cursor, token, ID conversion, and response realization are complete.
 Backends whose database values are genuinely immutable may use
 `:basis-ownership :borrowed`. Every acquisition callback returns the adapter
 selected for that request; `:release!` is a no-op for its native value. Datomic,
-Datahike, and DataScript use this path without changing their one-`make-client`
-public construction flow.
+Datahike, and DataScript use this path behind their `make-client` functions.
 
 The borrowed path is invalid for a mutable handle, an adapter that consults a
 live connection after construction, or any value that owns a native reader,
@@ -63,8 +61,8 @@ The adapter's native revision must agree with both `:order-hint` and
 `:exact-locator`. Independently acquired snapshots may compare equal only when
 every EACL-visible dimension above is equal. Mutable values, directory paths,
 credentials, and process-local object identities must not appear in tokens or
-portable cache identity. A source must reject a snapshot identity that
-contains the retired `:schema-identity` field.
+portable cache identity. A snapshot identity must not contain a
+`:schema-identity` field; core rejects a selected adapter that advertises one.
 
 Schema generation is deliberately separate from basis identity. The selected
 adapter exposes it through the memoized `:schema-generation` operation, where
@@ -87,9 +85,10 @@ must close before writer acquisition. The commit result—not a post-commit
 head read—must supply the acknowledged native revision used for response
 tokens, invalidation, and any external monotonic watermark hook.
 
-## Migration checklist
+## Implementation checklist
 
-- Replace client-construction DB retention with a source constructor.
+- Construct a source at client construction and acquire one database value
+  per request; do not retain one from construction.
 - Use borrowed ownership only for certified immutable values.
 - Count acquisitions and releases for every public operation and error path.
 - Test cancellation immediately after acquisition and failure during context

@@ -95,7 +95,7 @@ racing duplicate `:create` fails with `:eacl/relationship-conflict` instead
 of committing a redundant datom (CLJ and CLJS alike). `:touch` stays
 idempotent.
 
-#For application-owned IDs, follow the [backend quickstart](../../README.md#datascript-quickstart). The deletion example below assumes that `:app/id` setup.
+For application-owned IDs, follow the [backend quickstart](../../README.md#datascript-quickstart). The deletion example below assumes that `:app/id` setup.
 
 ## Optional atomic entity retraction
 
@@ -148,20 +148,20 @@ Maven consumers install no formal tools.
 ## Relationship storage 8
 
 This adapter uses five-slot endpoint pairs with a trailing nullable
-`qualifier-eid`. V8 supports
-[Caveats and expiring Relationships](../../docs/caveats.md) ; older readers must be drained first. In
-ClojureScript, named Caveats need the optional [portable evaluator](../eacl-caveats-portable/README.md);
-expiration alone needs none. Upgrades are explicit
-and restartable, and client construction requires a completed target store.
-Follow the [7-to-8 operator guide](../../docs/relationship-storage-v7-to-v8.md) before
-starting clients, then the v8 serving rollout guide before qualified writes.
+`qualifier-eid` that references a relationship's [Caveat or expiry](../../docs/caveats.md).
+In ClojureScript, named Caveats need the optional [portable evaluator](../eacl-caveats-portable/README.md);
+expiration alone needs none. Client construction requires completed storage 8;
+to upgrade older storage, see
+[Upgrading an existing database](../../docs/index.md#upgrading-an-existing-database).
+Complete the [serving rollout](../../docs/caveats.md#coordinated-rollout-and-rollback)
+before writing qualified relationships.
 
 The adapter's `create-conn` helper explicitly bootstraps fresh stores.
 
-## Live security keys (v8)
+## Live security keys
 
 `make-client` accepts `:security-keyring-controller` and an optional independent
-`:zed-token-keyring-controller`. Static key options remain supported. All
+`:zed-token-keyring-controller`. Static key options are also supported. All
 controllers use the backend-neutral `eacl.core` add/activate/retire/status APIs;
 updates change token acceptance without changing database or authorization
 identity. Authenticated cache export/restore is available through this module's

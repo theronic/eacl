@@ -106,10 +106,20 @@ Start a REPL in that directory with `clojure -M`, then evaluate:
 (eacl/can? acl alice :view report) ; true
 (eacl/can? acl bob :view report)   ; false
 
-(mapv :id (:data (eacl/lookup-resources acl
-                   {:subject alice :permission :view :resource/type :document :first 10})))
-;; => ["report"]
+;; Lookups return one page of results at a time.
+(eacl/lookup-resources acl
+  {:subject alice :permission :view :resource/type :document :first 10})
+;; => {:data        [#eacl.core.SpiceObject{:type :document, :id "report", :relation nil}]
+;;     :page-info   {:start-cursor       "eacl_c7_..."
+;;                   :end-cursor         "eacl_c7_..."
+;;                   :has-next-page?     false
+;;                   :has-previous-page? false}
+;;     :cached?     false
+;;     :cache-basis {:database-id "...", :basis-t 1016}}
 ```
+
+To fetch the next page, pass `:end-cursor` as `:after`; see
+[Example Queries](#example-queries).
 
 Give each user and document a unique, stable ID owned by your application.
 This example uses `:app/id`; you do not need to put application IDs in EACL's
@@ -136,7 +146,7 @@ the entity. See [safe deletion](#deleting-a-secured-entity).
 - [Run the complete consumer checks](docs/examples/datomic-consumer/).
 - [Combine application data and relationships in one transaction](docs/atomic-writes.md).
 - [Set an expiration date on a share](docs/caveats.md#expiring-access).
-- [Upgrade an existing application](docs/v8-backend-modules-and-upgrade.md#upgrading-an-application).
+- [Upgrade an existing database](docs/index.md#upgrading-an-existing-database).
 - [Datahike quickstart](#datahike-quickstart) or [DataScript quickstart](#datascript-quickstart).
 
 ## Supported Backends
@@ -359,7 +369,9 @@ Without `:count-limit`, `:limit` is `-1` and the count operation exhausts the
 result set. Pass `:count-limit n` to bound work. The result then includes
 `:truncated?`; `true` means at least one additional result exists.
 
-Note: the default `:limit` will soon change to 50k instead of -1 (infinite), because high count-limits can exhaust Peers and trigger costly I/O from storage, esp. in recursive schemas.
+Counts have no default bound. Pass `:count-limit` for recursive schemas and
+other large result sets: an exhaustive count visits every result, so its Peer
+memory and storage I/O grow with the result set.
 
 ## Snapshots
 
@@ -582,7 +594,11 @@ Unsupported modes by backend will return an error. Refer [Consistency and ZedTok
 
 EACL co-exists with your data in Datomic, Datahike, DataScript, or Datalevin. As a result, EACL installs and maintains some attributes in your data store, all of which are prefixed by `:eacl*`.
 
-Presently, EACL Relationships are stored in history to support auditability, `d/as-of` & `at-exact-snapshot` semantics, but in a future version of EACL, history could be optional to save on storage, but then you lose time travel & auditability. For many applications that only care about permissions as-of "now", this would be acceptable.
+EACL Relationships are ordinary datoms, so their history is the backend's.
+Datomic and history-enabled Datahike (the `eacl.datahike.core/create-conn`
+default) keep past states for audits, `d/as-of` and `at-exact-snapshot` reads;
+DataScript and Datalevin do not support historical reads. See
+[backend capabilities](docs/v8-backend-modules-and-upgrade.md#consistency-matrix).
 
 The EACL-specific attributes are detailed below.
 
@@ -756,7 +772,7 @@ mandatory lifecycle/watermark inputs, write-policy boundary, and publication
 status are documented in the [`eacl-datalevin` module
 README](modules/eacl-datalevin/README.md). Backend authors should also read the
 [adapter boundary](docs/v8-backend-adapter-boundary.md) and [basis-source
-migration guide](docs/v8-snapshot-provider-migration.md).
+guide](docs/v8-snapshot-provider-migration.md).
 
 ### Schema & Relationships
 
@@ -806,7 +822,7 @@ binds more tightly than `-`; repeated exclusion associates from the left.
 
 ```clojure
 (eacl/write-relationships! acl updates)
-=> {:zed/token "eacl_z4_..."}
+=> {:zed/token "eacl_z5_..."}
 ```
 where `updates` is a collection of `RelationshipUpdate` records:
   - `(eacl/->RelationshipUpdate operation relationship)`,
@@ -834,7 +850,7 @@ Relationship Conflicts?
 - `delete-relationships!` also accepts a `read-relationships` page containing
   sequential `:data`; one bare `Relationship` map/record is rejected so a
   revocation cannot silently become a no-op.
-- `(eacl/delete-object! acl object) => {:zed/token "eacl_z4_...", :retracted-datoms n}` is a convenience helper that removes every relationship touching `object`, in both directions. `n` counts relationship datoms actually retracted by the committed transactions. On Datomic the retractions are committed in batches of 1,000 (a concurrent reader can observe a partially deleted object between batches); on DataScript and Datahike they are one atomic transaction. Consumers are expected to delete relationships before retracting a secured entity — see [Deleting a Secured Entity](#deleting-a-secured-entity).
+- `(eacl/delete-object! acl object) => {:zed/token "eacl_z5_...", :retracted-datoms n}` is a convenience helper that removes every relationship touching `object`, in both directions. `n` counts relationship datoms actually retracted by the committed transactions. On Datomic the retractions are committed in batches of 1,000 (a concurrent reader can observe a partially deleted object between batches); on DataScript and Datahike they are one atomic transaction. Consumers are expected to delete relationships before retracting a secured entity — see [Deleting a Secured Entity](#deleting-a-secured-entity).
 - `delete-object!` rejects malformed objects, including a missing or nil ID,
   rather than returning a successful zero-retraction cleanup response.
 - `(eacl/delete-object-by-eid! acl native-eid)` is the explicit ghost-repair form for an entity whose public identity has already been retracted. Numeric IDs passed to `delete-object!` remain public IDs and are never reinterpreted as backend entity IDs.
@@ -914,12 +930,9 @@ All schema changes must use `eacl/write-schema!`. If an application changes
 the authorization schema directly, follow the recovery procedure in
 [Caching](#caching) before resuming authorization traffic.
 
-Datomic and Datahike consumers upgrading a released v7 database must run the
-backend's explicit permission-only v7-to-v8 migration, followed by the
-[Relationship storage 7-to-8 migration](docs/relationship-storage-v7-to-v8.md), before
-constructing an ordinary v8 client. Permission storage remains version 8.
-Storage 8 uses a nullable qualifier reference in slot five for Caveats and
-expiring Relationships.
+To upgrade a database written by an earlier EACL version, follow
+[Upgrading an existing database](docs/index.md#upgrading-an-existing-database)
+before constructing a client.
 
 ### Permission-tree expansion
 
@@ -932,7 +945,7 @@ Expansion accepts exactly `:resource`, `:permission`, and the optional `:consist
                               :consistency eacl.spicedb.consistency/fully-consistent
                               :timeout-ms  5000})
 =>
-{:expanded-at                                          "eacl_z4_..."
+{:expanded-at                                          "eacl_z5_..."
  :tree-root
  {:expanded-object                                    {:type :document :id "readme"}
   :expanded-relation                                  :view

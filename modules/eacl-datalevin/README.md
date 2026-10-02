@@ -41,7 +41,7 @@ dependency until the release and clean remote-consumer gates pass.
 
 Construction requires externally retained lifecycle, signing material, and
 revision state. Omitting an explicit signing key, keyring, or live controller
-or supplying a nil, legacy, or reserved initial lifecycle fails construction; the shared development key is
+or supplying a nil, non-UUID, or reserved initial lifecycle fails construction; the shared development key is
 never used by this module:
 
 ```clojure
@@ -62,8 +62,9 @@ never used by this module:
                :maximum-snapshot-retention-ms          30000}))
 ```
 
-`:datalevin-topology` was removed. Advisory declarations cannot establish
-writer exclusivity. Construction instead checks executable fork capabilities,
+Advisory topology declarations cannot establish writer exclusivity, so there
+is no `:datalevin-topology` option; construction rejects it as an unknown key.
+Construction checks executable fork capabilities,
 the actual embedded environment, WAL/HA state, and LMDB flags. `:nolock`,
 `:nosync`, `:nometasync`, `:mapasync`, and `:writemap` are rejected.
 
@@ -147,28 +148,21 @@ configurations. The trusted boundary requires this maintained fork for every
 Datalog writer. Raw KV writes to Datalevin's datom/meta DBIs, direct file
 mutation, or opening the directory with upstream Datalevin are outside it.
 
-## Removed (2026-09-02)
-
-- `eacl.datalevin.impl/{find-one-relationship-id,orphaned-relationship-halves,Relation,Permission,Relationship}`,
-  `eacl.datalevin.db/entity-exists?` and the
-  `eacl.datalevin.schema/validate-schema-references` alias — unreferenced
-  since the module's integrity namespace was retired.
-
 ## Relationship storage 8
 
 This adapter uses five-slot endpoint pairs with a trailing nullable
-`qualifier-eid`. V8 supports
-[Caveats and expiring Relationships](../../docs/caveats.md) ; older readers must be drained first. Upgrades are explicit
-and restartable, and client construction requires a completed target store.
-Follow the [7-to-8 operator guide](../../docs/relationship-storage-v7-to-v8.md) before
-starting clients, then the v8 serving rollout guide before qualified writes.
+`qualifier-eid` that references a relationship's [Caveat or expiry](../../docs/caveats.md).
+Client construction requires completed storage 8; to upgrade older storage,
+see [Upgrading an existing database](../../docs/index.md#upgrading-an-existing-database).
+Complete the [serving rollout](../../docs/caveats.md#coordinated-rollout-and-rollback)
+before writing qualified relationships.
 
 The adapter's `create-conn` helper explicitly bootstraps fresh stores.
 
-## Live security keys (v8)
+## Live security keys
 
 `make-client` accepts `:security-keyring-controller` and an optional independent
-`:zed-token-keyring-controller`. Static key options remain supported. All
+`:zed-token-keyring-controller`. Static key options are also supported. All
 controllers use the backend-neutral `eacl.core` add/activate/retire/status APIs;
 updates change token acceptance without changing database or authorization
 identity. Authenticated cache export/restore is available through this module's

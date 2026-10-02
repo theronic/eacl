@@ -28,7 +28,7 @@ production runtime floor. CLJS/DataScript uses the separate theronic
 
 Build this module in isolation with `clojure -T:build jar`. Git and
 `:local/root` consumers must first follow the explicitly opt-in
-[source preparation instructions](../../README.md#source-dependencies-and-formal-tooling).
+[source preparation instructions](../../README.md#development-from-source).
 Maven consumers neither install formal tools nor run verification.
 
 ## Backend contract
@@ -47,7 +47,7 @@ The contract uses logical types and identifiers. Datoms, attribute ids,
 database values, and raw index tuples stay inside each adapter. See the
 [v8 adapter boundary](../../docs/v8-backend-adapter-boundary.md) for the full
 inventory and the
-[basis-source migration guide](../../docs/v8-snapshot-provider-migration.md)
+[basis-source guide](../../docs/v8-snapshot-provider-migration.md)
 for owned/borrowed lifecycle and third-party adapter requirements.
 
 The shared contract fixture is
@@ -116,14 +116,3 @@ context while the Snapshot's backend selection facts remain fixed.
 
 Application-facing module selection lives in the
 [backend guide](../../docs/v8-backend-modules-and-upgrade.md).
-
-## Removed (2026-09-02)
-
-Unreferenced vars removed from the core module: `eacl.client.orchestration/can?`
-(use `eacl.core/can?`), `eacl.engine.physical/telemetry` (the finished reducer
-state carries every counter), `eacl.engine.sealed-plan/local-read-cost` (read
-`rank-contract`), `eacl.operator.recursive/check-eids` (use
-`check-cached-eids`), `eacl.relationships.endpoint-pair/half-identity`,
-`eacl.authorization.batch/root-key`,
-`eacl.schema.expression-policy/compatibility-digest` and
-`eacl.schema.expression-resolver/resolve-definitions`.

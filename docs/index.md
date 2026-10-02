@@ -60,10 +60,31 @@ retraction, or explicitly install/use the backend's optional
 - [Consistency and cache operations](v8-consistency-cache-operations.md)
 - [Backend modules and capabilities](v8-backend-modules-and-upgrade.md)
 - [Backend adapter contract](v8-backend-adapter-boundary.md)
-- [Basis-source migration](v8-snapshot-provider-migration.md)
+- [Backend basis sources](v8-snapshot-provider-migration.md)
 - [Answer cache and subproblem store](v8-subproblem-cache.md)
 - [Formal assurance boundary](formal-verification.md)
-- [Audit reports](reports/) — dated records; the 2026-08-15 stable-engine audit lists open bugs and optimizations
+
+## Upgrading an existing database
+
+A new database needs none of these steps; follow the
+[quickstart](../README.md#quickstart). To upgrade a database written by an
+earlier EACL version, back it up, rehearse on a copy, and keep authorization
+readers and writers stopped until every step that applies is complete. Run
+the steps in this order:
+
+1. [v6 to v7 relationships](migration-v6-to-v7.md): Datomic databases that
+   still store v6 relationship entities.
+2. [v7 to v8 permissions](migration-v7-to-v8.md): Datomic or Datahike
+   databases with released v7 flat permission rows.
+3. [Relationship storage 7 to 8](relationship-storage-v7-to-v8.md): every
+   database with storage-7 relationships, on any backend, including one that
+   step 1 converted. Complete it before starting v8 clients.
+
+Client construction never migrates data: it rejects storage that still needs
+one of these steps. Then check dependencies and configuration with the
+[application upgrade checklist](v8-backend-modules-and-upgrade.md#upgrading-an-application),
+and follow the [serving rollout](caveats.md#coordinated-rollout-and-rollback)
+before writing expiring or conditional relationships.
 
 ## Licence
 
