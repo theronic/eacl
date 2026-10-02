@@ -308,7 +308,7 @@ required.
 
 ## Cursor redesign
 
-Portable cursor payloads are v12 inside the compact `eacl_c5_` authenticated
+Portable cursor payloads are v14 Relay envelopes inside the compact `eacl_c7_` authenticated
 and encrypted frame. Cursors bind the backend/source, operation, complete semantic query
 (including principal and consistency), result kind, semantic/configuration
 identity, source lifecycle, native revision, and exact snapshot locator. Relay window size and
@@ -317,10 +317,11 @@ backward navigation.
 
 Cursor expiry is off by default on every backend. A positive
 `:cursor-ttl-seconds` adds explicit policy expiry; answer, navigation, and
-checkpoint eviction only trigger deterministic replay. The v12 query-scope
+checkpoint eviction only trigger deterministic replay. The query-scope
 digest excludes mutable current schema proof so a changed schema can reach
-proof comparison and exact fallback. v11 decoding remains supported for
-compatible existing envelopes.
+proof comparison and exact fallback. Cursors in the older `eacl_c1_` to
+`eacl_c6_` frames fail with `:eacl.pagination/cursor-upgrade-required`;
+request a fresh first page.
 
 - Every permission lookup page uses one boundary cursor bound to the sealed
   plan's composite fingerprint; order ABI v2 selects the boundary kind per
@@ -368,7 +369,7 @@ compatible existing envelopes.
 - Portable cursors use AES-256-CTR with a random 96-bit nonce and
   encrypt-then-HMAC-SHA-256 under independently domain-derived keys. The key
   id, nonce, and ciphertext are authenticated before the payload is decrypted
-  or parsed. Datomic retains its compact AES-GCM codec. Rotate either kind of
+  or parsed. Every backend client, Datomic included, uses this codec. Rotate the
   authenticated-encryption key before 2^32 cursor encryptions. At high cursor
   volume plan key rotation accordingly (`:security-keyring` supports staged
   rotation); EACL does not count invocations for you. Default non-expiring
