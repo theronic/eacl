@@ -756,7 +756,7 @@ mandatory lifecycle/watermark inputs, write-policy boundary, and publication
 status are documented in the [`eacl-datalevin` module
 README](modules/eacl-datalevin/README.md). Backend authors should also read the
 [adapter boundary](docs/v8-backend-adapter-boundary.md) and [basis-source
-migration guide](docs/v8-snapshot-provider-migration.md).
+guide](docs/v8-snapshot-provider-migration.md).
 
 ### Schema & Relationships
 

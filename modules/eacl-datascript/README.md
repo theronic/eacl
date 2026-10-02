@@ -95,7 +95,7 @@ racing duplicate `:create` fails with `:eacl/relationship-conflict` instead
 of committing a redundant datom (CLJ and CLJS alike). `:touch` stays
 idempotent.
 
-#For application-owned IDs, follow the [backend quickstart](../../README.md#datascript-quickstart). The deletion example below assumes that `:app/id` setup.
+For application-owned IDs, follow the [backend quickstart](../../README.md#datascript-quickstart). The deletion example below assumes that `:app/id` setup.
 
 ## Optional atomic entity retraction
 
@@ -158,10 +158,10 @@ starting clients, then the v8 serving rollout guide before qualified writes.
 
 The adapter's `create-conn` helper explicitly bootstraps fresh stores.
 
-## Live security keys (v8)
+## Live security keys
 
 `make-client` accepts `:security-keyring-controller` and an optional independent
-`:zed-token-keyring-controller`. Static key options remain supported. All
+`:zed-token-keyring-controller`. Static key options are also supported. All
 controllers use the backend-neutral `eacl.core` add/activate/retire/status APIs;
 updates change token acceptance without changing database or authorization
 identity. Authenticated cache export/restore is available through this module's

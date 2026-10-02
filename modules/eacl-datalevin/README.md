@@ -41,7 +41,7 @@ dependency until the release and clean remote-consumer gates pass.
 
 Construction requires externally retained lifecycle, signing material, and
 revision state. Omitting an explicit signing key, keyring, or live controller
-or supplying a nil, legacy, or reserved initial lifecycle fails construction; the shared development key is
+or supplying a nil, non-UUID, or reserved initial lifecycle fails construction; the shared development key is
 never used by this module:
 
 ```clojure
@@ -62,8 +62,9 @@ never used by this module:
                :maximum-snapshot-retention-ms          30000}))
 ```
 
-`:datalevin-topology` was removed. Advisory declarations cannot establish
-writer exclusivity. Construction instead checks executable fork capabilities,
+Advisory topology declarations cannot establish writer exclusivity, so there
+is no `:datalevin-topology` option; construction rejects it as an unknown key.
+Construction checks executable fork capabilities,
 the actual embedded environment, WAL/HA state, and LMDB flags. `:nolock`,
 `:nosync`, `:nometasync`, `:mapasync`, and `:writemap` are rejected.
 
@@ -165,10 +166,10 @@ starting clients, then the v8 serving rollout guide before qualified writes.
 
 The adapter's `create-conn` helper explicitly bootstraps fresh stores.
 
-## Live security keys (v8)
+## Live security keys
 
 `make-client` accepts `:security-keyring-controller` and an optional independent
-`:zed-token-keyring-controller`. Static key options remain supported. All
+`:zed-token-keyring-controller`. Static key options are also supported. All
 controllers use the backend-neutral `eacl.core` add/activate/retire/status APIs;
 updates change token acceptance without changing database or authorization
 identity. Authenticated cache export/restore is available through this module's

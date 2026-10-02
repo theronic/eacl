@@ -28,7 +28,7 @@ production runtime floor. CLJS/DataScript uses the separate theronic
 
 Build this module in isolation with `clojure -T:build jar`. Git and
 `:local/root` consumers must first follow the explicitly opt-in
-[source preparation instructions](../../README.md#source-dependencies-and-formal-tooling).
+[source preparation instructions](../../README.md#development-from-source).
 Maven consumers neither install formal tools nor run verification.
 
 ## Backend contract
@@ -47,7 +47,7 @@ The contract uses logical types and identifiers. Datoms, attribute ids,
 database values, and raw index tuples stay inside each adapter. See the
 [v8 adapter boundary](../../docs/v8-backend-adapter-boundary.md) for the full
 inventory and the
-[basis-source migration guide](../../docs/v8-snapshot-provider-migration.md)
+[basis-source guide](../../docs/v8-snapshot-provider-migration.md)
 for owned/borrowed lifecycle and third-party adapter requirements.
 
 The shared contract fixture is

@@ -7,21 +7,20 @@ customer's policy intent. The current release manifest reports
 `:conditionally-verified`: production routing, cross-adapter campaigns, and
 performance gates pass, while mechanized host, cache, ClojureScript, and
 backend-adapter source refinements remain open. Independent review is deferred
-to a later external-certification stage. Two verified bodies now coexist.
+to a later external-certification stage. Two verified bodies coexist.
 Enumeration, point checks, and counts run on the hand-written CLJC
 stable-discovery engine (`eacl.engine.sealed-plan`, `stable-reducer`,
 `stable-page`, `stable-route`) on both targets; its evidence is the
 release-assurance tree under `formal/stable-discovery/` (the Dafny leaves, two
 TLC families, executable refinement bridges, mutation controls; see
 [docs/stable-discovery-engine.md](stable-discovery-engine.md)). The generated
-Dafny kernel remains the production authority for the remaining pure decisions
+Dafny kernel is the production authority for the remaining pure decisions
 that surround the engine — consistency planning, cursor continuation, and
 page-request normalization — through `eacl.verified-kernel`
 on the JVM and its portable CLJC decision twin on ClojureScript, differentially
 certified against the generated JavaScript oracle. The generated JavaScript
 adapter is formal-smoke-only and no runtime option can select an alternate
-engine. The former generated current-cache availability decision has been
-deleted; cache storage is modeled as an ordinary partial map and cannot define
+engine. Cache storage is modeled as an ordinary partial map and cannot define
 an authorization result. Browser answers are advisory and deployments must re-check
 authorization on the server.
 
@@ -105,12 +104,12 @@ starts no test JVM and only evaluates a supplied form in an existing server.
 | `formal/stable-discovery/*.dfy` | the shipped enumeration engine: grounding of the four rule forms, sealed vector order and read-rank certificate, the width-one reducer (soundness, completeness, exact uniqueness, history-free erasure, atomic admission), one-value scan normalization, bounded buffers, edge pagination, checkpoints, count composition, the membership-probe point check, and the adaptive reducer read-scope bridge; `AtomicAttempt.tla`/`ProgressCheckpoint.tla` bound the attempt/checkpoint histories (`formal/stable-discovery/verify-fast.sh`, 651 obligations), the exact scan-response cache (a served chunk equals the adapter's chunk for the same bound and limit; contiguous extension keeps a prefix of the scan), and range answer reuse (any window inside a retained page segment is the page from that boundary; a window past a segment is the segment's tail plus its continuation) |
 | `Semantics.dfy` | typed rules, normalization, monotone consequence, finite least fixed point |
 | `SnapshotOracle.dfy` | abstract immutable adapter contract |
-| `AcyclicEngine.dfy` | **retired engine model** (path compilation, direct checks, acyclic projections and counts); kept as a regression model until task 9.2's formal cut |
-| `RecursiveEngine.dfy` | **retired engine model** (typed SCC routing, recursive worklists, continuation replay); same disposition |
-| `OrderedMerge.dfy` | **retired** ordered union and uniqueness of the entity-ID merge; same disposition |
+| `AcyclicEngine.dfy` | **regression model** of the replaced acyclic engine (path compilation, direct checks, acyclic projections and counts) |
+| `RecursiveEngine.dfy` | **regression model** of the replaced recursive engine (typed SCC routing, recursive worklists, continuation replay) |
+| `OrderedMerge.dfy` | **regression model** of the replaced entity-ID merge (ordered union and uniqueness) |
 | `PageWindow.dfy` | total page normalization, windows, keyset page decisions, cursor continuation decisions (live decisions) |
-| `IndexedBatching.dfy` | **retired** bounded ordered scan waves and crossing law of the generated indexed traversal; same disposition |
-| `IndexedBatchCompleteness.dfy` | **retired** proof-only pending-scan ghost views; same disposition |
+| `IndexedBatching.dfy` | **regression model** of the replaced generated indexed traversal (bounded ordered scan waves and crossing law) |
+| `IndexedBatchCompleteness.dfy` | **regression model** of the same traversal (proof-only pending-scan ghost views) |
 | `CurrentCache.dfy` | exact-basis/managed admission, complete exact identity including backend snapshot/cache-basis equality, lifecycle isolation, scalar stamps, least-fixed-point dependency frame, selected-basis rendering |
 | `NativeGenerationCoherence.dfy` | forward native-generation frame, empty dependencies, stale endpoint exclusion, component cleanup/stamping, and lifecycle isolation |
 | `ScalarFrontierCoherence.dfy` | globally ordered native generations, full canonical dependency-generation identity, derived scalar-frontier soundness, complete proof frames, demand identity, and completed-only publication, and the singleton dependency frontier (one relation's generation) that scopes the shared scan-response cache |
@@ -365,7 +364,7 @@ the generated provider, retained materialized oracle, and independent
 reference implementations against the same fixtures without adding a
 production rollback branch.
 
-The same boundary now converts complete materialized schema IR, objects,
+The same boundary converts complete materialized schema IR, objects,
 relationships, traversal limits, all five authorization request variants, and
 typed results to generated Java and JavaScript. This is the executable
 cache-free semantic reference used by differential tests. Its completed
@@ -388,7 +387,7 @@ arrow empty/singleton/wide selection. Dafny
 proves their Boolean/set behavior and named logical bounds; generated
 Java/JavaScript compare the exact source-control results and traces with
 CLJ/CLJS. EACL-FORMAL-042 records the resulting production fix: an empty arrow
-now returns false before direct-grant/intersection setup. These submodels do not
+returns false before direct-grant/intersection setup. These submodels do not
 prove path materialization, nested callback meaning, storage-engine seek cost,
 Clojure language semantics, allocation, retained heap, or wall time.
 
@@ -420,12 +419,12 @@ resume equals the enumeration suffix and that descending windows agree
 with ascending positions — the theorems behind self-contained keyset
 cursors with no checkpoint state and no replay; `eacl.engine.point-check-test` is the executable
 oracle differential against the retained reverse-enumeration form
-(`enumeration-check-eids`). EACL-FORMAL-055 retains the historical
-subject-forward scaling regression of the retired generated state machine as
-a replayed counterexample against the stable engine.
+(`enumeration-check-eids`). EACL-FORMAL-055 replays the subject-forward
+scaling regression found in the replaced generated state machine as a
+counterexample against the stable engine.
 
-Permission-path materialization now has its own source-shaped boundary rather
-than being assumed by the arrow theorem. Dafny models expansion of typed
+Permission-path materialization has its own source-shaped boundary; the arrow
+theorem does not assume it. Dafny models expansion of typed
 relation definitions into direct, alias, arrow-relation, and arrow-permission
 paths, missing-definition behavior, static cost ranking, subject-type filtering
 for direct grants, and the exact meaning of `:exhaustive?`. Generated Java and
@@ -445,16 +444,14 @@ CLJ/CLJS value, realized-path count, per-kind callback counts, and ordered
 vectors and the meaning of nested callback results remain separate refinement
 obligations.
 
-There is no longer a routing decision between an acyclic and a recursive
-engine: every permission root compiles to one sealed plan whose
-`:recursive?` flag (Kahn's peel over the permission-dependency edges) only
-governs the bare-`:last` complete-evaluation guard. `AcyclicEngine.dfy`,
+Every permission root compiles to one sealed plan, so there is no routing
+decision between an acyclic and a recursive engine. The plan's `:recursive?`
+flag (Kahn's peel over the permission-dependency edges) only governs the
+bare-`:last` complete-evaluation guard. `AcyclicEngine.dfy`,
 `RecursiveEngine.dfy`, `OrderedMerge.dfy`, `RoutingCertificate.dfy` and the
-`Indexed*` leaves under `formal/dafny/` model the retired engines; they still
-verify on CI as historical regression models until the remaining formal cut
-recorded in `openspec/changes/adopt-stable-discovery-enumeration/tasks.md`
-(task 9.2) removes them and re-pins the manifest. EACL-FORMAL-030 retains the
-same-permission-name counterexample.
+`Indexed*` leaves under `formal/dafny/` model the engines that the sealed plan
+replaced. CI verifies them as regression models with every other Dafny file.
+EACL-FORMAL-030 replays the same-permission-name counterexample.
 
 Materializing an entire database remains unacceptable on large EACL graphs.
 Production therefore drives certified ordered adapter scans one value at a
