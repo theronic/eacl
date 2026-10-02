@@ -85,6 +85,7 @@
             [eacl.engine.leveled-membership-refinement-test]
             [eacl.engine.guarded-membership-refinement-test]
             [eacl.engine.operand-order-refinement-test]
+            [eacl.engine.plain-witness-refinement-test]
             [eacl.operator.recursive-intersection-differential-test]
             [eacl.relationships.endpoint-pair-test]
             [eacl.relationships.edge-test]
@@ -220,6 +221,7 @@
                'eacl.engine.leveled-membership-refinement-test
                'eacl.engine.guarded-membership-refinement-test
                'eacl.engine.operand-order-refinement-test
+               'eacl.engine.plain-witness-refinement-test
                'eacl.operator.recursive-intersection-differential-test
                'eacl.relationships.endpoint-pair-test
                'eacl.relationships.edge-test

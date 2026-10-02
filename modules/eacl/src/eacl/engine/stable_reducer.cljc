@@ -55,7 +55,8 @@
   [:adapter :fetch-fn :plan :subject-type :cut-point!
    :physical-chunk-size :sidecar-cap :result-sink :result-window-size
    :max-admissions :max-commands :max-transitions :max-values :max-stack
-   :qualification :candidate-evidence-fn :result-policy :max-evidence-size])
+   :qualification :candidate-evidence-fn :result-policy :max-evidence-size
+   :plain-paths?])
 
 (defrecord ^:private ReducerState
            [stack admitted admissions transitions commands fetched-values fetch-fn
@@ -63,7 +64,8 @@
             current-sidecar-values sidecar-cap physical-chunk-size
             max-admissions max-commands max-transitions max-values max-stack
             maximum-sidecar-buffers maximum-sidecar-values maximum-stack discovered
-            base-discovered result-sink result-window-size result-index results qualified])
+            base-discovered result-sink result-window-size result-index results qualified
+            qualified-discoveries])
 
 (defn- replace-state
   "Constructs one immutable reducer-state revision. Keeping the mutable fields
@@ -87,7 +89,7 @@
    maximum-sidecar-buffers maximum-sidecar-values maximum-stack discovered
    (.-base_discovered state)
    (.-result_sink state) (.-result_window_size state) result-index results
-   (.-qualified state)))
+   (.-qualified state) (.-qualified_discoveries state)))
 
 (defn- schedule-state
   [^ReducerState state stack admitted admissions maximum-stack]
@@ -582,7 +584,8 @@
         [state value (when (or (< next-index (count (:values entry))) more?)
                        (assoc item :bound-eid (edge/endpoint value)))])
       (let [descriptor (cond-> (or descriptor (item-scan-descriptor item))
-                         (:qualified state) (assoc :include-qualifier? true))
+                         (or (:qualified state) (:qualified-discoveries state))
+                         (assoc :include-qualifier? true))
             [state values more?] (fetch-values state descriptor
                                                (:bound-eid item))]
         (if (zero? (count values))
@@ -721,6 +724,46 @@
     {:kind :reverse-subject :subject-type (:target-subject-type rule)
      :subject-eid eid}))
 
+;; ---------------------------------------------------------------------------
+;; First-discovery plainness
+;; ---------------------------------------------------------------------------
+;;
+;; A run that tracks plain paths (`:plain-paths?`, unqualified runs only) reads
+;; each scan value with its qualifier slot and marks every work item whose
+;; first-discovery path crossed a qualified edge. An unmarked emitted result
+;; was first discovered through ordinary edges only, which hold at every time
+;; and under every context, so it holds the plan's root without an exact
+;; decision (CandidateCover.dfy, `PlainCoverWitnessProvesGeneratorNode`).
+;; Admission is unchanged: the first admission of a work identity keeps its
+;; mark, and a later plain path to it is not admitted.
+
+(defn ^:no-doc qualified-edge?
+  "True when a compact scan value carries a qualifier slot: an expiring or
+  caveated edge. Read from the scan value itself; no qualifier is resolved."
+  [value]
+  (vector? value))
+
+(defn ^:no-doc path-qualified?
+  "True when the first-discovery path of a work item crossed a qualified
+  edge."
+  [item]
+  (true? (:qualified-path? item)))
+
+(defn- along-path
+  "`successor`, reached from `item` across the scan value `value`: marked when
+  the path to `item` or the edge itself is qualified."
+  [item successor value]
+  (if (or (path-qualified? item) (qualified-edge? value))
+    (assoc successor :qualified-path? true)
+    successor))
+
+(defn- inherit-path
+  "Successors that consume a grant at the same entity keep its path."
+  [item successors]
+  (if (path-qualified? item)
+    (map #(assoc % :qualified-path? true) successors)
+    successors))
+
 (defn- scan-transition
   "Releases one value and schedules its successors before the residual."
   [state item descriptor value->successors]
@@ -748,9 +791,17 @@
                                     :resource-eid (if (= :seed-relation (:kind item))
                                                     (edge/endpoint value) (:resource-eid item))})))]
           (schedule-item state residual successor))
+        ;; An unqualified run sees a qualifier slot only when it tracks plain
+        ;; paths; every other scan value is its endpoint. Every successor of a
+        ;; scan value, the seam's included, carries the path across it.
         (if value->successors
-          (schedule state residual (value->successors value))
-          (schedule-item state residual (scan-successor item value)))))))
+          (schedule state residual
+                    (map #(along-path item % value)
+                         (value->successors (edge/endpoint value))))
+          (schedule-item state residual
+                         (along-path item
+                                     (scan-successor item (edge/endpoint value))
+                                     value)))))))
 
 (defn- emit
   [state eid]
@@ -774,9 +825,23 @@
         ;; retained backing vector is therefore always below 2*limit while
         ;; each emission remains amortized constant-time.
         (if (>= index limit)
-          (emission-state state discovered 0
-                          (into [] (drop index results)))
+          (let [retained (into [] (drop index results))
+                marked (:qualified-discoveries state)]
+            ;; Path marks leave with the results they describe.
+            (cond-> (emission-state state discovered 0 retained)
+              (seq marked)
+              (assoc :qualified-discoveries (into #{} (filter marked) retained))))
           (emission-state state discovered index results))))))
+
+(defn- emit-discovery
+  "Emits one result of an unqualified run. A run that tracks plain paths
+  records a result whose first-discovery path crossed a qualified edge."
+  [state item eid]
+  (let [state (emit state eid)
+        marked (:qualified-discoveries state)]
+    (if (and (some? marked) (:qualified-path? item))
+      (assoc state :qualified-discoveries (conj marked eid))
+      state)))
 
 (defn- grant-successor
   [consumer eid]
@@ -815,7 +880,7 @@
   (if (and (true? (:evidence item true)) (nil? (:revision item))
            (or (not= :window (:result-sink state))
                (empty? (get-in state [:qualified :result-evidence]))))
-    (emit state eid)
+    (emit-discovery state item eid)
     (if-let [qualified (:qualified state)]
       (if (contains? (:processed qualified) eid)
         state
@@ -842,7 +907,9 @@
               qualified (if include? (stage-result-evidence state qualified eid value) qualified)
               state (if include? (emit state eid) state)]
           (assoc state :qualified qualified)))
-      (emit state eid))))
+      ;; An unqualified run never reaches here with evidence or a revision;
+      ;; if one did, its path mark would still follow the result.
+      (emit-discovery state item eid))))
 
 (defn- grant-successors
   "Consumers of a grant at `node` for entity `eid`: self-permission
@@ -914,7 +981,9 @@
             eid (:resource-eid item)
             state (cond-> state
                     (= node root) (emit-qualified item eid))]
-        (schedule state nil (inherit-evidence item (grant-successors plan node eid))))
+        (schedule state nil
+                  (inherit-path item
+                                (inherit-evidence item (grant-successors plan node eid)))))
 
       :consumer
       (scan-transition state item nil nil)
@@ -922,9 +991,10 @@
       ;; ---- reverse ----
       :reverse-goal
       (schedule state nil
-                (inherit-evidence item
-                                  (reverse-goal-work plan subject-type (:node rule)
-                                                     (:resource-eid item))))
+                (inherit-path item
+                              (inherit-evidence item
+                                                (reverse-goal-work plan subject-type (:node rule)
+                                                                   (:resource-eid item)))))
 
       :reverse-direct
       (scan-transition state item nil nil)
@@ -952,7 +1022,7 @@
   their transition commits."
   [{:keys [adapter fetch-fn physical-chunk-size sidecar-cap result-sink
            qualification candidate-evidence-fn result-policy max-evidence-size
-           result-window-size
+           result-window-size plain-paths?
            max-admissions max-commands max-transitions
            max-values max-stack]
     :or {physical-chunk-size default-physical-chunk-size
@@ -1008,6 +1078,9 @@
                   :weights {} :weight-size 0 :max-evidence-size max-evidence-size
                   :pending {} :processed #{} :conditional-count 0
                   :result-evidence {} :result-size 0})
+    ;; A qualified run carries each path's evidence instead: it never claims
+    ;; a plain path, so its results stay unmarked and its set stays nil.
+    :qualified-discoveries (when (and plain-paths? (nil? qualification)) #{})
     :results (case result-sink
                :collect (transient [])
                :window []
@@ -1064,6 +1137,10 @@
                        :completed (- (count admitted)
                                      (count (:stack state))))
                 (dissoc :fetch-fn))
+      ;; Only this run's delivered results keep a path mark.
+      (seq (:qualified-discoveries state))
+      (assoc :qualified-discoveries
+             (into #{} (filter (:qualified-discoveries state)) results))
       (:qualified state)
       (assoc :result-evidence (select-keys (get-in state [:qualified :result-evidence]) results)
              :definite-count (- (:discovered state) (get-in state [:qualified :conditional-count]))

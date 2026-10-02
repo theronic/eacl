@@ -51,6 +51,11 @@
             "check, denied, 64-deep folder chain"
             "check, denied, typical document"
             "check, denied through the group tree"
+            "first page of 50, broad subject"
+            "first page of 50, narrow subject"
+            "lookup-subjects, first 50"
+            "count, broad subject"
+            "count, narrow subject"
             "count, narrow subject, limit 1"}
    :work #{:direct-grant-commands}})
 

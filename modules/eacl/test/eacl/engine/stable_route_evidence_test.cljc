@@ -152,3 +152,60 @@
     (is (= 110 (evidence/valid-until (:answer result))))
     (is (evidence/complete? (:answer result)))
     (is (< (count (:commands result)) 50))))
+
+(deftest holdings-are-read-in-proportion-to-the-probes-they-replace
+  ;; Subject 1 holds relation 10 on forty documents, 100 to 139.
+  (let [held (vec (range 100 140))
+        scans (atom [])
+        fetch (fn [{:keys [bound-eid limit]}]
+                (swap! scans conj [bound-eid limit])
+                (into [] (comp (filter #(or (nil? bound-eid) (> % bound-eid))) (take limit)) held))
+        options {:fetch-fn fetch :context (route/membership-context)}
+        read #(route/subject-holdings options :user 1 10 :doc %)
+        endpoints #(sort (keys (:edges %)))]
+    (testing "the first scan reads eight edges for each demanded probe"
+      (let [slice (read 2)]
+        (is (= [[nil 16]] @scans))
+        (is (= (subvec held 0 16) (endpoints slice)))
+        (is (false? (:complete? slice)))
+        (is (= 115 (:bound slice)) "a truncated slice holds every edge up to its bound")))
+    (testing "and reads no more until the demand reaches the edges read"
+      (read 13)
+      (read 1)
+      (is (= [[nil 16]] @scans)))
+    (testing "then it reads as many edges again, from the bound, and keeps the earlier ones"
+      (let [slice (read 1)]
+        (is (= [[nil 16] [115 16]] @scans))
+        (is (= (subvec held 0 32) (endpoints slice)))
+        (is (false? (:complete? slice)))
+        (is (= 131 (:bound slice)))))
+    (testing "and twice as many the next time, to the end of the slice"
+      (read 15)
+      (is (= 2 (count @scans)))
+      (let [slice (read 1)]
+        (is (= [[nil 16] [115 16] [131 32]] @scans))
+        (is (= held (endpoints slice)))
+        (is (true? (:complete? slice)))
+        (read 1000)
+        (is (= 3 (count @scans)) "a complete slice is never read again"))))
+  (testing "a read without a demand scans the holding limit once"
+    (let [scans (atom [])
+          fetch (fn [{:keys [bound-eid limit]}]
+                  (swap! scans conj [bound-eid limit])
+                  (vec (range 100 (+ 100 (min limit 300)))))
+          options {:fetch-fn fetch :context (route/membership-context)}
+          slice (route/subject-holdings options :user 1 10 :doc)]
+      (is (= [[nil route/holdings-limit]] @scans))
+      (is (false? (:complete? slice)))
+      (is (= (+ 99 route/holdings-limit) (:bound slice)))
+      (route/subject-holdings options :user 1 10 :doc)
+      (is (= 1 (count @scans)))))
+  (testing "the holding limit bounds the first scan whatever the demand"
+    (with-redefs [route/holdings-limit 4]
+      (let [scans (atom [])
+            fetch (fn [{:keys [bound-eid limit]}]
+                    (swap! scans conj [bound-eid limit])
+                    (vec (range 100 (+ 100 limit))))
+            options {:fetch-fn fetch :context (route/membership-context)}]
+        (route/subject-holdings options :user 1 10 :doc 3)
+        (is (= [[nil 4]] @scans))))))

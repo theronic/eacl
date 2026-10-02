@@ -2646,6 +2646,95 @@ definition doc {
                                      (or (evidence/fault? result) (original op result)))]
                        (operand-fault-control-run)))))))
 
+;;; Plain cover witnesses (design D4). The structural cover of a recursive
+;;; operator lookup marks each candidate whose first-discovery path crossed an
+;;; edge with a qualifier slot; an unmarked candidate holds the generator node
+;;; without an exact decision, and only the other operands are decided. In
+;;; `open = (viewer + parent->view) - banned` user 9's grants are the qualified
+;;; ones below (qualifier 7, expired at the request's time), so no document is
+;;; open. A mark that ignores the qualifier slot takes the expired grant on
+;;; document 20 for a plain one. A mark that the ordinary parent edge clears
+;;; takes document 21, below folder 1, for one. A witness for a generator row
+;;; that only covers its leaf (`cleared = editor & allowed`, covered by its
+;;; anchor) takes a document user 9 edits but is not allowed on.
+
+(def ^:private plain-witness-control-schema
+  "definition user {}
+definition folder {
+  relation parent: folder
+  relation viewer: user
+  permission view = viewer + parent->view
+}
+definition doc {
+  relation parent: folder
+  relation viewer: user
+  relation editor: user
+  relation allowed: user
+  relation banned: user
+  permission open = (viewer + parent->view) - banned
+  permission cleared = editor & allowed
+  permission cleared_open = (parent->view + cleared) - banned
+}")
+
+(defn- plain-witness-control-lookup
+  "User 9's documents under `permission`, with every qualified edge expired.
+  The tuple adapter has no direct-edge probe; the stored compact edges answer
+  the probes of a candidate that is decided exactly."
+  [permission relationships]
+  (let [adapter (operator-probe-adapter plain-witness-control-schema relationships)
+        relation-id (fn [resource-type relation]
+                      (:relation-id (first (backend/invoke adapter :relation-defs
+                                                           resource-type relation))))
+        stored (into {}
+                     (map (fn [[subject-type subject-eid relation resource-type resource-eid
+                                qualifier]]
+                            [[subject-type subject-eid (relation-id resource-type relation)
+                              resource-type resource-eid]
+                             (if qualifier [resource-eid qualifier] resource-eid)]))
+                     relationships)]
+    (with-redefs [backend/direct-edge-invoker (fn [_] (fn [& point] (get stored (vec point))))
+                  qualification/qualify
+                  (fn [_ _ compact-edge]
+                    (if (vector? compact-edge) false (some? compact-edge)))]
+      (binding [engine/*qualification* (qualification-fixtures/request {:time 100})]
+        (operator-typed-or
+         #(mapv :id (:data (engine/lookup-resources
+                            adapter {:subject {:type :user :id 9} :permission permission
+                                     :resource/type :doc :first 10}))))))))
+
+(defn plain-path-ignores-the-qualifier-slot-killed?
+  []
+  (let [run #(plain-witness-control-lookup
+              :open #{[:user 9 :viewer :doc 20 7]
+                      [:user 9 :viewer :doc 22]
+                      [:folder 1 :parent :doc 21] [:user 9 :viewer :folder 1 7]})]
+    (and (= [22] (run))
+         (not= [22] (with-redefs [stable-reducer/qualified-edge? (constantly false)]
+                      (run))))))
+
+(defn plain-path-kept-across-a-qualified-edge-killed?
+  []
+  (let [run #(plain-witness-control-lookup
+              :open #{[:folder 1 :parent :doc 21] [:user 9 :viewer :folder 1 7]
+                      [:user 9 :viewer :doc 22]})]
+    (and (= [22] (run))
+         ;; The seed edge onto folder 1 is still read as qualified; forgetting
+         ;; it at the ordinary parent edge proves document 21.
+         (not= [22] (with-redefs [stable-reducer/path-qualified? (constantly false)]
+                      (run))))))
+
+(defn plain-witness-for-a-covering-generator-row-killed?
+  []
+  (let [run #(plain-witness-control-lookup
+              :cleared_open #{[:user 9 :editor :doc 20] [:user 9 :allowed :doc 30]
+                              [:folder 1 :parent :doc 21] [:user 9 :viewer :folder 1]})]
+    (and (= [21] (run))
+         ;; `cleared`'s generator row is its anchor alone. Taking it for an
+         ;; exact row proves the union for a document that is only edited or
+         ;; only allowed.
+         (not= [21] (with-redefs [cover-plan/exact-generator-leaf? (constantly true)]
+                      (run))))))
+
 (defn operator-delegated-generator-wrong-operand-killed?
   []
   (let [original operator-plan/delegated-generator
@@ -2694,9 +2783,10 @@ definition doc {
        ;; the `eligible` leaf grants.
        (not= expected
              (with-redefs [route/subject-holdings
-                           (fn [options subject-type subject-eid relation-eid resource-type]
+                           (fn [options subject-type subject-eid relation-eid resource-type
+                                demand]
                              (assoc (original options subject-type subject-eid
-                                              relation-eid resource-type)
+                                              relation-eid resource-type demand)
                                     :complete? true))]
                (answer)))))))
 
@@ -3239,7 +3329,11 @@ definition doc {
    :operator-delegation-takes-folded-operator-for-union-only
    operator-delegation-takes-folded-operator-for-union-only-killed?
    :operand-order-drops-a-child operand-order-drops-a-child-killed?
-   :operand-order-takes-a-fault-as-decisive operand-order-takes-a-fault-as-decisive-killed?})
+   :operand-order-takes-a-fault-as-decisive operand-order-takes-a-fault-as-decisive-killed?
+   :plain-path-ignores-the-qualifier-slot plain-path-ignores-the-qualifier-slot-killed?
+   :plain-path-kept-across-a-qualified-edge plain-path-kept-across-a-qualified-edge-killed?
+   :plain-witness-for-a-covering-generator-row
+   plain-witness-for-a-covering-generator-row-killed?})
 
 (deftest every-portable-production-mutant-is-killed-test
   (doseq [[id detector] controls]
