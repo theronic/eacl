@@ -151,11 +151,11 @@ mutation, or opening the directory with upstream Datalevin are outside it.
 ## Relationship storage 8
 
 This adapter uses five-slot endpoint pairs with a trailing nullable
-`qualifier-eid`. V8 supports
-[Caveats and expiring Relationships](../../docs/caveats.md) ; older readers must be drained first. Upgrades are explicit
-and restartable, and client construction requires a completed target store.
-Follow the [7-to-8 operator guide](../../docs/relationship-storage-v7-to-v8.md) before
-starting clients, then the v8 serving rollout guide before qualified writes.
+`qualifier-eid` that references a relationship's [Caveat or expiry](../../docs/caveats.md).
+Client construction requires completed storage 8; to upgrade older storage,
+see [Upgrading an existing database](../../docs/index.md#upgrading-an-existing-database).
+Complete the [serving rollout](../../docs/caveats.md#coordinated-rollout-and-rollback)
+before writing qualified relationships.
 
 The adapter's `create-conn` helper explicitly bootstraps fresh stores.
 

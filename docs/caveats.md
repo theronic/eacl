@@ -595,8 +595,8 @@ backend's safe-retraction helper; see [safe deletion](../README.md#deleting-a-se
 
 For retained databases:
 
-1. Back up the database and complete the
-   [relationship storage migration](relationship-storage-v7-to-v8.md).
+1. Back up the database and complete the steps in
+   [Upgrading an existing database](index.md#upgrading-an-existing-database).
 2. Upgrade every serving Peer before allowing expiring or conditional writes.
 3. Install the JVM or portable evaluator, or supply a compatible one, if
    relations use named Caveats. Expiration alone needs none.

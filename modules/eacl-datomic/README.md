@@ -20,8 +20,9 @@ For a fresh database, call `eacl.datomic.schema/install!`, install your
 application schema, then create the client. Configure both ID converters if
 your application uses an attribute other than the default `:eacl/id`.
 
-For retained data, follow the [upgrade guide](../../docs/v8-backend-modules-and-upgrade.md#upgrading-an-application).
-Startup refuses an incompatible store; it does not migrate data for you.
+For a database written by an earlier EACL version, follow
+[Upgrading an existing database](../../docs/index.md#upgrading-an-existing-database).
+Client construction refuses an incompatible store; it does not migrate data.
 
 ## Writes and snapshots
 

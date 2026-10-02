@@ -136,7 +136,7 @@ the entity. See [safe deletion](#deleting-a-secured-entity).
 - [Run the complete consumer checks](docs/examples/datomic-consumer/).
 - [Combine application data and relationships in one transaction](docs/atomic-writes.md).
 - [Set an expiration date on a share](docs/caveats.md#expiring-access).
-- [Upgrade an existing application](docs/v8-backend-modules-and-upgrade.md#upgrading-an-application).
+- [Upgrade an existing database](docs/index.md#upgrading-an-existing-database).
 - [Datahike quickstart](#datahike-quickstart) or [DataScript quickstart](#datascript-quickstart).
 
 ## Supported Backends
@@ -914,12 +914,9 @@ All schema changes must use `eacl/write-schema!`. If an application changes
 the authorization schema directly, follow the recovery procedure in
 [Caching](#caching) before resuming authorization traffic.
 
-Datomic and Datahike consumers upgrading a released v7 database must run the
-backend's explicit permission-only v7-to-v8 migration, followed by the
-[Relationship storage 7-to-8 migration](docs/relationship-storage-v7-to-v8.md), before
-constructing an ordinary v8 client. Permission storage remains version 8.
-Storage 8 uses a nullable qualifier reference in slot five for Caveats and
-expiring Relationships.
+To upgrade a database written by an earlier EACL version, follow
+[Upgrading an existing database](docs/index.md#upgrading-an-existing-database)
+before constructing a client.
 
 ### Permission-tree expansion
 
