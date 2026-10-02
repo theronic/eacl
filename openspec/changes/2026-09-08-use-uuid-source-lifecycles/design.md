@@ -205,7 +205,9 @@ including explicit legacy failures, instead of retaining old acceptance fixtures
 
 The production refinement map is `formal/verification/uuid-lifecycle-refinement.md`.
 The public cutover/rollback and artifact matrix is
-`docs/uuid-source-lifecycle-upgrade.md`. The UUID temporal campaign distinguishes
+`maintenance/history/uuid-source-lifecycle-cutover.md`, moved from
+`docs/uuid-source-lifecycle-upgrade.md`, which keeps the current lifecycle
+contract. The UUID temporal campaign distinguishes
 local publication (private incarnation required) from imported artifact lineage
 eligibility (full scope and UUID required; authentication/proof gates remain
 separate). Its omitted-lifecycle control must therefore reach imported reuse,

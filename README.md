@@ -806,7 +806,7 @@ binds more tightly than `-`; repeated exclusion associates from the left.
 
 ```clojure
 (eacl/write-relationships! acl updates)
-=> {:zed/token "eacl_z4_..."}
+=> {:zed/token "eacl_z5_..."}
 ```
 where `updates` is a collection of `RelationshipUpdate` records:
   - `(eacl/->RelationshipUpdate operation relationship)`,
@@ -834,7 +834,7 @@ Relationship Conflicts?
 - `delete-relationships!` also accepts a `read-relationships` page containing
   sequential `:data`; one bare `Relationship` map/record is rejected so a
   revocation cannot silently become a no-op.
-- `(eacl/delete-object! acl object) => {:zed/token "eacl_z4_...", :retracted-datoms n}` is a convenience helper that removes every relationship touching `object`, in both directions. `n` counts relationship datoms actually retracted by the committed transactions. On Datomic the retractions are committed in batches of 1,000 (a concurrent reader can observe a partially deleted object between batches); on DataScript and Datahike they are one atomic transaction. Consumers are expected to delete relationships before retracting a secured entity — see [Deleting a Secured Entity](#deleting-a-secured-entity).
+- `(eacl/delete-object! acl object) => {:zed/token "eacl_z5_...", :retracted-datoms n}` is a convenience helper that removes every relationship touching `object`, in both directions. `n` counts relationship datoms actually retracted by the committed transactions. On Datomic the retractions are committed in batches of 1,000 (a concurrent reader can observe a partially deleted object between batches); on DataScript and Datahike they are one atomic transaction. Consumers are expected to delete relationships before retracting a secured entity — see [Deleting a Secured Entity](#deleting-a-secured-entity).
 - `delete-object!` rejects malformed objects, including a missing or nil ID,
   rather than returning a successful zero-retraction cleanup response.
 - `(eacl/delete-object-by-eid! acl native-eid)` is the explicit ghost-repair form for an entity whose public identity has already been retracted. Numeric IDs passed to `delete-object!` remain public IDs and are never reinterpreted as backend entity IDs.
@@ -932,7 +932,7 @@ Expansion accepts exactly `:resource`, `:permission`, and the optional `:consist
                               :consistency eacl.spicedb.consistency/fully-consistent
                               :timeout-ms  5000})
 =>
-{:expanded-at                                          "eacl_z4_..."
+{:expanded-at                                          "eacl_z5_..."
  :tree-root
  {:expanded-object                                    {:type :document :id "readme"}
   :expanded-relation                                  :view
