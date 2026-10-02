@@ -24,13 +24,11 @@ engine. Cache storage is modeled as an ordinary partial map and cannot define
 an authorization result. Browser answers are advisory and deployments must re-check
 authorization on the server.
 
-The measured performance consequences and recommended cache-free reference,
-consistency, cache, cursor, and backend architecture are recorded in the
-[v8 sound cache and cursor redesign](reports/2026-08-02-eacl-v8-sound-cache-redesign.md)
-and the normative
-[adversarial strategy review](reports/2026-08-02-eacl-v8-strategy-adversarial-review.md).
-Their completed-cache scope is superseded by the authoritative
-[single-database current-snapshot cache design](reports/2026-08-02-eacl-v8-single-db-current-cache-design.md).
+The current cache, consistency, cursor, and backend contracts are described in
+[cache behavior](cache.md), [consistency and cache operations](v8-consistency-cache-operations.md),
+and the [backend adapter contract](v8-backend-adapter-boundary.md). The dated
+design records behind them are listed in the
+[maintenance history](../maintenance/history/README.md).
 
 ## Local setup
 

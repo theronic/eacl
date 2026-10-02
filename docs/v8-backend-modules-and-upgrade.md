@@ -410,7 +410,7 @@ cursor ABI, and pass the aggregate conformance suite. An older published
 `eacl-spicedb` artifact is not source- or wire-compatible merely because scalar
 operations still compile.
 
-## Released v7 permission upgrade and unreleased-v8 reset
+## Permission storage
 
 Ordinary v8 permission rows contain one canonical expression payload. There is
 no flat-permission compatibility reader or dual-write representation. Datomic
@@ -426,15 +426,6 @@ An ordinary v8 client fails closed on flat-only, mixed, duplicated,
 conflicting, corrupt, or unsupported-format permission storage. The optional
 `:auto-migrate-v7` client setting is explicit opt-in to the same migration,
 not a compatibility reader.
-
-If source control is rolled back across this expression-storage change,
-dispose of and recreate development databases with the schema belonging to the
-selected source revision. Do not open an expression-capable database with an
-older binary. No compatibility is claimed for persisted cursors across that
-rollback, and no migration or dual-write path is provided between superseded
-unreleased-v8 representations. This reset contract is distinct from the
-released v6-to-v7 relationship migration and released v7-to-v8 permission
-migration utilities.
 
 ## V8 security-key updates
 

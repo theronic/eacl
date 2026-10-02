@@ -63,7 +63,6 @@ retraction, or explicitly install/use the backend's optional
 - [Backend basis sources](v8-snapshot-provider-migration.md)
 - [Answer cache and subproblem store](v8-subproblem-cache.md)
 - [Formal assurance boundary](formal-verification.md)
-- [Audit reports](reports/) — dated records; the 2026-08-15 stable-engine audit lists open bugs and optimizations
 
 ## Licence
 
