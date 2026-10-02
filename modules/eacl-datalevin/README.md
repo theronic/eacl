@@ -10,7 +10,8 @@ embedded Datalevin database. The certified contract is deliberately narrow:
   at-least-as-fresh reads;
 - no exact historical snapshot selection, remote/server, HA, replica,
   multiple-writer, or WAL qualification;
-- physical EACL schema frozen after bootstrap;
+- physical EACL schema frozen after bootstrap, growing only by attributes a
+  later module version adds under the write policy;
 - a persisted storage write policy enforced after transaction expansion; and
 - scalar ordered-generation frames for exact and dependency-equivalent answer
   reuse, plus certified-generation reuse of schema-derived plans.
@@ -112,6 +113,35 @@ or frozen-schema changes abort atomically. Use EACL relationship operations,
 `eacl.datalevin.safe-retraction/transact-retract-entity!`; do not submit the
 returned safe-retraction transaction data directly when it touches protected
 attributes.
+
+A later module version may add attributes to the physical EACL schema; it
+does not redefine or remove one. `make-client` adds the attributes a store
+lacks and extends the persisted policy to them with that store's own
+admission token. Nothing else is rewritten and no transaction is committed, so
+the revision, tokens, cursors, and watermark are unaffected. The extension is
+made only when the persisted policy is exactly the module's policy for the
+attributes it already covers and the attributes it will newly cover hold no
+data. Otherwise construction fails with `:eacl.datalevin/write-policy-drift`,
+which names the `:missing-attributes`, `:uncovered-attributes`, and
+`:populated-attributes`, and the store is left as it was found. A redefined
+attribute still fails with `:eacl.datalevin/physical-schema-drift`.
+
+After a completed extension the earlier module version still works with the
+store until something is stored under the added attributes. Adding the
+attributes and extending the policy are two commits. If the process stops
+between them, the next `make-client` of this version completes the extension;
+until then the earlier version refuses the store with
+`:eacl.datalevin/write-policy-drift`.
+
+Open a store with `create-conn`. It declares only the application's
+`extra-schema` to Datalevin, so an application can add its own attributes
+after bootstrap. Datalevin rejects a schema map given at open that repeats
+frozen attributes as soon as anything in the map differs from the stored
+schema, so passing `eacl.datalevin.schema/merge-schema` to `d/get-conn`
+yourself fails on a bootstrapped store whenever either schema has grown. The
+`eacl` and `eacl.*` namespaces are reserved for the module: the write policy
+guards and freezes an application attribute declared there like the module's
+own, so an `extra-schema` that contains one cannot grow after bootstrap.
 
 Each commit reads persisted `max-tx` after obtaining LMDB's writer lock. A
 foreign process that advanced the store causes
