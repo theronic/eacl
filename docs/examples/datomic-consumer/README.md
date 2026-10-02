@@ -1,6 +1,6 @@
 # Datomic consumer example
 
-This example uses `8.0.0-RC-2026-09-12` from Clojars. It needs the Clojure CLI
+This example uses `8.0.0-RC-2026-10-02` from Clojars. It needs the Clojure CLI
 and Java 25 or newer. The dependency includes Datomic Peer; no separate
 Datomic server, account, source checkout, or formal tooling is needed.
 

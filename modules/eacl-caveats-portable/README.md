@@ -3,36 +3,20 @@
 `dev.eacl/eacl-caveats-portable` evaluates named Caveats in portable Clojure.
 Use it with EACL on DataScript in ClojureScript, where the cel-parser-based
 [JVM evaluator](../eacl-caveats-jvm/README.md) cannot run. It also runs on the
-JVM. It depends only on `dev.eacl/eacl`, uses no host interop, and calls only
-core functions that `8.0.0-RC-2026-09-12` already publishes. It serves the
-profile of the core it runs with: EACL CEL profile 1 with that release, and
-profile 2, which adds `exists` and `all`, with a core that includes them.
-Use the coordinated core version: this change also fixes context normalization
-before parameter projection, bound-value merging and authorization cache identity.
+JVM. It depends only on `dev.eacl/eacl` and uses no host interop. It serves the
+EACL CEL profile of the core it runs with: profile 2, which adds `exists` and
+`all`, with `8.0.0-RC-2026-10-02`. Use it at the same version as `dev.eacl/eacl`.
 Expiring relationships need no evaluator; named Caveats do.
 
 ## Install
 
-Once a release includes this module, add it at the same version as your other
-EACL modules. A ClojureScript build also needs EACL's cache fork, as the
+Add it at the same version as your other EACL modules. A ClojureScript build
+also needs EACL's cache fork, as the
 [DataScript guide](../eacl-datascript/README.md) describes:
 
 ```clojure
-{:deps {dev.eacl/eacl-datascript       {:mvn/version "VERSION"}
-        dev.eacl/eacl-caveats-portable {:mvn/version "VERSION"}
-        com.github.theronic/cljs-cache
-        {:git/url "https://github.com/theronic/cljs-cache.git"
-         :git/sha "4143cc036446a47f0c6dfd9f8dde90363835051c"}}}
-```
-
-Before then, use a checkout. Its `deps.edn` points core at the checkout, so pin
-core at the top level; otherwise tools.deps cannot choose between the local and
-Maven versions. Use this checkout's core to include those normalization fixes:
-
-```clojure
-{:deps {dev.eacl/eacl                  {:local/root "/path/to/eacl/modules/eacl"}
-        dev.eacl/eacl-datascript       {:mvn/version "8.0.0-RC-2026-09-12"}
-        dev.eacl/eacl-caveats-portable {:local/root "/path/to/eacl/modules/eacl-caveats-portable"}
+{:deps {dev.eacl/eacl-datascript       {:mvn/version "8.0.0-RC-2026-10-02"}
+        dev.eacl/eacl-caveats-portable {:mvn/version "8.0.0-RC-2026-10-02"}
         com.github.theronic/cljs-cache
         {:git/url "https://github.com/theronic/cljs-cache.git"
          :git/sha "4143cc036446a47f0c6dfd9f8dde90363835051c"}}}

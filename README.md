@@ -52,7 +52,7 @@ Datomic server or account.
 Create a directory with this `deps.edn`:
 
 ```clojure
-{:deps {dev.eacl/eacl-datomic {:mvn/version "8.0.0-RC-2026-09-12"}}}
+{:deps {dev.eacl/eacl-datomic {:mvn/version "8.0.0-RC-2026-10-02"}}}
 ```
 
 This is a release candidate (a preview release). See
@@ -246,7 +246,7 @@ This README is too long & too technical, so I am working to simplify it and brea
 
 > [!WARNING]
 > EACL is used in production, but under active development.
-> The examples use `8.0.0-RC-2026-09-12`, a release candidate. See [Clojars](https://clojars.org/dev.eacl/eacl) for published versions.
+> The examples use `8.0.0-RC-2026-10-02`, a release candidate. See [Clojars](https://clojars.org/dev.eacl/eacl) for published versions.
 
 ## Real-Time UI Maintenance
 
@@ -703,19 +703,19 @@ EACL supports multiple backends. Each adapter will bring in the shared EACL engi
 
 ```clojure
 ;; Datomic Pro
-{:deps {dev.eacl/eacl-datomic {:mvn/version "8.0.0-RC-2026-09-12"}}}
+{:deps {dev.eacl/eacl-datomic {:mvn/version "8.0.0-RC-2026-10-02"}}}
 
 ;; Datahike
-{:deps {dev.eacl/eacl-datahike {:mvn/version "8.0.0-RC-2026-09-12"}}}
+{:deps {dev.eacl/eacl-datahike {:mvn/version "8.0.0-RC-2026-10-02"}}}
 
 ;; DataScript
-{:deps {dev.eacl/eacl-datascript {:mvn/version "8.0.0-RC-2026-09-12"}}}
+{:deps {dev.eacl/eacl-datascript {:mvn/version "8.0.0-RC-2026-10-02"}}}
 
 ;; Datalevin (coordinate reserved; publication remains gated)
 {:deps {dev.eacl/eacl-datalevin {:mvn/version "8.0.0-SNAPSHOT"}}}
 
 ;; Core-only consumers and backend authors (you typically won't need this)
-{:deps {dev.eacl/eacl {:mvn/version "8.0.0-RC-2026-09-12"}}}
+{:deps {dev.eacl/eacl {:mvn/version "8.0.0-RC-2026-10-02"}}}
 ```
 
 ### Development from source
@@ -1073,7 +1073,7 @@ order.
 For Clojure/JVM applications backed by Datahike, add the Datahike adapter dependency to your `deps.edn` file:
 
 ```clojure
-{:deps {dev.eacl/eacl-datahike {:mvn/version "8.0.0-RC-2026-09-12"}}}
+{:deps {dev.eacl/eacl-datahike {:mvn/version "8.0.0-RC-2026-10-02"}}}
 ```
 
 ```clojure
@@ -1131,7 +1131,7 @@ commit records.
 For server-side or browser demos, use the DataScript adapter:
 
 ```clojure
-{:deps {dev.eacl/eacl-datascript {:mvn/version "8.0.0-RC-2026-09-12"}}}
+{:deps {dev.eacl/eacl-datascript {:mvn/version "8.0.0-RC-2026-10-02"}}}
 ```
 
 The example below runs on the JVM. For ClojureScript, also add the cache fork

@@ -130,7 +130,7 @@ repairs old peer-only ghosts by enumerating relation definitions and making
 exact index probes. Use the integrity report when the old eid is unknown.
 
 ```clojure
-{:deps {dev.eacl/eacl-datascript {:mvn/version "8.0.0-RC-2026-09-12"}}}
+{:deps {dev.eacl/eacl-datascript {:mvn/version "8.0.0-RC-2026-10-02"}}}
 ```
 
 ClojureScript applications also need the pinned Git cache dependency shown in

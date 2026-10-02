@@ -4,7 +4,7 @@ Use EACL to check permissions against data in your Datomic database. Add the
 adapter to `deps.edn`; it includes core and Datomic Peer:
 
 ```clojure
-{:deps {dev.eacl/eacl-datomic {:mvn/version "8.0.0-RC-2026-09-12"}}}
+{:deps {dev.eacl/eacl-datomic {:mvn/version "8.0.0-RC-2026-10-02"}}}
 ```
 
 The published build requires Java 25 or newer. This is a release candidate.

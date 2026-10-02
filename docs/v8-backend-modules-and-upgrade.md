@@ -7,7 +7,7 @@ you do not need to declare core separately. Start with the
 ## Upgrading an application
 
 Use the same published version for all EACL modules. The consumer examples use
-`8.0.0-RC-2026-09-12`, a release candidate available on
+`8.0.0-RC-2026-10-02`, a release candidate available on
 [Clojars](https://clojars.org/dev.eacl/eacl-datomic).
 
 Check the dependency path with the same aliases your application actually uses:

@@ -15,13 +15,13 @@ Choose the adapter for your database; it brings the core module transitively:
 
 ```clojure
 ;; Datomic
-{:deps {dev.eacl/eacl-datomic {:mvn/version "8.0.0-RC-2026-09-12"}}}
+{:deps {dev.eacl/eacl-datomic {:mvn/version "8.0.0-RC-2026-10-02"}}}
 
 ;; Datahike
-{:deps {dev.eacl/eacl-datahike {:mvn/version "8.0.0-RC-2026-09-12"}}}
+{:deps {dev.eacl/eacl-datahike {:mvn/version "8.0.0-RC-2026-10-02"}}}
 
 ;; DataScript
-{:deps {dev.eacl/eacl-datascript {:mvn/version "8.0.0-RC-2026-09-12"}}}
+{:deps {dev.eacl/eacl-datascript {:mvn/version "8.0.0-RC-2026-10-02"}}}
 
 ;; Datalevin (implemented; publication pending maintained-fork release)
 {:deps {dev.eacl/eacl-datalevin {:mvn/version "8.0.0-SNAPSHOT"}}}

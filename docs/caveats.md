@@ -120,8 +120,8 @@ need an optional evaluator: `eacl-caveats-jvm` on the JVM, or
 Add the evaluator alongside your backend dependency, at the same version:
 
 ```clojure
-{:deps {dev.eacl/eacl-datomic     {:mvn/version "8.0.0-RC-2026-09-12"}
-        dev.eacl/eacl-caveats-jvm {:mvn/version "8.0.0-RC-2026-09-12"}}}
+{:deps {dev.eacl/eacl-datomic     {:mvn/version "8.0.0-RC-2026-10-02"}
+        dev.eacl/eacl-caveats-jvm {:mvn/version "8.0.0-RC-2026-10-02"}}}
 ```
 
 Require it before writing a schema that uses a named condition:
