@@ -1,5 +1,6 @@
 (ns eacl.datalevin.schema
-  (:require [clojure.string :as str]
+  (:require [clojure.set :as set]
+            [clojure.string :as str]
             [datalevin.core :as ds]
             [eacl.caveats.schema :as caveat-schema]
             [eacl.caveats.definition :as caveat-definition]
@@ -86,8 +87,17 @@
       (contains? #{"eacl.relation" "eacl.permission" "eacl.caveat"}
                  (namespace attribute))))
 
+(defn- storage-attributes
+  "The attributes of a physical schema that the write policy must cover."
+  [physical-schema]
+  (into #{} (filter eacl-storage-attribute?) (keys physical-schema)))
+
 (defn- expected-write-policy
-  [conn]
+  "The policy this module registers over `guarded`, by default every storage
+  attribute of the physical schema."
+  ([conn]
+   (expected-write-policy conn (storage-attributes (ds/schema conn))))
+  ([conn guarded]
   (let [db (ds/db conn)
         schema-eid (ds/entid db [:eacl/id "schema-string"])]
     (when-not schema-eid
@@ -98,9 +108,7 @@
          :eacl/error :eacl.cache/generation-unprepared
          :backend :datalevin
          :missing :schema-singleton})))
-    (let [guarded (into #{} (filter eacl-storage-attribute?)
-                        (keys (ds/schema conn)))
-          definition-attributes (filter definition-attribute? guarded)]
+    (let [definition-attributes (filter definition-attribute? guarded)]
       {:guarded-attributes guarded
        :frozen-attributes guarded
        :commit-generation-attributes
@@ -126,7 +134,7 @@
             :stamp-entity [:constant schema-eid]}))
         definition-attributes)
        :guarded-write-hint
-       "Protected EACL data requires the admitted writer; use delete-object! for permissioned-object relationship cleanup."})))
+       "Protected EACL data requires the admitted writer; use delete-object! for permissioned-object relationship cleanup."}))))
 
 (defn- generation-gaps
   [db]
@@ -156,6 +164,20 @@
                                       :eacl.datalevin/relation-generation))]
          relation-eid)))))
 
+(defn- missing-attributes
+  "The module's attributes that a physical schema does not have yet."
+  [physical-schema]
+  (into {} (remove #(contains? physical-schema (key %))) datalevin-schema))
+
+(defn- write-policy-installed?
+  "False also where no policy can be read: a fork without write-policy
+  support, and a store that is not embedded. make-client rejects both with a
+  typed error."
+  [conn]
+  (boolean (and (fork/write-policy-capabilities)
+                (:supported? (ds/read-snapshot-capabilities conn))
+                (fork/write-policy conn))))
+
 (defn create-conn
   ([] (create-conn nil nil nil))
   ([dir] (create-conn dir nil nil))
@@ -163,7 +185,18 @@
   ([dir extra-schema store-options]
    ;; Qualification and bootstrap belong to make-client. Merely opening a
    ;; connection must not submit an unadmitted protected transaction.
-   (let [conn (ds/get-conn dir (merge-schema extra-schema) store-options)
+   ;;
+   ;; Datalevin applies a schema map given at open as one update of every
+   ;; attribute in it. Repeating EACL's attributes there would turn any new
+   ;; attribute, EACL's or the application's, into a rejected change to all
+   ;; the attributes a write policy has frozen. Only the application's schema
+   ;; is therefore declared at open. EACL's missing attributes are added here
+   ;; while no policy exists, and by ensure-physical-schema! once one does.
+   (let [conn (ds/get-conn dir extra-schema store-options)
+         _ (when-not (write-policy-installed? conn)
+             (let [missing (missing-attributes (ds/schema conn))]
+               (when (seq missing)
+                 (ds/update-schema conn missing))))
          found (target-storage/evidence (ds/db conn))]
      (when (and (nil? (:version found)) (nil? (:state found))
                 (not (:legacy? found)) (not (:v6? found)))
@@ -185,10 +218,97 @@
                    (:db/tupleAttrs normalized)))
       normalized)))
 
+(defn- write-policy-drift
+  [data cause]
+  (ex-info
+   "Datalevin's persisted EACL write policy does not match the module contract."
+   (merge {:type :eacl.datalevin/write-policy-drift
+           :eacl/error :eacl.datalevin/write-policy-drift
+           :backend :datalevin}
+          data)
+   cause))
+
+(defn- persisted-source-id
+  [db]
+  (:eacl.datalevin/source-id (ds/entity db [:eacl/id "datalevin-metadata"])))
+
+(defn- require-source-identity!
+  "A store with a write policy was given its source identity at bootstrap."
+  [source-id]
+  (when-not (uuid? source-id)
+    (throw
+     (ex-info
+      "A protected Datalevin store has no valid persisted source identity."
+      {:type :eacl/invalid-source-identity
+       :eacl/error :eacl/invalid-source-identity
+       :backend :datalevin
+       :value source-id}))))
+
+(defn- require-generations!
+  [db]
+  (let [gaps (generation-gaps db)]
+    (when (seq gaps)
+      (throw
+       (ex-info
+        "A protected Datalevin store has incomplete generation evidence."
+        {:type :eacl.cache/generation-unprepared
+         :eacl/error :eacl.cache/generation-unprepared
+         :backend :datalevin
+         :missing gaps})))))
+
+(defn- additive-admission-token
+  "Returns the per-open token that admits extending a persisted write policy
+  to module attributes it does not cover: the `missing` ones about to be
+  added, and present ones that an interrupted run already added. Returns nil
+  when the policy covers every storage attribute.
+
+  Only growth is admitted. The fork returns its token for an identical policy
+  alone, so receiving it for the policy this module registers over the covered
+  attributes shows that the persisted policy is exactly that one. An uncovered
+  attribute must be the module's own and hold no data, so that every datom of
+  a guarded attribute was committed under the policy.
+
+  Nothing is changed here, and every check that ensure-physical-schema! makes
+  of a protected store afterwards is made here first, so a store it refuses
+  has not been extended."
+  [conn existing-policy missing]
+  (let [physical (storage-attributes (ds/schema conn))
+        covered (set/intersection physical
+                                  (set (:guarded-attributes existing-policy)))
+        uncovered (set/difference physical covered)]
+    (when (or (seq missing) (seq uncovered))
+      (let [db (ds/db conn)
+            populated (filterv #(target-storage/present? db %)
+                               (sort uncovered))
+            data (cond-> {}
+                   (seq missing)
+                   (assoc :missing-attributes (vec (sort (keys missing))))
+
+                   (seq uncovered)
+                   (assoc :uncovered-attributes (vec (sort uncovered)))
+
+                   (seq populated)
+                   (assoc :populated-attributes populated))]
+        (require-source-identity! (persisted-source-id db))
+        (when (or (seq populated)
+                  (not-every? #(contains? datalevin-schema %) uncovered))
+          (throw (write-policy-drift data nil)))
+        (let [covered-policy (expected-write-policy conn covered)
+              token
+              (try
+                (:write-token (fork/install-write-policy! conn covered-policy))
+                (catch #?(:clj Throwable :cljs :default) error
+                  (throw (write-policy-drift data error))))]
+          (require-generations! db)
+          token)))))
+
 (defn ensure-physical-schema!
   "Installs missing EACL attributes on a quiesced embedded connection and
   rejects any incompatible definition. Installs the storage write policy and
-  returns the persisted source UUID plus the per-open writer token."
+  returns the persisted source UUID plus the per-open writer token.
+
+  A store whose policy an earlier module installed gains the attributes this
+  module has added since, and its policy is extended to them."
   ([conn] (ensure-physical-schema! conn nil))
   ([conn migration-token]
   (let [existing-policy (fork/write-policy conn)
@@ -212,22 +332,18 @@
          :eacl/error :eacl.datalevin/physical-schema-drift
          :backend :datalevin
          :drift drift})))
-    (let [missing (into {}
-                        (remove #(contains? actual (key %)))
-                        datalevin-schema)]
-      (when (seq missing)
-        (ds/update-schema conn missing)))
-    (let [db (ds/db conn)
-          metadata (ds/entity db [:eacl/id "datalevin-metadata"])
-          existing (:eacl.datalevin/source-id metadata)]
-      (when (and existing-policy (not (uuid? existing)))
-        (throw
-         (ex-info
-          "A protected Datalevin store has no valid persisted source identity."
-          {:type :eacl/invalid-source-identity
-           :eacl/error :eacl/invalid-source-identity
-           :backend :datalevin
-           :value existing})))
+    (let [missing (missing-attributes actual)
+          ;; Admission is decided before the store is changed, so a store
+          ;; that is refused is left as it was found.
+          admission-token
+          (or migration-token
+              (when existing-policy
+                (additive-admission-token conn existing-policy missing)))
+          _ (when (seq missing)
+              (ds/update-schema conn missing))
+          existing (persisted-source-id (ds/db conn))]
+      (when existing-policy
+        (require-source-identity! existing))
       (let [source-id
             (cond
               (uuid? existing) existing
@@ -258,27 +374,13 @@
               policy-result
               (try
                 (fork/install-write-policy! conn expected-policy
-                                            (when migration-token {:datalevin/write-token migration-token}))
+                                            (when admission-token {:datalevin/write-token admission-token}))
                 (catch #?(:clj Throwable :cljs :default) error
-                  (throw
-                   (ex-info
-                    "Datalevin's persisted EACL write policy does not match the module contract."
-                    {:type :eacl.datalevin/write-policy-drift
-                     :eacl/error :eacl.datalevin/write-policy-drift
-                     :backend :datalevin}
-                    error))))
+                  (throw (write-policy-drift {} error))))
               _ (when-not existing-policy
                   (prepare-cache-coherence!
-                   conn (:write-token policy-result)))
-              gaps (generation-gaps (ds/db conn))]
-          (when (seq gaps)
-            (throw
-             (ex-info
-              "A protected Datalevin store has incomplete generation evidence."
-              {:type :eacl.cache/generation-unprepared
-               :eacl/error :eacl.cache/generation-unprepared
-               :backend :datalevin
-               :missing gaps})))
+                   conn (:write-token policy-result)))]
+          (require-generations! (ds/db conn))
           {:source-id source-id
            :schema-eid (ds/entid (ds/db conn) [:eacl/id "schema-string"])
            :write-token (:write-token policy-result)
@@ -592,7 +694,7 @@
                      (not (every? #(contains? (ds/schema db) %) wildcard/attributes)))
             (throw
              (ex-info
-              "Datalevin connection schema lacks the EACL wildcard Relation attributes; open the connection with eacl.datalevin.schema/datalevin-schema."
+              "Datalevin store lacks the EACL wildcard Relation attributes; eacl.datalevin.core/create-conn and make-client install them."
               {:type :eacl.schema/wildcard-attributes-missing
                :eacl/error :eacl.schema/wildcard-attributes-missing
                :backend :datalevin

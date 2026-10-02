@@ -881,7 +881,8 @@ concrete branches. A relationship whose subject is `(eacl/spice-object :user
   relationships use one EACL-owned subject entity,
   `{:eacl/id "eacl.wildcard-subject"}`. Datomic and Datahike install the
   attributes on the first schema write that declares a wildcard; Datalevin
-  installs them when a client opens the connection; a DataScript connection
+  installs them when a client opens the connection, extending the write
+  policy of a store bootstrapped before this release; a DataScript connection
   without them fails the schema write with
   `:eacl.schema/wildcard-attributes-missing`.
 - Schemas without wildcards keep their plans, fingerprints, cursors and cache

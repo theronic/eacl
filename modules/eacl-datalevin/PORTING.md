@@ -24,8 +24,15 @@ ordered generations over scalar commit-generation longs.
 Physical EACL schema, a random source UUID, a schema singleton, native scalar
 generations, and a persisted write policy are installed before readiness.
 Every existing physical attribute is compared after Datalevin tuple-type
-inference; missing, renamed, retyped, recardinalized, reindexed, or wrong-arity
-attributes fail startup. Physical EACL schema is frozen after bootstrap.
+inference; renamed, retyped, recardinalized, reindexed, or wrong-arity
+attributes fail startup, as does a store without the relationship-storage
+attributes. Physical EACL schema is frozen after bootstrap. It grows only by
+attributes that a later module version adds: client construction installs
+them and extends the persisted policy to them under the store's admission
+token, after the fork has confirmed that the persisted policy is the module's
+own for the attributes it covers and after checking that the newly covered
+attributes hold no data. `create-conn` therefore declares only the
+application's schema at open and does not resubmit the module's attributes.
 Logical SpiceDB schema changes remain fenced, token-admitted EACL transactions.
 
 Relationship writes maintain forward and reverse tuple halves atomically and

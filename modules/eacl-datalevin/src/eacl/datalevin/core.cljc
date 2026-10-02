@@ -507,8 +507,10 @@
   (orchestration/snapshot-db snapshot :datalevin))
 
 (defn create-conn
-  "A Datalevin connection carrying EACL's schema. See
-  `eacl.datalevin.schema/create-conn` for the config options."
+  "A Datalevin connection carrying EACL's schema. A store bootstrapped by an
+  earlier module version gains the attributes added since when `make-client`
+  is called on it. See `eacl.datalevin.schema/create-conn` for the config
+  options."
   ([] (schema/create-conn))
   ([dir] (schema/create-conn dir))
   ([dir extra-schema] (schema/create-conn dir extra-schema))
