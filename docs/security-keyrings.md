@@ -21,7 +21,7 @@ EACL does not fetch them from a secret manager.
 
 ## Cursor encryption
 
-The `eacl_c6_` cursor format uses AES-256-CTR encryption and HMAC-SHA-256
+The `eacl_c7_` cursor format uses AES-256-CTR encryption and HMAC-SHA-256
 authentication with separately derived keys and a random 96-bit nonce. EACL
 verifies authentication before decrypting or parsing the payload. This
 provides confidentiality and tamper detection; encryption alone would not

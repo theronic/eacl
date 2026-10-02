@@ -60,23 +60,22 @@ contains no reducer state, no cache pointer, no seen set, and no rolling
 commitment. Navigation mode (`after`/`before`) is request input, not
 cursor identity.
 
-The public clients wrap that edge in their own authenticated-encryption envelopes and
-pin the exact basis, query scope and schema generation there: the Datomic
-client's `eacl4_` AEAD page token and the shared Datahike/DataScript
-client's `eacl_c6_` Relay envelope (`eacl.relay`, `eacl.cursor`). Their
-rejections surface under the public `:eacl.pagination/*` keys
+The public clients wrap that edge in one shared authenticated-encryption envelope and
+pin the exact basis, query scope and schema generation there: the
+`eacl_c7_` Relay cursor (`eacl.relay`, `eacl.cursor`). Their rejections
+surface under the public `:eacl.pagination/*` keys
 (`invalid-cursor`, `stale-cursor`, `wrong-cursor-kind`,
 `complete-evaluation-required`) and their limits under
 `:eacl.recursive-traversal/limit-exceeded` with `:limit-kind` and
 `:limit`. The self-contained HMAC edge token described next
-(`eacl_sd1.` prefix, `eacl.engine.stable-page/page`) is the engine's
+(`eacl_sd2.` prefix, `eacl.engine.stable-page/page`) is the engine's
 standalone API; the public clients call `edge-page` directly and never
 mint it.
 
 The standalone token binds: format version, order ABI, composite plan
 fingerprint, source lifecycle, exact basis, anchor, direction, subject
 type, fixed page size, the boundary result's one-based ordinal and
-external identity, and optional expiry (domain `eacl/stable-page/v1`,
+external identity, and optional expiry (domain `eacl/stable-page/v2`,
 domain-separated key derivation, constant-time tag comparison).
 
 After the public cursor has authenticated, selected and accepted its basis,
@@ -101,7 +100,7 @@ transport page may be retained under the complete raw request and cursor-key
 policy. A hit returns before cursor decode, identity conversion, proof work, or
 token construction. TTL-enabled cursors keep using the authenticated semantic
 path. Cursor query and edge identities must be metadata-free portable data.
-The standalone `eacl_sd1.` token and its private checkpoint key remain
+The standalone `eacl_sd2.` token and its private checkpoint key remain
 exact-basis-bound.
 
 Rejection classes (all typed, never silent). Public clients surface them
