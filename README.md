@@ -106,10 +106,20 @@ Start a REPL in that directory with `clojure -M`, then evaluate:
 (eacl/can? acl alice :view report) ; true
 (eacl/can? acl bob :view report)   ; false
 
-(mapv :id (:data (eacl/lookup-resources acl
-                   {:subject alice :permission :view :resource/type :document :first 10})))
-;; => ["report"]
+;; Lookups return one page of results at a time.
+(eacl/lookup-resources acl
+  {:subject alice :permission :view :resource/type :document :first 10})
+;; => {:data        [#eacl.core.SpiceObject{:type :document, :id "report", :relation nil}]
+;;     :page-info   {:start-cursor       "eacl_c7_..."
+;;                   :end-cursor         "eacl_c7_..."
+;;                   :has-next-page?     false
+;;                   :has-previous-page? false}
+;;     :cached?     false
+;;     :cache-basis {:database-id "...", :basis-t 1016}}
 ```
+
+To fetch the next page, pass `:end-cursor` as `:after`; see
+[Example Queries](#example-queries).
 
 Give each user and document a unique, stable ID owned by your application.
 This example uses `:app/id`; you do not need to put application IDs in EACL's
@@ -359,7 +369,9 @@ Without `:count-limit`, `:limit` is `-1` and the count operation exhausts the
 result set. Pass `:count-limit n` to bound work. The result then includes
 `:truncated?`; `true` means at least one additional result exists.
 
-Note: the default `:limit` will soon change to 50k instead of -1 (infinite), because high count-limits can exhaust Peers and trigger costly I/O from storage, esp. in recursive schemas.
+Counts have no default bound. Pass `:count-limit` for recursive schemas and
+other large result sets: an exhaustive count visits every result, so its Peer
+memory and storage I/O grow with the result set.
 
 ## Snapshots
 
@@ -582,7 +594,11 @@ Unsupported modes by backend will return an error. Refer [Consistency and ZedTok
 
 EACL co-exists with your data in Datomic, Datahike, DataScript, or Datalevin. As a result, EACL installs and maintains some attributes in your data store, all of which are prefixed by `:eacl*`.
 
-Presently, EACL Relationships are stored in history to support auditability, `d/as-of` & `at-exact-snapshot` semantics, but in a future version of EACL, history could be optional to save on storage, but then you lose time travel & auditability. For many applications that only care about permissions as-of "now", this would be acceptable.
+EACL Relationships are ordinary datoms, so their history is the backend's.
+Datomic and history-enabled Datahike (the `eacl.datahike.core/create-conn`
+default) keep past states for audits, `d/as-of` and `at-exact-snapshot` reads;
+DataScript and Datalevin do not support historical reads. See
+[backend capabilities](docs/v8-backend-modules-and-upgrade.md#consistency-matrix).
 
 The EACL-specific attributes are detailed below.
 
