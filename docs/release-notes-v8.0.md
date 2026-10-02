@@ -40,6 +40,12 @@ EACL v8.0 is a workspace with independently consumable modules:
   blocked until the maintained `dev.eacl/datalevin-embedded-eacl` fork is
   available from immutable public SCM and passes packaged Linux ARM64
   qualification.
+- `modules/eacl-caveats-jvm` contains the optional JVM Caveat evaluator, built
+  on cel-parser. Clients need an evaluator only for named Caveats; expiring
+  Relationships need none.
+- `modules/eacl-caveats-portable` contains the optional portable Caveat
+  evaluator for ClojureScript, which also runs on the JVM. Its first published
+  release is `8.0.0-RC-2026-10-02`.
 
 Existing Datomic namespace imports do not change. Consumers replace the root
 Git dependency with `:deps/root "modules/eacl-datomic"`; this packaging change
@@ -976,6 +982,12 @@ Breaking changes:
 5. **Instaparse is no longer a dependency.** `instaparse/instaparse` is
    removed from `dev.eacl/eacl`; applications that used it transitively must
    declare it.
+6. **Caveat definitions are validated as SpiceDB validates them, including
+   unused parameters.** For example,
+   `caveat in_region(region string, unused int) { region == "za" }`
+   now fails with `:eacl.caveat/invalid`, `:reason :unused-parameter` and
+   `:parameters ["unused"]`; earlier releases accepted it. Use or remove every
+   parameter before writing the schema.
 
 Resource limits stay outside the compatibility rule.
 `:maximum-schema-source-bytes` (1,048,576 by default) now also bounds
@@ -1005,3 +1017,31 @@ subject relation reaches a wildcard, on every write or only on some. EACL keeps
 the check per definition and relation and rejects them with
 `:eacl.schema/expression-resolution-failed`
 ([details](spicedb-schema-compatibility.md#deliberate-difference-transitive-wildcards)).
+
+## Reads, writes, and tokens
+
+- **Partial `read-relationships` walks are exact** (EACL-FORMAL-080). A walk
+  without `:subject/id` and `:resource/id` pages in physical index order:
+  primary endpoint, then qualifier with plain rows first, then owner. On a
+  Relation holding a caveated or expiring row, earlier builds could skip or
+  repeat rows, and `:expiry-active` and `:authorization` walks could fail to
+  end. A cursor that an earlier build minted at a qualified row can repeat or
+  omit rows of that endpoint's group on its next page; restart such walks. A
+  backend scan that breaks the order fails with
+  `:eacl/backend-contract-violation` and `:obligation :strict-order`.
+- **Permission trees list qualified relationships** (EACL-FORMAL-081).
+  `expand-permission-tree` lists caveated and expiring Relationships, expired
+  ones included, and adds their `:caveat`, `:caveat-context` and
+  `:valid-until-ms` to the leaf subject or arrow child they reach. It
+  evaluates no Caveat and reads no clock. Earlier builds failed with
+  `:eacl.permission-tree/adapter-contract-violation` on such a Relation.
+- **Relationship writes check endpoints with constant-size reads.** A write no
+  longer reads every fact of its subject and resource, so its cost does not
+  grow with an endpoint's number of relationships. Which writes succeed is
+  unchanged.
+- **Tokens and cursors have one accepted spelling** (EACL-FORMAL-076,
+  EACL-FORMAL-077). EACL accepts a Zed token or cursor only exactly as it
+  issued it; a padded, re-encoded, or otherwise respelled string is invalid.
+  Lookups validate page keys before decoding a cursor: an invalid page request
+  fails even when its anchor does not resolve, and the error data holds the
+  cursor strings the caller passed, never their decrypted contents.
