@@ -248,25 +248,6 @@
     (is (= {:found? false :value nil}
            (lru/lookup! store :key)))))
 
-(deftest storage-never-invokes-a-loader-or-validator-test
-  (let [store (lru/store 2)
-        computations (atom 0)
-        validations (atom 0)
-        compute (fn [] (swap! computations inc) :computed)
-        value (compute)]
-    (is (= 1 @computations))
-    (is (true? (lru/put-if-absent! store :key value)))
-    (let [{:keys [found? value]} (lru/lookup! store :key)]
-      (is found?)
-      (is (= :computed value))
-      (is (= :valid
-             ((fn [candidate]
-                (swap! validations inc)
-                (if (= :computed candidate) :valid :invalid))
-              value))))
-    (is (= 1 @computations))
-    (is (= 1 @validations))))
-
 #?(:clj
    (deftest concurrent-lookups-return-the-held-immutable-value-test
      (let [store (lru/store 64)

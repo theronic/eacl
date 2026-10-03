@@ -358,8 +358,7 @@
           (is (= :lookup-resources (:operation data)))
           (is (false? (:historical? data)))
           (is (= (set gone) (set (:entity-ids data)))
-              "every offending eid is reported, so one repair pass fixes them all")
-          (is (str/includes? (:cause data "") "")))
+              "every offending eid is reported, so one repair pass fixes them all"))
         (testing "the message names the cause and the repair tool"
           (let [message (try
                           (eacl/lookup-resources acl {:subject (spice-object :user "alice")
