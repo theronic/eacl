@@ -3,7 +3,9 @@
 
   See docs/reports/2026-07-31-eacl-v8.0-cache-adversarial-review.md. The
   critical pagination finding (C1) is covered by
-  eacl.datomic.cache-differential-test."
+  eacl.datomic.cache-differential-test, and M1 (identical reads at one basis
+  compute once) by eacl.datomic.consistency-cache-test/
+  can-results-obey-all-cache-consistency-modes-test."
   (:require [clojure.set]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
@@ -370,31 +372,6 @@
             (is (str/includes? message "dangling-relationship-report"))
             (is (not (str/includes? message "cache"))
                 "this fires with {:cache shared-cache/no-cache} too; it must not be diagnosed as a cache fault")))))))
-
-;; --- M1 ---------------------------------------------------------------------
-
-(deftest fully-consistent-reads-reuse-the-basis-pinned-exact-entry-test
-  ;; The exact key pins the complete source lineage, schema generation,
-  ;; operation, query identity, and basis revision. One source at one revision
-  ;; therefore maps to exactly one immutable database value.
-  (with-mem-conn [conn schema/v8-schema]
-    (let [acl (core/make-client conn {:security-key token-key
-                                      :cache {}})
-          _ (seed-direct! conn acl 1)
-          alice (spice-object :user "alice")
-          account (spice-object :account "acct0")
-          calls (atom 0)
-          original engine/check-evidence-eids]
-      (with-redefs [engine/check-evidence-eids (fn [& args]
-                                                 (swap! calls inc)
-                                                 (apply original args))]
-        (dotimes [_ 3] (is (true? (eacl/can? acl alice :admin account))))
-        (is (= 1 @calls) "identical fully-consistent reads at one basis compute once")
-
-        (testing "a relationship change still invalidates, because basis-t moves"
-          (eacl/delete-relationship! acl (->Relationship alice :owner account))
-          (is (false? (eacl/can? acl alice :admin account)))
-          (is (= 2 @calls)))))))
 
 ;; --- M2 ---------------------------------------------------------------------
 

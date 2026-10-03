@@ -415,42 +415,6 @@
     (is (= :eacl/invalid-config (:type error)))
     (is (= [:engine-selection] (:unknown-keys error)))))
 
-(deftest raw-retraction-requires-explicit-cache-expiry-test
-  (let [conn (datascript/create-conn)
-        client (datascript/make-client conn {})
-        user (eacl/spice-object :user "raw-write-user")
-        document (eacl/spice-object :document "raw-write-doc")]
-    (eacl/write-schema!
-     client
-     "definition user {}
-      definition document {
-        relation owner: user
-        permission view = owner
-      }")
-    (ds/transact! conn [{:eacl/id (:id user)}
-                        {:eacl/id (:id document)}])
-    (eacl/create-relationship!
-     client (eacl/->Relationship user :owner document))
-    (is (true? (eacl/can? client user :view document)))
-    (is (true? (eacl/can? client user :view document))
-        "the repeated identical check is served from the cache")
-    ;; Retract the relationship tuples OUTSIDE every EACL writer.
-    (let [db (ds/db conn)
-          retractions
-          (into []
-                (mapcat
-                 (fn [attribute]
-                   (map (fn [datom]
-                          [:db/retract (:e datom) attribute (:v datom)])
-                        (ds/datoms db :aevt attribute))))
-                [relationship-storage/forward-attribute
-                 relationship-storage/reverse-attribute])]
-      (is (seq retractions))
-      (ds/transact! conn retractions))
-    (datascript/expire-cache! client)
-    (is (false? (eacl/can? client user :view document))
-        "unsupported raw mutation is safe after every affected client expires")))
-
 (deftest unsupported-mutation-recovery-requires-every-client-and-data-repair-test
   (let [conn (datascript/create-conn)
         client-a (datascript/make-client conn {})

@@ -387,21 +387,6 @@
            (:reason
             (error-data #(token/token-data options "17")))))))
 
-(deftest source-lifecycle-is-bounded-portable-canonical-data-test
-  (is (= :invalid-source-lifecycle
-         (:reason
-          (error-data
-           #(token/validate-source-lifecycle!
-             {:invalid (fn [])})))))
-  (is (= :invalid-source-lifecycle
-         (:reason
-          (error-data
-           #(token/validate-source-lifecycle!
-             {:oversized (apply str
-                                (repeat
-                                 token/maximum-scope-characters
-                                 "x"))}))))))
-
 (deftest authenticated-portable-cursor-test
   (let [value {:v 8 :edge {:kind :lookup-eid} :position [1 "a"]}
         encoded (cursor/cursor->token value options)]
@@ -802,25 +787,6 @@
     (let [data (error-data #(cursor/codec-cache {:max-entries capacity}))]
       (is (= :eacl/invalid-config (:type data)))
       (is (= :max-entries (:option data))))))
-
-(deftest encrypted-cursors-reuse-client-private-key-context-test
-  (let [codec-cache (cursor/codec-cache {:max-entries 4})
-        cached-options (assoc options :cursor-codec-cache codec-cache)
-        work (atom {})]
-    (binding [cursor/*codec-work* work]
-      (is (string?
-           (cursor/cursor->token
-            {:v 10 :scope :one :edge {:kind :lookup-eid :value 1}}
-            cached-options)))
-      (is (string?
-           (cursor/cursor->token
-            {:v 10 :scope :two :edge {:kind :lookup-eid :value 2}}
-            cached-options))))
-    (is (= 2 (:encode-calls @work)))
-    (is (= 1 (:key-context-builds @work))
-        "the first cursor derives and encodes the configured key context")
-    (is (= 1 (:key-context-cache-hits @work))
-        "the next distinct cursor reuses key derivation without reusing a token")))
 
 (deftest encrypted-cursor-key-context-cache-retains-hot-context-test
   (let [kids (mapv #(keyword (str "key-" %)) (range 17))

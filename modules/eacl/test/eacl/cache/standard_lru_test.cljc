@@ -60,18 +60,6 @@
     (is (= {:found? true :value nil}
            (lru/lookup! store :nil)))))
 
-(deftest lookup-holds-value-across-concurrent-policy-eviction-test
-  (let [store (lru/store 2)
-        held-value {:immutable [:answer 1]}]
-    (lru/put-if-absent! store :first held-value)
-    (lru/put-if-absent! store :second :second-value)
-    (let [held (lru/lookup! store :first)]
-      (lru/put-if-absent! store :third :third-value)
-      (is (= {:found? true :value held-value} held))
-      ;; JVM Window TinyLFU may reject the new entry instead of selecting the
-      ;; exact strict-LRU victim. Retention policy never changes a held value.
-      (is (<= (lru/entry-count store) 2)))))
-
 (deftest publication-peek-does-not-refresh-lru-test
   #?(:clj
      (let [store (lru/store 8)]

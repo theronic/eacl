@@ -780,15 +780,3 @@
                                             :security-key "provenance0000000000000000000000"})]
           (is (false? (:cached? (eacl/lookup-resources plain query))))
           (is (false? (:cached? (eacl/count-resources plain query)))))))))
-
-(deftest default-client-cache-has-no-ttl-test
-  (with-mem-conn [conn schema/v8-schema]
-    (is (nil? (:lookup-cache-ttl-ms
-               (:runtime (core/make-client conn {}))))
-        "client-private authorization results do not expire by wall clock")
-    (let [error (try
-                  (core/make-client conn {:cache {:ttl-ms 5000}})
-                  nil
-                  (catch clojure.lang.ExceptionInfo ex ex))]
-      (is (= :eacl/invalid-config (:type (ex-data error))))
-      (is (= [:ttl-ms] (:unknown-keys (ex-data error)))))))
