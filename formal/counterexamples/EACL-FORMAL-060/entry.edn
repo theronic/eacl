@@ -16,4 +16,4 @@
  ["RoutingCertificate.SelectEnumerationRoute"
   "AcyclicEngine.DecideAcyclicPage"
   "eacl.engine.physical-route-test/exhaustion-count-test"
-  "eacl.bench.explorer-enumeration-test/explorer-50000-super-user-exact-acyclic-acceptance"]}
+  "eacl.bench.explorer-enumeration-test/explorer-50000-super-user-exact-count-acceptance"]}

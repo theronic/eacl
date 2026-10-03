@@ -14,5 +14,5 @@
  "The materialized model now treats queuedWork as the maximum observed pending-work cardinality, checks the current queue cardinality directly against maxQueuedWork, and retains cumulative enqueue accounting as a separate resource dimension outside this safety limit."
  :closing-evidence
  ["eacl.formal.production-kernel-test/generated-materialized-queue-limit-is-instantaneous"
-  "eacl.formal.production-kernel-test/datascript-public-recursive-cache-modes-compare-generated-javascript"
+  "eacl.formal.production-kernel-test/datascript-public-recursive-cache-modes-use-generated-javascript"
   "formal mutation :materialized-queue-limit-counts-cumulative-enqueues"]}

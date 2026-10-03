@@ -19,5 +19,6 @@
   "eacl.formal.production-kernel-test"
   "eacl.formal.state-trace-differential-test"
   "formal/smoke/clj/run-verified-authority nonbenchmark"
-  "formal/smoke/cljs/run-verified-authority"
-  "formal/verification/performance-gates.edn"]}
+  ;; Historical: formal/verification/performance-gates.edn was a generated
+  ;; evidence ledger, removed in 483911d6.
+  "formal/smoke/cljs/run-verified-authority"]}

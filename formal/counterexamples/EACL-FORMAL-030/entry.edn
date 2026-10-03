@@ -15,6 +15,8 @@
  :closing-evidence
  ["RecursiveEngine.RoutingTraversalScanIsExact"
   "RecursiveEngine.DecideTypedTraversalPermission"
-  "eacl.formal.production-kernel-test/generated-java-classifies-production-recursive-routing"
-  "eacl.formal.production-kernel-test/generated-javascript-classifies-production-recursive-routing"
+  ;; Historical: eacl.formal.production-kernel-test/generated-java-classifies-production-recursive-routing
+  ;; and its JavaScript twin were removed with the legacy engine (d96bc4c6).
+  "eacl.formal.production-kernel-test/generated-java-checks-linear-routing-certificates"
+  "eacl.formal.production-kernel-test/generated-javascript-checks-linear-routing-certificates"
   "formal mutation :routing-node-identity-drops-resource-type"]}

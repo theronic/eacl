@@ -15,6 +15,6 @@
  :closing-evidence
  ["eacl.formal.production-kernel-test/production-jvm-two-stream-merge-refines-exact-source-model"
   "eacl.formal.production-kernel-test/production-javascript-two-stream-merge-refines-exact-source-model"
-  "eacl.formal.production-kernel-test/optimized-jvm-ordered-merge-refines-generated-chunks"
-  "eacl.formal.production-kernel-test/optimized-javascript-ordered-merge-refines-generated-chunks"
+  ;; Historical: eacl.formal.production-kernel-test/optimized-jvm-ordered-merge-refines-generated-chunks
+  ;; and its JavaScript twin were removed with the legacy engine (d96bc4c6).
   "formal/dafny/OrderedMerge.dfy"]}

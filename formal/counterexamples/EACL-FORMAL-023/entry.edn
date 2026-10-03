@@ -13,6 +13,6 @@
  :fix
  "Generated render rejection now preserves the established legacy stale-cursor public shape, and a raw-engine shadow trace deletes the cursor result before continuation so the generated and legacy failures are compared."
  :closing-evidence
- ["eacl.formal.state-trace-differential-test/recursive-shadow-compares-stale-cursor-error-shape"
-  "eacl.formal.production-kernel-test/datascript-public-recursive-cache-modes-compare-generated-javascript"
+ ["eacl.formal.state-trace-differential-test/generated-stale-cursor-error-shape"
+  "eacl.formal.production-kernel-test/datascript-public-recursive-cache-modes-use-generated-javascript"
   "formal mutation :shadow-generated-stale-cursor-adds-direction"]}

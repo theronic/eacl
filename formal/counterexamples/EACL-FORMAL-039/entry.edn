@@ -13,8 +13,9 @@
  :fix
  "Pass every materialized path kind through the generated boundary, stream-check exact ordered path-to-edge derivation, and build the host graph and certificate from that same edge vector. Acceptance now proves exact derivation plus exact SCC classification in P+2V+E certified loop iterations."
  :closing-evidence
- ["eacl.formal.production-kernel-test/generated-java-certifies-production-path-to-edge-derivation"
-  "eacl.formal.production-kernel-test/generated-javascript-certifies-production-path-to-edge-derivation"
+ [;; Historical: eacl.formal.production-kernel-test/generated-java-certifies-production-path-to-edge-derivation
+  ;; and its JavaScript twin were removed with the legacy engine (d96bc4c6).
+  "eacl.verified-kernel-test/routing-certificate-result-is-bound-to-its-input"
   "formal mutation :routing-permission-path-omits-dependency-edge"
   "formal mutation :routing-relation-path-invents-dependency-edge"
   "formal mutation :routing-path-edge-order-unbound"

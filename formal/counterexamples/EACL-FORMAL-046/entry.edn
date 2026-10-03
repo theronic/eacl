@@ -16,6 +16,8 @@
  ["formal/dafny/RootDenotation.dfy/EquivalentRuleBodiesHaveEqualSemanticDenotations"
   "formal/dafny/IndexedRootDenotation.dfy/CertifiedEqualIndexedRootBodiesHaveEqualDenotations"
   "eacl.engine.stable-discovery-gate-test/fingerprint-is-invariant-under-schema-clause-order-test"
-  "eacl.engine.stable-discovery-gate-test/independent-oracle-equality-test"
-  "eacl.bench.subproblem-cache-test/distinct-query-shared-subgraph-cache-benchmark"
-  "formal/verification/performance-gates.edn"]}
+  ;; Historical: eacl.bench.subproblem-cache-test/distinct-query-shared-subgraph-cache-benchmark
+  ;; was retired with the analysis router (3395d961).
+  ;; formal/verification/performance-gates.edn was a generated evidence
+  ;; ledger, removed in 483911d6.
+  "eacl.engine.stable-discovery-gate-test/independent-oracle-equality-test"]}

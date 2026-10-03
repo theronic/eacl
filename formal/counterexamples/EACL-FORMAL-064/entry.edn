@@ -13,8 +13,8 @@
  :fix
  "Use the supported-writer ordered-generation proof frame. Cursor minting reads only the complete dependency generations and stores the scalar frontier, so unrelated later transactions remain valid without relationship-content scans while relevant writes reject the cursor."
  :closing-evidence
- ["ScalarFrontierCoherence.UnrelatedMutationPreservesFrontier"
-  "ScalarFrontierCoherence.RelevantMutationAdvancesFrontier"
+ ["ScalarFrontierCoherence.EqualFrontierHistoryPreservesDependencyStates"
+  "ScalarFrontierCoherence.StampedDependencySetsTheNewFrontier"
   "eacl.engine.stable-page-test/page-composition-test"
   "eacl.engine.stable-page-test/token-rejection-test"
-  "eacl.bench.explorer-enumeration-test/explorer-10000-user-page-does-not-scale-with-denotation"]}
+  "eacl.bench.explorer-enumeration-test/explorer-10000-correctness-work-and-latency-gate"]}
