@@ -192,7 +192,9 @@
     :EACL-FORMAL-098
     eacl.operator.folded-operator-test/a-folded-operator-answers-exactly-like-its-unfolded-twin-test
     :EACL-FORMAL-099
-    eacl.datomic.self-counterexample-test/self-counterexample-replays-on-datomic-test})
+    eacl.datomic.self-counterexample-test/self-counterexample-replays-on-datomic-test
+    :EACL-FORMAL-100
+    eacl.operator.wildcard-anchor-test/listing-succeeds-under-the-default-limits-test})
 
 (defn- read-edn
   [path]

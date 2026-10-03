@@ -14,6 +14,7 @@
   :membership-first-level-certificate :membership-conditional-answered-false
   :operator-guard-ignored :operator-subtracted-guard-flipped
   :operator-nonlinear-recursion-guarded
+  :operator-anchor-ignores-wildcard-cover
   :membership-truncated-holdings-beyond-bound
   :membership-consulted-false-until-absent :reuse-past-certificate-end
   :reuse-key-without-caveat-context :reuse-incomplete-certificate-later
@@ -944,6 +945,16 @@
    :target-symbol "operator-plan/select-intersection-anchor"
    :consumer-symbol "operator-plan/seal-plan"
    :detector "operator-cache-selected-generator-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :operator-anchor-ignores-wildcard-cover
+   :mechanism :executed-production
+   :mutation :select-anchor-from-structural-costs-alone
+   :target-symbol "operator-plan/select-intersection-anchor"
+   :consumer-symbol "operator-lookup/lookup-page"
+   :detector "operator-anchor-ignores-wildcard-cover-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
    {:test

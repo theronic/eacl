@@ -479,4 +479,219 @@ module WildcardSubjects {
       assert 0 !in {1};
     }
   }
+  // ---------------------------------------------------------------------
+  // Covers without a wildcard
+  // ---------------------------------------------------------------------
+
+  // The cover of e generates its lookup candidates: every operand of a
+  // union, the left operand of an exclusion and one operand of an
+  // intersection, its anchor. WildcardCover(e) holds when a relation of that
+  // cover declares the wildcard branch. The anchor is an operand without a
+  // wildcard cover whenever one exists, so an intersection has a wildcard
+  // cover only when both operands do.
+  predicate WildcardCover(sc: Schema, e: Expr, fuel: nat)
+    decreases fuel, e
+  {
+    match e
+    case Rel(x) => sc.allowsWildcard(x)
+    case Perm(p) => fuel > 0 && WildcardCover(sc, sc.body(p), fuel - 1)
+    case Arrow(_, p) => fuel > 0 && WildcardCover(sc, sc.body(p), fuel - 1)
+    case Union(a, b) => WildcardCover(sc, a, fuel) || WildcardCover(sc, b, fuel)
+    case Intersection(a, b) => WildcardCover(sc, a, fuel) && WildcardCover(sc, b, fuel)
+    case Exclusion(a, _) => WildcardCover(sc, a, fuel)
+  }
+
+  // Whether an intersection's anchor is its left operand. When exactly one
+  // operand has no wildcard cover it is the anchor; otherwise `tie` decides,
+  // standing for any order of the operands that does not read relationships.
+  predicate AnchorIsLeft(sc: Schema, tie: (Expr, Expr) -> bool, a: Expr, b: Expr, fuel: nat) {
+    if WildcardCover(sc, a, fuel) != WildcardCover(sc, b, fuel)
+    then WildcardCover(sc, b, fuel)
+    else tie(a, b)
+  }
+
+  // s holds a relationship of its own in the cover of e at r.
+  predicate Anchored(
+    sc: Schema, st: Store, tie: (Expr, Expr) -> bool, e: Expr, s: Subject, r: nat, fuel: nat
+  )
+    decreases fuel, e
+  {
+    match e
+    case Rel(x) => st.tuple(s, x, r) != {}
+    case Perm(p) => fuel > 0 && Anchored(sc, st, tie, sc.body(p), s, r, fuel - 1)
+    case Arrow(via, p) =>
+      fuel > 0
+      && exists t :: t in st.resources && st.edge(via, r, t) != {}
+                     && Anchored(sc, st, tie, sc.body(p), s, t, fuel - 1)
+    case Union(a, b) => Anchored(sc, st, tie, a, s, r, fuel) || Anchored(sc, st, tie, b, s, r, fuel)
+    case Intersection(a, b) =>
+      if AnchorIsLeft(sc, tie, a, b, fuel)
+      then Anchored(sc, st, tie, a, s, r, fuel)
+      else Anchored(sc, st, tie, b, s, r, fuel)
+    case Exclusion(a, _) => Anchored(sc, st, tie, a, s, r, fuel)
+  }
+
+  // Candidate subjects contain every concrete subject of the cover.
+  ghost predicate AnchorCovers(
+    sc: Schema, st: Store, tie: (Expr, Expr) -> bool, e: Expr, r: nat, fuel: nat, candidates: set<nat>
+  ) {
+    forall id: nat :: Anchored(sc, st, tie, e, Concrete(id), r, fuel) ==> id in candidates
+  }
+
+  // W holds nothing through a cover without a wildcard, so its lookup owes
+  // no `*` entry.
+  lemma CoverWithoutWildcardDeniesTheWildcard(
+    sc: Schema, st: Store, variants: bool, e: Expr, r: nat, fuel: nat
+  )
+    requires WellFormed(sc, st)
+    requires !WildcardCover(sc, e, fuel)
+    ensures Eval(sc, st, variants, e, Wildcard, r, fuel) == {}
+    decreases fuel, e
+  {
+    match e
+    case Rel(x) =>
+      assert st.tuple(Wildcard, x, r) == {};
+    case Perm(p) =>
+      if fuel > 0 {
+        CoverWithoutWildcardDeniesTheWildcard(sc, st, variants, sc.body(p), r, fuel - 1);
+      }
+    case Arrow(via, p) =>
+      if fuel > 0 {
+        forall w | w in Eval(sc, st, variants, e, Wildcard, r, fuel)
+          ensures false
+        {
+          var t :| t in st.resources && w in st.edge(via, r, t)
+                   && w in Eval(sc, st, variants, sc.body(p), Wildcard, t, fuel - 1);
+          CoverWithoutWildcardDeniesTheWildcard(sc, st, variants, sc.body(p), t, fuel - 1);
+        }
+      }
+    case Union(a, b) =>
+      CoverWithoutWildcardDeniesTheWildcard(sc, st, variants, a, r, fuel);
+      CoverWithoutWildcardDeniesTheWildcard(sc, st, variants, b, r, fuel);
+    case Intersection(a, b) =>
+      if !WildcardCover(sc, a, fuel) {
+        CoverWithoutWildcardDeniesTheWildcard(sc, st, variants, a, r, fuel);
+      } else {
+        CoverWithoutWildcardDeniesTheWildcard(sc, st, variants, b, r, fuel);
+      }
+    case Exclusion(a, _) =>
+      CoverWithoutWildcardDeniesTheWildcard(sc, st, variants, a, r, fuel);
+  }
+
+  // A subject that holds a permission whose cover has no wildcard holds a
+  // relationship of its own in that cover: the wildcard may grant it the
+  // other operands, never the anchor.
+  lemma GrantedSubjectIsAnchored(
+    sc: Schema, st: Store, tie: (Expr, Expr) -> bool, e: Expr, id: nat, r: nat, fuel: nat
+  )
+    requires WellFormed(sc, st)
+    requires !WildcardCover(sc, e, fuel)
+    requires Check(sc, st, e, id, r, fuel) != {}
+    ensures Anchored(sc, st, tie, e, Concrete(id), r, fuel)
+    decreases fuel, e
+  {
+    match e
+    case Rel(x) =>
+    case Perm(p) =>
+      GrantedSubjectIsAnchored(sc, st, tie, sc.body(p), id, r, fuel - 1);
+    case Arrow(via, p) =>
+      var w :| w in Check(sc, st, e, id, r, fuel);
+      var t :| t in st.resources && w in st.edge(via, r, t)
+               && w in Eval(sc, st, true, sc.body(p), Concrete(id), t, fuel - 1);
+      assert st.edge(via, r, t) != {};
+      GrantedSubjectIsAnchored(sc, st, tie, sc.body(p), id, t, fuel - 1);
+    case Union(a, b) =>
+      if Eval(sc, st, true, a, Concrete(id), r, fuel) != {} {
+        GrantedSubjectIsAnchored(sc, st, tie, a, id, r, fuel);
+      } else {
+        GrantedSubjectIsAnchored(sc, st, tie, b, id, r, fuel);
+      }
+    case Intersection(a, b) =>
+      if AnchorIsLeft(sc, tie, a, b, fuel) {
+        GrantedSubjectIsAnchored(sc, st, tie, a, id, r, fuel);
+      } else {
+        GrantedSubjectIsAnchored(sc, st, tie, b, id, r, fuel);
+      }
+    case Exclusion(a, _) =>
+      GrantedSubjectIsAnchored(sc, st, tie, a, id, r, fuel);
+  }
+
+  // The lookup of a permission whose cover has no wildcard: every candidate
+  // of the cover decided exactly, with no `*` entry and no exclusions.
+  function AnchorListing(sc: Schema, st: Store, e: Expr, r: nat, fuel: nat, candidates: set<nat>): Listing {
+    Listing(
+      map id | id in candidates && Check(sc, st, e, id, r, fuel) != {} :: Check(sc, st, e, id, r, fuel),
+      {},
+      {})
+  }
+
+  function DefiniteAnchorListing(
+    sc: Schema, st: Store, universe: set<nat>, e: Expr, r: nat, fuel: nat, candidates: set<nat>
+  ): Listing {
+    Listing(
+      map id | id in candidates && Check(sc, st, e, id, r, fuel) == universe :: universe,
+      {},
+      {})
+  }
+
+  lemma AnchorListingDenotesExactly(
+    sc: Schema, st: Store, tie: (Expr, Expr) -> bool, e: Expr, r: nat, fuel: nat,
+    candidates: set<nat>, id: nat
+  )
+    requires WellFormed(sc, st)
+    requires !WildcardCover(sc, e, fuel)
+    requires AnchorCovers(sc, st, tie, e, r, fuel, candidates)
+    ensures WildcardDecision(sc, st, e, r, fuel) == {}
+    ensures Denote(AnchorListing(sc, st, e, r, fuel, candidates), id) == Check(sc, st, e, id, r, fuel)
+  {
+    CoverWithoutWildcardDeniesTheWildcard(sc, st, false, e, r, fuel);
+    if id !in candidates && Check(sc, st, e, id, r, fuel) != {} {
+      GrantedSubjectIsAnchored(sc, st, tie, e, id, r, fuel);
+    }
+  }
+
+  lemma DefiniteAnchorListingDenotesExactly(
+    sc: Schema, st: Store, tie: (Expr, Expr) -> bool, universe: set<nat>, e: Expr, r: nat, fuel: nat,
+    candidates: set<nat>, id: nat
+  )
+    requires WellFormed(sc, st) && universe != {}
+    requires !WildcardCover(sc, e, fuel)
+    requires AnchorCovers(sc, st, tie, e, r, fuel, candidates)
+    ensures var granted := Denote(DefiniteAnchorListing(sc, st, universe, e, r, fuel, candidates), id);
+            (granted == universe || granted == {})
+            && (granted == universe <==> Check(sc, st, e, id, r, fuel) == universe)
+  {
+    if id !in candidates && Check(sc, st, e, id, r, fuel) != {} {
+      GrantedSubjectIsAnchored(sc, st, tie, e, id, r, fuel);
+    }
+  }
+
+  // An anchor with a wildcard cover does not list its permission's subjects:
+  // with `viewer & editor`, `viewer: *` and an editor without a viewer
+  // relationship, the editor holds the permission but no relationship in
+  // `viewer`. Such a lookup takes the touch cover instead.
+  lemma WildcardAnchorOmitsAGrantedSubject()
+    ensures var sc := Schema(p => Rel(0), x => x == 0);
+            var st := Store({0}, (s: Subject, x: nat, r: nat) =>
+                              if s == Wildcard && x == 0 then {0}
+                              else if s == Concrete(7) && x == 1 then {0}
+                              else {},
+                            (via: nat, r: nat, t: nat) => {});
+            var e := Intersection(Rel(0), Rel(1));
+            && WellFormed(sc, st)
+            && Check(sc, st, e, 7, 0, 0) == {0}
+            && !Anchored(sc, st, (a, b) => true, Rel(0), Concrete(7), 0, 0)
+            && Anchored(sc, st, (a, b) => true, e, Concrete(7), 0, 0)
+  {
+    var sc := Schema(p => Rel(0), x => x == 0);
+    var st := Store({0}, (s: Subject, x: nat, r: nat) =>
+                      if s == Wildcard && x == 0 then {0}
+                      else if s == Concrete(7) && x == 1 then {0}
+                      else {},
+                    (via: nat, r: nat, t: nat) => {});
+    assert Eval(sc, st, true, Rel(0), Concrete(7), 0, 0) == {0};
+    assert Eval(sc, st, true, Rel(1), Concrete(7), 0, 0) == {0};
+    assert WildcardCover(sc, Rel(0), 0);
+    assert !WildcardCover(sc, Rel(1), 0);
+  }
 }

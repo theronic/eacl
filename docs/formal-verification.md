@@ -242,7 +242,7 @@ source states remain trusted or empirically certified rather than proved.
 
 ### Wildcard-subject assurance boundary
 
-`WildcardSubjects.dfy` contributes 15 obligations. Membership of a concrete
+`WildcardSubjects.dfy` contributes 23 obligations. Membership of a concrete
 subject joins its own relationship with the wildcard's when the relation
 declares `T:*`, over the Caveat worlds of `QualifiedEvidence.dfy`. The model
 proves that a subject without a relationship in a permission's touch cover
@@ -256,6 +256,21 @@ only two conditional derivations grant together. Three model mutants were
 checked by hand and are not registered mutation controls: leaving an
 exclusion's right operand out of the touch cover, dropping the wildcard
 membership, and excluding only denied subjects each falsify a theorem.
+
+The model also covers the lookup that takes no touch cover. A permission's
+cover follows every operand of a union, the left operand of an exclusion and
+one operand of an intersection, its anchor; the anchor is an operand whose
+cover declares no wildcard whenever one exists. When the cover declares no
+wildcard, the wildcard holds nothing through it, every subject that holds
+the permission holds a relationship of its own in the cover, and listing the
+cover's subjects decided exactly, with no `*` entry, denotes every subject's
+permission exactly under both result policies. A witness shows that an anchor
+whose cover declares the wildcard omits a granted subject. The planner's
+counterpart is `eacl.operator.plan/select-intersection-anchor`:
+`eacl.operator.plan-test` checks that a sealed root carries `:wildcard-cover?`
+exactly when its sealed cover holds a wildcard rule, and the registered
+control `:operator-anchor-ignores-wildcard-cover` kills an anchor chosen from
+structural costs alone.
 
 The model is proof-only and bounds recursion by fuel. The engine
 correspondence is empirical: `formal/fixtures/wildcards/` (SpiceDB v1.56.0

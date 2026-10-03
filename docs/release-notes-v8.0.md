@@ -887,6 +887,19 @@ concrete branches. A relationship whose subject is `(eacl/spice-object :user
 - Schemas without wildcards keep their plans, fingerprints, cursors and cache
   keys. Upgrade every serving Peer before writing a schema that uses
   wildcards.
+- A lookup or count of an intersection generates its candidates from an
+  operand that no wildcard relation reaches when it has one. Before,
+  `permission open = view & subscribed`, with `subscribed` granted by a
+  wildcard on every resource, listed a subject's five resources by reading
+  68 values per resource of the platform and failed with
+  `:eacl.recursive-traversal/limit-exceeded` from 1,471 resources
+  (EACL-FORMAL-100); it now reads the subject's own `view` relationships.
+  A plan with an intersection or exclusion that reads a wildcard relation has
+  a new fingerprint, so a cursor that 8.0.0-RC-2026-10-02 issued for such a
+  plan is refused with `:eacl.pagination/invalid-cursor`, and the
+  plan-compatibility identity gains `:intersection-anchor`, so completed
+  answers and cache snapshots of that release are not reused. Every other
+  plan keeps its fingerprint and cursors.
 
 The behavior is compared with SpiceDB v1.56.0's answers to 72 requests
 ([fixture](../formal/fixtures/wildcards/README.md)), with an independent

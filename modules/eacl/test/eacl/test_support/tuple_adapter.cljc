@@ -22,8 +22,12 @@
   the deterministic relation ids the sealed plan sees, and both scan
   directions honor strict endpoint order and exclusive or inclusive bounds.
   A qualified tuple scans as the packed `[endpoint qualifier-id]` edge, as
-  native adapters return it; qualification itself is the caller's."
-  [validated relationships]
+  native adapters return it; qualification itself is the caller's.
+
+  With `{:wildcard-eid eid}`, a relation that declares `T:*` names `eid` as
+  its wildcard subject, as native adapters do, and a tuple whose subject is
+  `eid` is a wildcard relationship."
+  [validated relationships & [{:keys [wildcard-eid]}]]
   (let [candidate (persistence/candidate-schema validated)
         relation-key (juxt :eacl.relation/resource-type
                            :eacl.relation/relation-name
@@ -32,10 +36,14 @@
                   (sort-by relation-key)
                   (map-indexed
                    (fn [index relation]
-                     {:relation-id (+ 100 index)
-                      :resource-type (:eacl.relation/resource-type relation)
-                      :relation-name (:eacl.relation/relation-name relation)
-                      :subject-type (:eacl.relation/subject-type relation)}))
+                     (cond-> {:relation-id (+ 100 index)
+                              :resource-type (:eacl.relation/resource-type relation)
+                              :relation-name (:eacl.relation/relation-name relation)
+                              :subject-type (:eacl.relation/subject-type relation)}
+                       (and wildcard-eid
+                            (contains? relation
+                                       :eacl.relation/allows-unqualified-wildcard?))
+                       (assoc :wildcard-eid wildcard-eid))))
                   vec)
         relation-ids (into {}
                            (map (fn [row]
@@ -99,7 +107,8 @@
         :relation-defs
         (fn [resource-type relation-name]
           (mapv #(select-keys % [:relation-id :resource-type
-                                 :relation-name :subject-type])
+                                 :relation-name :subject-type
+                                 :wildcard-eid])
                 (get relations [resource-type relation-name] [])))
         :permission-expression
         (fn [resource-type permission-name]
@@ -131,5 +140,5 @@
         :all-permission-nodes (constantly (set (keys expressions)))})})))
 
 (defn from-schema
-  [schema-source relationships]
-  (from-validated (resolver/validate-schema schema-source) relationships))
+  [schema-source relationships & [options]]
+  (from-validated (resolver/validate-schema schema-source) relationships options))

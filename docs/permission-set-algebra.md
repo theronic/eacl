@@ -131,6 +131,37 @@ arrow. `lookup-subjects` returns the wildcard as the subject `*` and lists the
 subjects that an intersection or exclusion withholds it from under
 `:excluded-subjects`. See [Wildcard Subjects](../README.md#wildcard-subjects).
 
+A wildcard relationship belongs to no subject, so a lookup that enumerates a
+wildcard relation enumerates every resource the wildcard reaches, for every
+subject. A lookup or count of an intersection enumerates one operand and
+decides the others for each candidate, and EACL enumerates an operand that no
+wildcard relation reaches whenever the intersection has one:
+
+```zed
+definition subscription {
+  relation everyone: user:*
+}
+
+definition ledger {
+  relation owner: user
+  relation subscription: subscription
+  permission view = owner
+  permission subscribed = subscription->everyone
+  permission open = view & subscribed
+}
+```
+
+Listing a user's `open` ledgers reads that user's `view` relationships and
+decides `subscribed` for each of those ledgers, however many ledgers have a
+subscription. The same holds whatever the wildcard operand is called and
+wherever it stands in the intersection, through arrows, unions and other
+permissions, and for a wildcard relation on the resource itself
+(`relation subscriber: user:*`, `view & subscriber`). When a wildcard relation
+reaches every operand, as in `subscriber & public`, the lookup enumerates the
+resources one of them reaches. EACL decides this from the schema alone, so a
+relation that declares `user:*` counts as reached by the wildcard whether or
+not a wildcard relationship is stored.
+
 [Caveats and expiration](caveats.md) can qualify relationships used by these
 expressions. An expired ban can restore access, just as an expired grant can
 remove it.

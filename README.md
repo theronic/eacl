@@ -1391,6 +1391,12 @@ the permission's relations to compute its exclusions, even with a small page
 size. Declaring wildcard support alone does not trigger that scan: EACL first
 checks whether the positive permission paths reach a stored wildcard tuple.
 
+`lookup-resources` and `count-resources` of an intersection enumerate an
+operand that no wildcard relation reaches when the intersection has one, so
+`permission open = view & subscribed` costs what the subject's `view` costs
+even when a wildcard grants `subscribed` on every resource
+([details](docs/permission-set-algebra.md#wildcard-subjects)).
+
 A Caveated wildcard branch requires its Caveat on every wildcard
 relationship, and the Caveat is evaluated for each subject:
 

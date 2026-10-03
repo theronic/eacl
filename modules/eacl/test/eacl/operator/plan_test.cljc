@@ -84,10 +84,14 @@
               (sort-by relation-key)
               (map-indexed
                (fn [index relation]
-                 {:relation-id (+ 100 index)
-                  :resource-type (:eacl.relation/resource-type relation)
-                  :relation-name (:eacl.relation/relation-name relation)
-                  :subject-type (:eacl.relation/subject-type relation)}))
+                 (cond-> {:relation-id (+ 100 index)
+                          :resource-type (:eacl.relation/resource-type relation)
+                          :relation-name (:eacl.relation/relation-name relation)
+                          :subject-type (:eacl.relation/subject-type relation)}
+                   ;; A relation that declares `T:*` names the wildcard
+                   ;; subject, as every backend's `:relation-defs` does.
+                   (contains? relation :eacl.relation/allows-unqualified-wildcard?)
+                   (assoc :wildcard-eid 1))))
               vec)
          relations (group-by (juxt :resource-type :relation-name)
                              relation-rows)
@@ -115,7 +119,8 @@
            :relation-defs
            (fn [resource-type relation-name]
              (mapv #(select-keys % [:relation-id :resource-type
-                                     :relation-name :subject-type])
+                                    :relation-name :subject-type
+                                    :wildcard-eid])
                    (get relations [resource-type relation-name] [])))
            :permission-expression
            (fn [resource-type permission-name]
@@ -405,6 +410,194 @@
       (is (= (:children (get program union-id))
              (plan/operand-order (dissoc sealed :operand-orders) [:folder :view] union-id
                                  (get program union-id)))))))
+
+(def ^:private wildcard-anchor-schema
+  "Intersections whose operands differ in whether a wildcard relation can
+  generate their candidates."
+  "definition user {}
+   definition plan {
+     relation subscriber: user:*
+   }
+   definition subscription {
+     relation plan: plan
+     relation everyone: user:*
+     permission subscriber = plan->subscriber
+   }
+   definition ledger {
+     relation parent: ledger
+     relation owner: user
+     relation viewer: user
+     relation subscription: subscription
+     relation subscriber: user:*
+     relation shared: user | user:*
+     relation public: user:*
+     permission view = owner + viewer
+     permission subscribed = subscription->everyone
+     permission zsubscribed = subscription->everyone
+     permission planned = subscription->subscriber
+     permission tree = owner + parent->tree
+     permission public_tree = public + parent->public_tree
+     permission named = view & subscribed
+     permission named_swapped = subscribed & view
+     permission renamed = view & zsubscribed
+     permission inline = view & subscription->everyone
+     permission direct = owner & subscriber
+     permission direct_named = view & subscriber
+     permission direct_mixed = view & shared
+     permission two_arrows = view & planned
+     permission union_operand = view & (owner + subscriber)
+     permission recursive_wildcard = view & public_tree
+     permission excluded_wildcard = view & (subscriber - owner)
+     permission bounded_exclusion = public & (owner - subscriber)
+     permission owned_subscription = owner & subscriber
+     permission bounded_intersection = public & owned_subscription
+     permission both_wildcard = subscriber & public
+     permission wildcard_exclusion = subscriber - owner
+     permission wildcard_union = public + (owner & viewer)
+     permission loop_bounded = subscriber & loop_union
+     permission loop_union = owner + loop_bounded
+     permission loop_wildcard = owner & loop_open
+     permission loop_open = subscriber + loop_wildcard
+   }")
+
+(defn- describe-node
+  "A plan node without ids: its operator and operands, down to its leaves."
+  [program node-id]
+  (let [{:keys [instruction descriptor target-node children left right]} (get program node-id)]
+    (case instruction
+      :direct-membership [:relation (:relation descriptor)]
+      :arrow-membership [:arrow (:relation descriptor)]
+      :permission-membership [:permission (second target-node)]
+      :any-true (into [:union] (map #(describe-node program %)) children)
+      :all-true (into [:intersection] (map #(describe-node program %)) children)
+      :left-and-not-right [:exclusion (describe-node program left) (describe-node program right)])))
+
+(defn- root-anchor
+  "The sealed anchor of `permission`'s root intersection, described."
+  [sealed permission]
+  (let [program (get-in sealed [:predicate-programs permission])
+        root (get (plan/expression-roots sealed) permission)]
+    (describe-node program (get-in sealed [:anchors permission root]))))
+
+(deftest an-intersection-generates-from-an-operand-no-wildcard-reaches-test
+  (let [adapter (adapter wildcard-anchor-schema :wildcard-anchor)
+        anchor (fn [permission]
+                 (root-anchor (plan/seal-plan adapter [:ledger permission]) [:ledger permission]))]
+    (testing "whatever the wildcard operand is called and wherever it stands"
+      (is (= [:permission :view] (anchor :named)))
+      (is (= [:permission :view] (anchor :named_swapped)))
+      (is (= [:permission :view] (anchor :renamed)))
+      (is (= [:permission :view] (anchor :inline))))
+    (testing "a wildcard relation on the resource itself is no anchor either"
+      (is (= [:relation :owner] (anchor :direct)))
+      (is (= [:permission :view] (anchor :direct_named)))
+      (is (= [:permission :view] (anchor :direct_mixed))
+          "a relation that also admits concrete subjects still reads its wildcard"))
+    (testing "the wildcard is found through arrows, unions, recursion and an exclusion's left operand"
+      (is (= [:permission :view] (anchor :two_arrows)))
+      (is (= [:permission :view] (anchor :union_operand)))
+      (is (= [:permission :view] (anchor :recursive_wildcard)))
+      (is (= [:permission :view] (anchor :excluded_wildcard))))
+    (testing "an operand that itself generates from a bounded operand is bounded"
+      (is (= [:exclusion [:relation :owner] [:relation :subscriber]]
+             (anchor :bounded_exclusion))
+          "an exclusion generates from its left operand")
+      (is (= [:permission :owned_subscription] (anchor :bounded_intersection))
+          "an intersection generates from its own anchor"))
+    (testing "recursion through an intersection takes the least fixed point"
+      (is (= [:permission :loop_union] (anchor :loop_bounded))
+          "`loop_union` reaches the wildcard only through this intersection's own filter")
+      (is (= [:relation :owner] (anchor :loop_wildcard))))
+    (testing "when a wildcard reaches every operand the structural order decides"
+      (is (= [:relation :public] (anchor :both_wildcard))))))
+
+(deftest a-wildcard-cover-is-sealed-in-the-costs-where-it-holds-test
+  (let [adapter (adapter wildcard-anchor-schema :wildcard-costs)
+        sealed (plan/seal-plan adapter [:ledger :bounded_exclusion])
+        flagged (fn [permission]
+                  (let [program (get-in sealed [:predicate-programs permission])]
+                    (into #{}
+                          (keep (fn [[node-id cost]]
+                                  (when (:wildcard-cover? cost)
+                                    (describe-node program node-id))))
+                          (get-in sealed [:costs permission]))))]
+    (testing "only the nodes a wildcard relation can generate carry the flag"
+      (is (= #{[:relation :public] [:relation :subscriber]}
+             (flagged [:ledger :bounded_exclusion]))))
+    (testing "the flag is authenticated: a plan without it is not this plan"
+      (is (= sealed (plan/validate-plan adapter sealed)))
+      (let [node-id (some (fn [[node-id cost]] (when (:wildcard-cover? cost) node-id))
+                          (get-in sealed [:costs [:ledger :bounded_exclusion]]))]
+        (is (= :fingerprint-mismatch
+               (:reason (error-data
+                         #(plan/validate-plan
+                           adapter
+                           (update-in sealed [:costs [:ledger :bounded_exclusion] node-id]
+                                      dissoc :wildcard-cover?))))))))))
+
+(deftest the-wildcard-cover-flag-names-the-covers-that-read-a-wildcard-test
+  ;; The flag is derived from the expressions; the cover is sealed from the
+  ;; anchors it selects. A root carries the flag exactly when its sealed
+  ;; cover holds a wildcard rule.
+  (let [adapter (adapter wildcard-anchor-schema :wildcard-cover)
+        observed
+        (into (sorted-map)
+              (keep (fn [permission]
+                      (let [sealed (plan/seal-plan adapter [:ledger permission])]
+                        (when (plan/operator-plan? sealed)
+                          (let [root (get (plan/expression-roots sealed) [:ledger permission])]
+                            [permission
+                             [(true? (get-in sealed [:costs [:ledger permission] root :wildcard-cover?]))
+                              (boolean (some :wildcard-eid
+                                             (:rules (cover-plan/seal-plan adapter sealed))))]])))))
+              [:named :named_swapped :renamed :inline :direct :direct_named :direct_mixed
+               :two_arrows :union_operand :recursive_wildcard :excluded_wildcard
+               :bounded_exclusion :owned_subscription :bounded_intersection :both_wildcard
+               :wildcard_exclusion :wildcard_union :loop_bounded :loop_union :loop_wildcard
+               :loop_open])]
+    (is (= 21 (count observed)) "every listed permission seals an operator plan")
+    (doseq [[permission [flagged? wildcard-rule?]] observed]
+      (is (= flagged? wildcard-rule?) (str permission)))
+    (is (= #{:both_wildcard :wildcard_exclusion :wildcard_union :loop_open}
+           (into #{} (keep (fn [[permission [flagged?]]] (when flagged? permission))) observed)))))
+
+(def ^:private concrete-anchor-schema
+  "definition user {}
+   definition folder {
+     relation parent: folder
+     relation viewer: user
+     relation eligible: user
+     permission tree = viewer + parent->tree
+     permission gated = eligible & tree
+     permission arrowed = eligible & parent->tree
+   }")
+
+(deftest plans-without-a-wildcard-keep-their-costs-and-anchors-test
+  (testing "a concrete relation still generates an intersection with a recursive permission"
+    (let [adapter (adapter concrete-anchor-schema :concrete-anchor)]
+      (is (= [:relation :eligible]
+             (root-anchor (plan/seal-plan adapter [:folder :gated]) [:folder :gated])))
+      (is (= [:relation :eligible]
+             (root-anchor (plan/seal-plan adapter [:folder :arrowed]) [:folder :arrowed])))))
+  (testing "no cost entry changes, and every anchor is the structurally cheapest operand"
+    (doseq [[schema root] [[direct-operator-schema [:document :view]]
+                           [nested-schema [:document :view]]
+                           [delegation-schema [:folder :removable]]
+                           [delegation-schema [:folder :either]]
+                           [delegation-schema [:folder :inherited]]
+                           [operand-order-schema [:folder :view]]
+                           [concrete-anchor-schema [:folder :gated]]]]
+      (let [sealed (plan/seal-plan (adapter schema :unchanged) root)]
+        (doseq [[permission costs] (:costs sealed)
+                [node-id cost] costs]
+          (is (= #{:depth :work :direct? :sequence-compatible? :tuple} (set (keys cost)))
+              (str permission " node " node-id)))
+        (doseq [[permission anchors] (:anchors sealed)
+                [node-id anchor] anchors
+                :let [children (get-in sealed [:predicate-programs permission node-id :children])
+                      costs (get-in sealed [:costs permission])]]
+          (is (= (first (sort-by #(get-in costs [% :tuple]) children)) anchor)
+              (str permission " node " node-id)))))))
 
 (def ^:private self-operand-order-schema
   "use self

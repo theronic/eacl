@@ -323,13 +323,20 @@
      :definite-touch-listing-denotes-exactly
      :union-listing-denotes-exactly
      :definite-union-listing-is-sound
-     :complementary-conditionals-witness]
+     :complementary-conditionals-witness
+     :cover-without-wildcard-denies-the-wildcard
+     :granted-subject-is-anchored
+     :anchor-listing-denotes-exactly
+     :definite-anchor-listing-denotes-exactly
+     :wildcard-anchor-omits-a-granted-subject]
     :dafny ["formal/dafny/WildcardSubjects.dfy"]
     :adapter-obligations
     [:wildcard-relationships-only-on-declared-branches
      :one-wildcard-subject-entity-per-database
      :touch-cover-contains-every-subject-with-a-closure-relationship
-     :exact-operator-decision-for-each-touch-cover-subject]
+     :exact-operator-decision-for-each-touch-cover-subject
+     :positive-cover-contains-every-subject-with-a-cover-relationship
+     :sealed-wildcard-cover-mark-matches-the-sealed-cover-rules]
     :runtime-targets [:clj-java :cljs-javascript]
     :remaining
     [:engine-source-refinement
