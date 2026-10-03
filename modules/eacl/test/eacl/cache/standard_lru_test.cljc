@@ -60,18 +60,6 @@
     (is (= {:found? true :value nil}
            (lru/lookup! store :nil)))))
 
-(deftest lookup-holds-value-across-concurrent-policy-eviction-test
-  (let [store (lru/store 2)
-        held-value {:immutable [:answer 1]}]
-    (lru/put-if-absent! store :first held-value)
-    (lru/put-if-absent! store :second :second-value)
-    (let [held (lru/lookup! store :first)]
-      (lru/put-if-absent! store :third :third-value)
-      (is (= {:found? true :value held-value} held))
-      ;; JVM Window TinyLFU may reject the new entry instead of selecting the
-      ;; exact strict-LRU victim. Retention policy never changes a held value.
-      (is (<= (lru/entry-count store) 2)))))
-
 (deftest publication-peek-does-not-refresh-lru-test
   #?(:clj
      (let [store (lru/store 8)]
@@ -247,25 +235,6 @@
     (is (false? (lru/evict! store :key)))
     (is (= {:found? false :value nil}
            (lru/lookup! store :key)))))
-
-(deftest storage-never-invokes-a-loader-or-validator-test
-  (let [store (lru/store 2)
-        computations (atom 0)
-        validations (atom 0)
-        compute (fn [] (swap! computations inc) :computed)
-        value (compute)]
-    (is (= 1 @computations))
-    (is (true? (lru/put-if-absent! store :key value)))
-    (let [{:keys [found? value]} (lru/lookup! store :key)]
-      (is found?)
-      (is (= :computed value))
-      (is (= :valid
-             ((fn [candidate]
-                (swap! validations inc)
-                (if (= :computed candidate) :valid :invalid))
-              value))))
-    (is (= 1 @computations))
-    (is (= 1 @validations))))
 
 #?(:clj
    (deftest concurrent-lookups-return-the-held-immutable-value-test

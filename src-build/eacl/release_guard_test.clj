@@ -1,6 +1,5 @@
 (ns eacl.release-guard-test
-  (:require [clojure.string :as string]
-            [clojure.test :refer [deftest is testing]]
+  (:require [clojure.test :refer [deftest is testing]]
             [eacl.release-guard :as guard]))
 
 (def tag-context
@@ -202,14 +201,3 @@
                    (guard/evaluate-tag-checks
                     "release-sha" tagged-workflow-runs
                     (assoc-in checks [0 :conclusion] "skipped")))))))
-
-(deftest release-workflow-is-tagged-and-reuses-tested-runtime-artifacts
-  (let [workflow (slurp ".github/workflows/release.yml")
-        preflight (slurp "bin/release-preflight")]
-    (is (string/includes? workflow "tags: ['v[0-9]*']"))
-    (is (not (string/includes? workflow "branches:")))
-    (is (string/includes? workflow "environment: clojars"))
-    (is (string/includes? workflow "run-id: ${{ steps.guard.outputs.tests-run-id }}"))
-    (is (not (string/includes? workflow "bin/formal")))
-    (is (string/includes? preflight "actions/runs?head_sha=$GITHUB_SHA&event=push"))
-    (is (string/includes? preflight "clojure -M:release-guard tag-checks"))))

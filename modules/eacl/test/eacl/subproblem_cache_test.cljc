@@ -580,18 +580,25 @@
     (is (= :eacl/cache-snapshot-incompatible
            (failure-type one-entry #(throw (ex-info "invalid" {:entry %})))))
     (is (= :eacl/cache-snapshot-incompatible
-           (failure-type
+           (failure-type (assoc one-entry :entry-count 2) (constantly true)))
+        "the declared entry count must match the entries")
+    (let [page-snapshot
+          (fn [size]
             {:format subproblem/snapshot-format
              :entries [{:tier :answer
-                        :key (storage-key :answer :large-page)}
-                       :value
-                       {:format :eacl.cache/completed-answer-v3
-                        :value (page 1001)
-                        :cache-basis {:basis 1}
-                        :computed-revision 1
-                        :computed-exact-locator 1}]
-             :entry-count 1}
-            (constantly true))))))
+                        :key (storage-key :answer :large-page)
+                        :value
+                        {:format :eacl.cache/completed-answer-v3
+                         :value (page size)
+                         :cache-basis {:basis 1}
+                         :computed-revision 1
+                         :computed-exact-locator 1}}]
+             :entry-count 1})]
+      ;; The two snapshots differ only in page size, so the rejection is the
+      ;; page guard and not an earlier structural check.
+      (is (nil? (failure-type (page-snapshot 1000) (constantly true))))
+      (is (= :eacl/cache-snapshot-incompatible
+             (failure-type (page-snapshot 1001) (constantly true)))))))
 
 (deftest removed-projection-and-weight-options-fail-closed-test
   (doseq [removed-option [:projection-max-entries

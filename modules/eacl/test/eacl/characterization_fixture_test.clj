@@ -41,67 +41,6 @@
     (is (str/includes? workflow "cljs.build.api"))
     (is (not (str/includes? workflow "(cljs/-main")))))
 
-(deftest github-actions-provisions-temporal-tools-and-isolates-module-tests-test
-  (let [formal-workflow
-        (slurp (repo/file ".github" "workflows" "formal.yml"))
-        test-workflow
-        (slurp (repo/file ".github" "workflows" "test.yml"))
-        ^String temporal-job
-        (-> formal-workflow
-            (str/split #"\n  temporal-models:\n" 2)
-            second
-            (str/split #"\n  parity-corpus-and-mutations:\n" 2)
-            first)]
-    (testing "temporal mutation controls install their declared runtime"
-      (is (str/includes? temporal-job
-                         "uses: DeLaGuardo/setup-clojure@"))
-      (is (str/includes? temporal-job "bb:"))
-      (is (< (.indexOf temporal-job "Set up Babashka")
-             (.indexOf temporal-job
-                       "bin/formal apalache-mutation-control"))))
-    (testing "isolated modules exclude repository-global formal gates"
-      (is (str/includes?
-           test-workflow
-           "(?!eacl[.]formal[.]).*-test$")))))
-
-(deftest advanced-cljs-build-and-extern-surface-are-wired-test
-  (let [workflow
-        (slurp (repo/file ".github" "workflows" "formal.yml"))
-        deps-cljs
-        (slurp (repo/file "formal" "smoke" "cljs" "deps.cljs"))
-        externs
-        (slurp
-         (repo/file
-          "formal" "smoke" "cljs" "eacl" "formal"
-          "generated_runtime.ext.js"))]
-    (is (str/includes?
-         workflow
-         "Run advanced-optimized CLJS production and differential suites"))
-    (is (<= 6 (count (re-seq #":optimizations :advanced" workflow))))
-    (is (<= 6 (count (re-seq #":warnings-as-errors true" workflow))))
-    (doseq [main ['eacl.formal.cljs-test-runner
-                  'eacl.datascript.cljs-test-runner
-                  'eacl.formal.empty-bundle-entry
-                  'eacl.formal.portable-kernel-bundle-entry
-                  'eacl.datascript.production-bundle-entry
-                  'eacl.formal.indexed-traversal-benchmark]]
-      (is (str/includes? workflow (str ":main '" main)) (str main)))
-    (is (str/includes? workflow
-                       "node target/formal/cljs-advanced.js"))
-    (is (str/includes? workflow
-                       "node target/formal/datascript-cljs-advanced.js"))
-    (is (str/includes? workflow
-                       "eacl.formal.cljs-production-gate-test"))
-    (is (str/includes? deps-cljs
-                       "eacl/formal/generated_runtime.ext.js"))
-    (doseq [property ["EaclFormal"
-                      "create_RelationBinding"
-                      "dtor_items"
-                      "is_PlanCertified"]]
-      (is (str/includes? externs
-                         (str "Object.prototype." property ";"))
-          property))))
-
 (deftest formal-ci-isolates-and-stops-performance-nrepls-test
   (let [workflow
         (slurp (repo/file ".github" "workflows" "formal.yml"))

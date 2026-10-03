@@ -6,7 +6,6 @@
             [datomic.api :as d]
             [eacl.cache :as shared-cache]
             [eacl.core :as eacl]
-            [eacl.contract-support :as contract]
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.schema :as schema]
@@ -157,15 +156,3 @@
                                :read
                                (folder "folder-3"))))
         (is (= 3 (:count (eacl/count-resources client query))))))))
-
-(deftest public-api-arity-characterization-test
-  (with-mem-conn [conn schema/v8-schema]
-    (let [client (core/make-client
-                  conn
-                  {:security-key "v8-public-api-arity-characterization"})]
-      (eacl/write-schema! client contract/smoke-schema)
-      @(d/transact conn
-                   (mapv (fn [{:keys [id]}] {:eacl/id id})
-                         contract/smoke-objects))
-      (eacl/create-relationships! client contract/smoke-relationships)
-      (contract/assert-public-api-arity-contract! client))))

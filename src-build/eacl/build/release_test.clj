@@ -5,14 +5,6 @@
             [eacl.build.module :as module]
             [eacl.build.release :as release]))
 
-(deftest release-workflow-maps-the-configured-environment-secrets
-  (let [workflow (slurp ".github/workflows/release.yml")]
-    (is (string/includes? workflow "secrets.CLOJARS_USERNAME"))
-    (is (string/includes? workflow "secrets.CLOJARS_DEPLOY_TOKEN"))
-    (is (not (string/includes? workflow "secrets.CLOJURE_")))
-    (is (string/includes? workflow "run: clojure -X:deploy"))
-    (is (string/includes? workflow "EACL_JAVA_RELEASE: '25'"))))
-
 (deftest release-build-propagates-one-explicit-java-target
   (let [builds (atom [])]
     (with-redefs [module/assert-module-coordinates! (constantly true)

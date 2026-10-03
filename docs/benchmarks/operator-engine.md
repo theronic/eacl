@@ -14,7 +14,7 @@ Use a project nREPL with the `:dev:test` aliases:
 
 ```sh
 clj-nrepl-eval -p <port> "(require 'eacl.engine.physical-route-test :reload) (clojure.test/run-tests 'eacl.engine.physical-route-test)"
-clj-nrepl-eval -p <port> "(require 'eacl.operator-engine.experiments-test :reload) (clojure.test/run-tests 'eacl.operator-engine.experiments-test)"
+clj-nrepl-eval -p <port> "(require 'eacl.operator-engine.experiments :reload) (eacl.operator-engine.experiments/run-all)"
 clj-nrepl-eval -p <port> "(require 'eacl.baseline.perf :reload) (eacl.baseline.perf/capture-perf!)"
 ```
 

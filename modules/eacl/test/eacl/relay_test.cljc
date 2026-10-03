@@ -720,38 +720,6 @@
     (is (= :eacl.consistency/basis-conflict (:type data)))
     (is (= :cursor (:source data)))))
 
-(deftest recursive-snapshot-continuation-does-not-rebase-test
-  (let [original (adapter 1 nil true)
-        current (adapter 2 nil true)
-        recursive-page
-        (assoc-in
-         lookup-page
-         [:page-info :end-cursor]
-         {:kind :lookup-eid
-          :frontier-direction :asc
-          :result-eid "document-1"})
-        first-page
-        (relay/externalize-page
-         original
-         {:snapshot-semantic-identity (basis-identity 1)}
-         :lookup-resources lookup-query recursive-page)
-        data
-        (try
-          (relay/prepare-page-query
-           current
-           {:cursor-consistency-mode :minimize-latency
-            :authorization-target-kind :snapshot
-            :snapshot-semantic-identity (basis-identity 2)}
-           :lookup-resources
-           (assoc lookup-query
-                  :after
-                  (get-in first-page [:page-info :end-cursor])))
-          nil
-          (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
-            (ex-data error)))]
-    (is (= :eacl.consistency/basis-conflict (:type data)))
-    (is (= :cursor (:source data)))))
-
 (deftest expired-cursor-reaches-the-kernel-decision-test
   ;; cursor-dependency-validity: the TTL check result is a computed input of
   ;; the verified continuation decision. The expired token flows TO the

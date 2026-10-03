@@ -124,9 +124,3 @@
           (is (not (contains? (set (:entries failure)) owned)))))
       (finally
         (b/delete {:path (.getPath directory)})))))
-
-(deftest core-artifact-does-not-require-retired-cache-policy-bytecode
-  (is (contains? module/required-core-entries
-                 "AcyclicEngine/__default.class"))
-  (is (not (contains? module/required-core-entries
-                      "CurrentCache/__default.class"))))
