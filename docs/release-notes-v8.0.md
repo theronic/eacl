@@ -289,12 +289,13 @@ Caller-supplied cache providers are rejected at construction because they do
 not control the native completed-answer or continuation stores. Continuation
 state remains isolated in a bounded private store.
 
-`:cache-attempt` now names only controls the live private-cache path consumes:
-`:evaluation-reserve-ms` (default `10`) and
-`:maximum-atomic-attempts` (default `4`). Decorative stage-timeout,
-encoded-byte, decoded-weight, and candidate-count controls are rejected. Native
-per-tier/per-entry weights remain construction-time cache limits, while the
-single request `:timeout-ms` remains the end-to-end deadline.
+`:cache-attempt` is not an option. `make-client` rejects it as an unknown key
+with `:eacl/invalid-config`, and a request that carries it is rejected as an
+unknown key as well. There are no evaluation-reserve, publication-attempt,
+stage-timeout, byte, weight, or candidate-count controls. Cache capacity is a
+positive entry count per store, set under `:cache` at construction (see
+[cache behavior and recovery](cache.md)), and the single request `:timeout-ms`
+remains the end-to-end deadline.
 
 Bounded reads also accept a per-request `:cancellation-token` created by
 `eacl.core/cancellation-token`. `eacl.core/cancel!` is idempotent; the next
