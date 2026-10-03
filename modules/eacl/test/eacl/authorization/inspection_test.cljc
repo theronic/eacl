@@ -6,10 +6,12 @@
             [eacl.relationships.inspection :as inspection]))
 
 (deftest stored-inspection-never-evaluates-or-compiles-a-caveat
-  (doseq [time [99 100 101]]
+  (doseq [time [99 100 101]
+          ;; Inspection needs no evaluator and never calls one it is given.
+          evaluator [{:evaluator nil} {}]]
     (let [calls (atom 0)
           reads (atom {})
-          request (fixtures/request {:time time :calls calls :reads reads :evaluator nil})]
+          request (fixtures/request (merge {:time time :calls calls :reads reads} evaluator))]
       (with-redefs [plan/compile-plan (fn [& _] (throw (ex-info "Unexpected compilation" {})))]
         (is (= {:caveat "enabled" :valid-until-ms 100}
                (qualification/inspect request 1 3)))

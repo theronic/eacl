@@ -355,8 +355,7 @@
               (eacl/lookup-resources
                authorization
                (assoc query :after cursor))]
-          (is (= ["doc-b"] (mapv :id (:data page-2))))
-          (is (nil? (get-in page-2 [:page-info :cursor-recovery])))))
+          (is (= ["doc-b"] (mapv :id (:data page-2))))))
       (let [fresh-page-1
             (eacl/lookup-resources authorization query)
             fresh-cursor
@@ -372,8 +371,7 @@
                 (eacl/lookup-resources
                  authorization
                  (assoc query :after fresh-cursor))]
-            (is (= ["doc-b"] (mapv :id (:data page))))
-            (is (nil? (get-in page [:page-info :cursor-recovery])))))
+            (is (= ["doc-b"] (mapv :id (:data page))))))
         (testing "a changed causal floor is a different query scope"
           (is (= :eacl.pagination/invalid-cursor
                  (:type

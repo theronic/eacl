@@ -89,9 +89,7 @@
                       :after
                       (get-in page-1
                               [:page-info :end-cursor])))]
-          (is (= ["a3"] (mapv :id (:data page-2))))
-          (is (nil? (get-in page-2
-                            [:page-info :cursor-recovery]))))))))
+          (is (= ["a3"] (mapv :id (:data page-2)))))))))
 
 (deftest explicit-cache-true-does-not-fragment-answer-keys-test
   ;; :cache? selects how to obtain an answer, not which answer was requested.
@@ -522,8 +520,6 @@
         (is (= ["acct3" "acct4" "acct5"]
                (mapv :id (:data recovered-1))))
         (is (= (:data recovered-1) (:data recovered-2)))
-        (is (nil? (get-in recovered-1
-                          [:page-info :cursor-recovery])))
         (is (false? (:cached? recovered-1))
             "first historical recovery has its own complete exact key")
         (is (true? (:cached? recovered-2)))

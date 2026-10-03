@@ -18,7 +18,6 @@
             [eacl.core :as eacl :refer [->Relationship spice-object]]
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
-            [eacl.datomic.impl.indexed :as idx]
             [eacl.datomic.schema :as schema]
             [eacl.engine.v8 :as engine]))
 
@@ -222,7 +221,7 @@
 ;; stale cache at all. That gap matters now that exact-result entries are keyed
 ;; by per-relation stamps: an answer stays cached until a relation in ITS
 ;; dependency set is written, and the dependency set comes from
-;; idx/permission-relationship-eids walking the permission graph. If that walk
+;; engine/permission-relationship-eids walking the permission graph. If that walk
 ;; ever misses a relation — an arrow target, a nested self-permission, a
 ;; recursive back-edge — the epoch will not move for a write that changes the
 ;; answer, and the cache serves a revoked grant.
@@ -334,7 +333,9 @@
   ;; caller-supplied providers can neither inject nor share these values.
   (with-mem-conn [conn schema/v8-schema]
     (let [boot (client conn {:cache shared-cache/no-cache})
-          _ (seed-acyclic! conn boot 12)
+          ;; Large enough that replaying the walk from its start costs more
+          ;; than the ceiling below; a shorter walk cannot tell the two apart.
+          _ (seed-acyclic! conn boot 24)
           acl (client conn {})
           oracle (client conn {:cache shared-cache/no-cache})
           query {:subject (spice-object :user "alice")
@@ -345,13 +346,13 @@
           cursor-1 (get-in page-1 [:page-info :end-cursor])
           page-2-stats (atom {})
           page-2
-          (binding [idx/*recursive-traversal-stats* page-2-stats]
+          (binding [engine/*recursive-traversal-stats* page-2-stats]
             (eacl/lookup-resources
              acl (assoc query :first 3 :after cursor-1)))
           cursor-2 (get-in page-2 [:page-info :end-cursor])
           page-3-stats (atom {})
           page-3
-          (binding [idx/*recursive-traversal-stats* page-3-stats]
+          (binding [engine/*recursive-traversal-stats* page-3-stats]
             (eacl/lookup-resources
              acl (assoc query :first 3 :after cursor-2)))]
       ;; Order ABI v2 (acyclic-keyset-pagination): an acyclic root's
@@ -367,15 +368,22 @@
           "keyset pages consult no client-scoped checkpoint")
       (is (= 0 (:continuation-hits @page-3-stats 0))
           "later pages remain stateless")
+      (is (pos? (:advanced-datoms @page-2-stats 0))
+          "the observer sees the page's own scans")
       (let [reference (max 1
                            (:advanced-datoms @page-2-stats 0)
                            (:advanced-datoms @page-3-stats 0))
-            ceiling (+ 10 (* 4 reference))]
+            ceiling (+ 10 (* 4 reference))
+            replay-stats (atom {})]
+        (binding [engine/*recursive-traversal-stats* replay-stats]
+          (eacl/lookup-resources oracle (assoc query :first 1000)))
+        (is (< ceiling (:advanced-datoms @replay-stats 0))
+            "deriving the walk from its start costs more than the ceiling allows one page")
         (loop [after (get-in page-3 [:page-info :end-cursor]) k 4]
           (is (< k 20) "walk terminates")
           (when (and after (< k 20))
             (let [stats (atom {})
-                  page (binding [idx/*recursive-traversal-stats* stats]
+                  page (binding [engine/*recursive-traversal-stats* stats]
                          (eacl/lookup-resources
                           acl (assoc query :first 3 :after after)))]
               (is (<= (:advanced-datoms @stats 0) ceiling)
