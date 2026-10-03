@@ -172,7 +172,21 @@ definition ledger {
         (recur (get-in page [:page-info :end-cursor]) (inc pages) items)
         items))))
 
-(defn- bounded-count [client subject limit]
+(defn- walk-from-the-end
+  "Every item of a backward cursor walk in pages of `page-size`, in the
+  listing's order."
+  [client query page-size]
+  (loop [before nil pages 0 items ()]
+    (let [page (eacl/lookup-resources
+                client (cond-> (assoc query :last page-size) before (assoc :before before)))
+          items (concat (map :id (:data page)) items)]
+      (when (> pages 2000)
+        (throw (ex-info "Walk did not terminate." {:query query})))
+      (if (get-in page [:page-info :has-previous-page?])
+        (recur (get-in page [:page-info :start-cursor]) (inc pages) items)
+        (vec items)))))
+
+(defn- count-with-limit [client subject limit]
   (select-keys (eacl/count-resources client (assoc (open-query subject) :count-limit limit))
                [:count :truncated?]))
 
@@ -184,8 +198,8 @@ definition ledger {
   {:listing (measure meters #(mapv :id (:data (eacl/lookup-resources
                                                client (assoc (open-query subject) :first 100)))))
    :count (measure meters #(:count (eacl/count-resources client (open-query subject))))
-   :bounded-count (measure meters #(bounded-count client subject 3))
-   :covering-count (measure meters #(bounded-count client subject 9))})
+   :bounded-count (measure meters #(count-with-limit client subject 3))
+   :covering-count (measure meters #(count-with-limit client subject 9))})
 
 (defn assert-listing-work-is-independent-of-the-platform!
   "The second owner's listing and counts are right at `small` and `large`
@@ -227,8 +241,8 @@ definition ledger {
              (set (mapv :id (:data (eacl/lookup-resources
                                     client (assoc (open-query "alice") :first 100)))))))
       (is (= owned (:count (eacl/count-resources client (open-query "alice")))))
-      (is (= {:count 3 :truncated? true} (bounded-count client "alice" 3)))
-      (is (= {:count owned :truncated? false} (bounded-count client "alice" 9))))))
+      (is (= {:count 3 :truncated? true} (count-with-limit client "alice" 3)))
+      (is (= {:count owned :truncated? false} (count-with-limit client "alice" 9))))))
 
 (defn assert-answers!
   "Pages, checks and subject listings of `open` at `total` ledgers."
@@ -244,7 +258,9 @@ definition ledger {
             (is (= (count expected) (count whole)) (str subject ": no item twice"))
             (doseq [page-size [1 2 7]]
               (is (= whole (walk client (open-query subject) page-size))
-                  (str subject ": pages of " page-size " follow the listing's order"))))))
+                  (str subject ": pages of " page-size " follow the listing's order"))
+              (is (= whole (walk-from-the-end client (open-query subject) page-size))
+                  (str subject ": pages of " page-size " from the end follow it too"))))))
       (testing "counts"
         (is (= total (:count (eacl/count-resources client (open-query "platform")))))
         (is (zero? (:count (eacl/count-resources client (open-query "nobody"))))))
@@ -327,3 +343,52 @@ definition ledger {
             (is (= (if (contains? mine resource) 1 0)
                    (:count (eacl/count-subjects client subjects)))
                 (str "count-subjects " resource))))))))
+
+(def recursive-anchor-schema
+  "`open` generates from `view`, which recurses through `parent`."
+  "definition user {}
+definition folder {
+  relation parent: folder
+  relation owner: user
+  relation subscriber: user:*
+  permission view = owner + parent->view
+  permission open = view & subscriber
+}")
+
+(defn assert-a-last-page-of-a-recursive-anchor-needs-complete-evaluation!
+  "A page counted from the end of a recursive generator exhausts it, which a
+  request opts into with `:evaluation :complete-denotation`. `open` now
+  generates from the recursive `view`, so its last page asks for that like
+  `view`'s own; generating from the wildcard relation it answered without."
+  [new-store]
+  (let [{:keys [client add-objects!]} (new-store {:cache cache/no-cache})
+        folder #(eacl/spice-object :folder %)
+        folders (mapv #(str "folder-" %) (range 6))
+        query (fn [permission]
+                {:subject (user "alice") :permission permission :resource/type :folder})
+        refusal (fn [request]
+                  (try (eacl/lookup-resources client request)
+                       nil
+                       (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+                         (:eacl/error (ex-data error)))))]
+    (add-objects! (concat ["alice" "platform"] folders))
+    (eacl/write-schema! client recursive-anchor-schema)
+    (eacl/create-relationships!
+     client
+     (vec (concat
+           [(eacl/->Relationship (user "alice") :owner (folder "folder-0"))
+            (eacl/->Relationship (user "platform") :owner (folder "folder-5"))]
+           (map #(eacl/->Relationship (folder "folder-0") :parent (folder %))
+                (subvec folders 1 5))
+           (map #(eacl/->Relationship (user "*") :subscriber (folder %)) folders))))
+    (let [whole (walk client (query :open) 10)]
+      (is (= (set (subvec folders 0 5)) (set whole)))
+      (is (= 5 (count whole)))
+      (is (= whole (walk client (query :open) 2)))
+      (doseq [permission [:open :view]]
+        (is (= :eacl.pagination/complete-evaluation-required
+               (refusal (assoc (query permission) :last 2)))
+            (str permission ": a last page without the opt-in is refused")))
+      (is (= whole
+             (walk-from-the-end client (assoc (query :open) :evaluation :complete-denotation) 2))
+          "with the opt-in, pages from the end follow the listing's order"))))

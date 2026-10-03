@@ -45,3 +45,6 @@
 
 (deftest a-typed-anchor-answers-for-every-subject-type-test
   (contract/assert-a-typed-anchor-answers-for-every-subject-type! new-store))
+
+(deftest a-last-page-of-a-recursive-anchor-needs-complete-evaluation-test
+  (contract/assert-a-last-page-of-a-recursive-anchor-needs-complete-evaluation! new-store))

@@ -158,9 +158,20 @@ wherever it stands in the intersection, through arrows, unions and other
 permissions, and for a wildcard relation on the resource itself
 (`relation subscriber: user:*`, `view & subscriber`). When a wildcard relation
 reaches every operand, as in `subscriber & public`, the lookup enumerates the
-resources one of them reaches. EACL decides this from the schema alone, so a
-relation that declares `user:*` counts as reached by the wildcard whether or
-not a wildcard relationship is stored.
+resources one of them reaches. That includes `view & subscribed` once `view`
+itself reads a wildcard relation (`permission view = owner + public` with
+`relation public: user:*`): keep one operand of such an intersection free of
+wildcard relations if its listing must not grow with the resources of other
+subjects. EACL decides this from the schema alone, so a relation that
+declares `user:*` counts as reached by the wildcard whether or not a wildcard
+relationship is stored, and whichever subject type the lookup is for.
+
+The listing then costs what the subject's listing of the enumerated operand
+costs. Where few resources hold a wildcard relationship and the subject holds
+the other operand on many, enumerating the wildcard relation was cheaper. A
+page counted from the end (`:last` without `:before`) of an intersection that
+enumerates a recursive permission needs `:evaluation :complete-denotation`,
+as a last page of that permission does.
 
 [Caveats and expiration](caveats.md) can qualify relationships used by these
 expressions. An expired ban can restore access, just as an expired grant can

@@ -56,3 +56,12 @@ A lookup or count whose generator is an intersection or exclusion of relations S
 #### Scenario: The anchor rule selects such an operand
 - **WHEN** `open = subscriber & (viewer - banned)`, `subscriber` declares `user:* | agent:*`, and the exclusion is the sealed anchor
 - **THEN** a user's and an agent's listings, counts and subject listings of `open` equal their checks
+
+### Requirement: A last page of a recursive generator is opt-in
+When the anchor of an intersection is a recursive operand, a page counted from the end without a cursor (`:last` without `:before`) SHALL require `:evaluation :complete-denotation`, as a last page of that operand does, and SHALL otherwise be refused with `:eacl.pagination/complete-evaluation-required`.
+
+#### Scenario: A recursive view gated by a wildcard relation
+- **WHEN** `open = view & subscriber`, `view = owner + parent->view`, `subscriber` declares `user:*`, and a request asks for `:last 2` of a user's `open` folders
+- **THEN** the request is refused with `:eacl.pagination/complete-evaluation-required`
+- **AND** with `:evaluation :complete-denotation` pages from the end follow the order of the forward listing
+

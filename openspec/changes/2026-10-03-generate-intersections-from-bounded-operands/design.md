@@ -159,16 +159,40 @@ cover. The plan and its fingerprint do not change.
 
 ## Risks / Trade-offs
 
-- **Declared, not stored.** A relation that declares `user:*` beside concrete
-  subjects and holds few wildcard relationships is no longer the anchor when
-  another operand has no wildcard cover. If that operand is large for the
-  subject, the earlier anchor was cheaper. The new cost is that operand's own
-  listing for the subject, bounded by the subject's relationships; the
-  earlier cost was bounded by the platform's wildcard relationships.
+One anchor serves every subject type and both lookup directions, and it is
+chosen without the data. Measured on DataScript with the earlier and the new
+anchor over the same store (adapter reads of one request):
+
 - **Every operand reads a wildcard.** `subscriber & public` still enumerates
-  one of them, chosen structurally.
-- **Per relation, not per subject type.** A relation with `group:*` marks its
-  node for lookups of users too.
+  one of them, chosen structurally. So does the reported schema once `view`
+  reads a wildcard: with `view = owner + public` (`public: user:*`, two
+  public ledgers), `open = view & subscribed` reads 68N - 2 values as before
+  and fails with the same limit error at 1,500 ledgers, while `view` alone
+  reads 7.
+- **Declared, not stored.** A relation that declares `user:*` and holds few
+  wildcard relationships is no longer the anchor when another operand has no
+  wildcard cover. `public & org->member`, two public documents among N of
+  the subject's organization: 15 reads before at every N, 312 at N = 100 and
+  1,217 at N = 400 now. The new cost is the other operand's own listing for
+  the subject; the earlier cost was bounded by the platform's wildcard
+  relationships.
+- **Per relation, not per subject type.** `viewer & org->member` with
+  `viewer: user | agent:*`, for a user with one `viewer` relationship: 11
+  reads before, 816 at N = 400 now. A lookup for a subject type that the
+  wildcard relation does not declare at all (an agent's `view & subscribed`
+  with `everyone: user:*`) found no candidate before (3 reads) and now lists
+  the agent's `view` to deny each (811 at N = 400).
+- **Reverse lookups.** A wildcard relation enumerates one subject of a
+  resource, so it was the cheap anchor of `lookup-subjects` on a resource the
+  wildcard does not reach: `public & org->member` on a document that is not
+  public read 5 before and reads the organization's members now (1,211 at 400
+  members), as it already did on a public document.
+- **Last pages.** A cover that generates from a recursive operand is
+  recursive, and a page counted from the end of one (`:last` without
+  `:before`) needs `:evaluation :complete-denotation`. `view & subscriber`
+  with a recursive `view` answered that request from the wildcard relation
+  and now refuses it with `:eacl.pagination/complete-evaluation-required`, as
+  `view` itself does.
 - **Result order.** A plan whose anchor moved lists its results in the new
   generator's order.
 
@@ -178,11 +202,18 @@ No data migration. A cursor that 8.0.0-RC-2026-10-02 issued for an operator
 plan that reads a wildcard branch is refused with
 `:eacl.pagination/invalid-cursor` (`:operator-scope-mismatch`); clients
 restart the walk. Cache snapshots of that release fail to restore with
-`:eacl/incompatible-cache-snapshot`.
+`:eacl/incompatible-cache-snapshot`. A client that asks for a last page
+(`:last` without `:before`) of an intersection whose anchor is now recursive
+adds `:evaluation :complete-denotation`.
 
 ## Open Questions
 
 - Selection by observed selectivity among operands on the same side of this
   rule (owner decision; see the rejected alternative).
+- An anchor per lookup direction and per subject type. A wildcard relation is
+  the worst forward generator and the best reverse one, and a relation that
+  declares `agent:*` is a wildcard only to agents; one sealed anchor cannot
+  serve both. It needs a cover per direction and subject type, and cursors
+  that name theirs.
 - Whether a permission reference should cost what its closure costs, which
   would make the remaining ties independent of names.

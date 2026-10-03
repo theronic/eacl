@@ -914,7 +914,15 @@ concrete branches. A relationship whose subject is `(eacl/spice-object :user
   plan is refused with `:eacl.pagination/invalid-cursor`, and the
   plan-compatibility identity gains `:intersection-anchor`, so completed
   answers and cache snapshots of that release are not reused. Every other
-  plan keeps its fingerprint and cursors.
+  plan keeps its fingerprint and cursors. When the operand that now
+  generates is recursive, a page counted from the end (`:last` without
+  `:before`) needs `:evaluation :complete-denotation`, as that operand's
+  own last page does; it answered without it while the wildcard relation
+  generated. The cost of such an intersection is now the subject's listing
+  of the generating operand: a lookup that found a few wildcard
+  relationships among many resources of the subject, a lookup for a subject
+  type the wildcard relation does not declare, and a subject listing of a
+  resource the wildcard does not reach read more than before.
 
 The behavior is compared with SpiceDB v1.56.0's answers to 72 requests
 ([fixture](../formal/fixtures/wildcards/README.md)), with an independent

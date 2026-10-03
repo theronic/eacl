@@ -21,6 +21,7 @@
 - [x] 3.7 CI-equivalent nREPL battery, DataScript ClojureScript build, `bin/formal source-closure`, mutation-control suite, counterexample replay
 - [x] 3.8 `eacl.operator.lookup-test`: a direct intersection or exclusion answers for a subject type one operand does not declare and for `a - a`, with the specialization running exactly where it serves the subject type; the backend contract answers for both subject types when the anchor is such an exclusion
 - [x] 3.9 Seeded differential `eacl.operator-engine.subject-type-differential`: random schemas whose relations declare users, agents, both or a wildcard of either, against an independent reference for both subject types, on DataScript (CLJ and CLJS) and Datahike
+- [x] 3.10 The backend contract pages from the end, and pins that a last page of a recursive anchor needs `:evaluation :complete-denotation`
 
 ## 4. Documentation
 
