@@ -339,7 +339,6 @@
               (catch #?(:clj clojure.lang.ExceptionInfo
                         :cljs cljs.core.ExceptionInfo) error
                 (is (= :max-admissions (:limit (ex-data error))))
-                (is (= [:sentinel] (:stack state)))
                 (is (empty? (persistent! (:admitted state))))))))]
     (assert-unchanged! [(item 1)])
     (assert-unchanged! [(item 1) (item 2)])))

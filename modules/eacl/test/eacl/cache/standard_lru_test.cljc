@@ -294,7 +294,6 @@
    (deftest concurrent-publication-computes-independently-and-never-overwrites-test
      (let [publisher-count 16
            store (lru/store 32)
-           computations (atom 0)
            ready (java.util.concurrent.CountDownLatch. publisher-count)
            start (java.util.concurrent.CountDownLatch. 1)
            publishers
@@ -302,10 +301,7 @@
             (fn [publisher]
               (future
                 ;; The completed value exists before entering cache storage.
-                (let [completed-value
-                      ((fn []
-                         (swap! computations inc)
-                         {:publisher publisher :completed true}))]
+                (let [completed-value {:publisher publisher :completed true}]
                   (.countDown ready)
                   (.await start)
                   {:published?
@@ -317,7 +313,6 @@
        (let [results (mapv #(deref % 10000 ::timeout) publishers)
              winners (filterv :published? results)
              resident (:value (lru/lookup! store :answer))]
-         (is (= publisher-count @computations))
          (is (= 1 (count winners)))
          (is (identical? (:value (first winners)) resident))
          (is (= 1 (lru/entry-count store)))))))

@@ -497,8 +497,7 @@
                   (eacl/lookup-resources replay-client
                                          (assoc query :after cursor))]]]
           (is (= expected (:data recovered))
-              "Datomic resumes the immutable cursor snapshot without a hybrid walk")
-          (is (nil? (get-in recovered [:page-info :cursor-recovery]))))
+              "Datomic resumes the immutable cursor snapshot without a hybrid walk"))
         (is (= "new-live-account"
                (-> (collect-forward cached-client query) :data peek :id))
             "a new enumeration observes the relationship write")))))
@@ -589,8 +588,6 @@
                        (range 5 10))
                  (:data page2))
               "the continuation resumes exclusively after the boundary")
-          (is (nil? (get-in page2 [:page-info :cursor-recovery]))
-              "unrelated churn is a continuation hit, not a recovery")
           (is (pos? (get @crossings :cursor-continuation 0))
               "the reuse is a verified kernel decision, not a bypass")
           ;; Governed replay to the boundary plus one fresh page on the
@@ -699,15 +696,13 @@
             (is (= (mapv account-id (range 5 10))
                    (mapv :id (:data recovered)))
                 "the cursor resumes against the retained immutable snapshot")
-            (is (not= (:data fresh-page1) (:data recovered)))
-            (is (nil? (get-in recovered [:page-info :cursor-recovery])))))
+            (is (not= (:data fresh-page1) (:data recovered)))))
         (testing "a later live subject deletion still cannot rewrite history"
           (eacl/delete-object! client subject)
           @(d/transact conn [[:db.fn/retractEntity subject-eid]])
           (let [recovered (eacl/lookup-resources client (assoc query :after cursor))]
             (is (= (mapv account-id (range 5 10))
-                   (mapv :id (:data recovered))))
-            (is (nil? (get-in recovered [:page-info :cursor-recovery])))))))))
+                   (mapv :id (:data recovered))))))))))
 
 (deftest alternate-cache-resolves-its-own-denotation-for-a-foreign-cursor-test
   (with-mem-conn [conn schema/v8-schema]

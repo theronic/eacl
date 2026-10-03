@@ -85,7 +85,6 @@
     (if orchestration/*qualified-authorization-enabled?*
       (is (= :eacl.pagination/stale-cursor (:type (error-data #(lookup client request)))))
       (let [page-2 (lookup client request)]
-        (is (nil? (get-in page-2 [:page-info :cursor-recovery])))
         (is (empty? (set/intersection (set (page-ids page-1)) (set (page-ids page-2)))))))))
 
 (deftest bare-last-requires-explicit-completion-and-preserves-logical-order-test

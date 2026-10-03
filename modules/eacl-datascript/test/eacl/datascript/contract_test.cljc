@@ -26,9 +26,7 @@
 
 (deftest native-speculative-contract-test
   #?(:clj
-     (is (nil? (ns-resolve 'eacl.datascript.core 'snapshot)))
-     :cljs
-     (is true))
+     (is (nil? (ns-resolve 'eacl.datascript.core 'snapshot))))
   (let [conn (datascript/create-conn)
         client (datascript/make-client conn {})]
     (contract/assert-speculative-contract!
@@ -1144,8 +1142,8 @@
                [:tree-root :intermediate :children 0 :leaf :subjects])))
           "a numeric public permission-tree root must pass through the public codec"))))
 
-(deftest rendered-keys-copy-caller-owned-query-containers-test
-  #?(:clj
+#?(:clj
+   (deftest rendered-keys-copy-caller-owned-query-containers-test
      (let [conn (datascript/create-conn)
            client
            (datascript/make-client
@@ -1192,12 +1190,10 @@
          (is (not-any? #(identical? query %) reachable))
          (is (not-any? #(instance? clojure.lang.PersistentTreeMap %)
                        reachable)
-             "the Caffeine key cannot retain the caller's comparator closure")))
-     :cljs
-     (is true)))
+             "the Caffeine key cannot retain the caller's comparator closure")))))
 
-(deftest integer-representations-cannot-alias-cursor-authority-test
-  #?(:clj
+#?(:clj
+   (deftest integer-representations-cannot-alias-cursor-authority-test
      (let [conn (datascript/create-conn)
            client
            (datascript/make-client
@@ -1259,12 +1255,10 @@
                  (ex-data thrown)))]
          (is (= [long-document] (:data long-page)))
          (is (= :eacl.pagination/unsupported-cursor-identity (:type error)))
-         (is (= :query (:position error)))))
-     :cljs
-     (is true)))
+         (is (= :query (:position error)))))))
 
-(deftest noncanonical-permission-tree-root-identities-do-not-alias-test
-  #?(:clj
+#?(:clj
+   (deftest noncanonical-permission-tree-root-identities-do-not-alias-test
      (let [conn (datascript/create-conn)
            client
            (datascript/make-client
@@ -1302,9 +1296,7 @@
         client alice :reader stored-vector)
        (is (= [alice] (tree-subjects ["same"])))
        (is (empty? (tree-subjects '("same")))
-           "equal host values distinguished by the codec must not share a completed tree"))
-     :cljs
-     (is true)))
+           "equal host values distinguished by the codec must not share a completed tree"))))
 
 (deftest metadata-sensitive-identities-cannot-alias-page-cursors-test
   (let [conn (datascript/create-conn)
