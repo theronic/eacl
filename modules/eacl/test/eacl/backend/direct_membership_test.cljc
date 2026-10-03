@@ -258,6 +258,61 @@
     (is (= 0 (:galloping-reseeks @stats)))
     (is (= 0 (:batch-overread @stats)))))
 
+(deftest one-missed-probe-is-dispatched-as-its-own-batch-test
+  (let [requests (atom [])
+        native
+        (adapter
+         (fn [_ _ _ _ eid] (even? eid))
+         (fn [{:keys [candidates] :as request}]
+           (swap! requests conj request)
+           (mapv #(even? (second %)) candidates)))
+        scalar (adapter (fn [_ _ _ _ eid] (even? eid)))
+        forward (:descriptor forward-request)
+        reverse (:descriptor reverse-request)
+        hit {:direction :reverse :descriptor reverse :candidate [:user 3]}
+        lookup (fn [probe]
+                 (if (= hit probe) true direct/cache-miss))]
+    (doseq [probe [{:direction :forward :descriptor forward
+                    :candidate [:document 4]}
+                   {:direction :forward :descriptor forward
+                    :candidate [:document 5]}
+                   {:direction :reverse :descriptor reverse
+                    :candidate [:user 2]}]
+            :let [request {:direction (:direction probe)
+                           :descriptor (:descriptor probe)
+                           :candidates [(:candidate probe)]}
+                  expected (first (direct/direct-match-many? native request))]]
+      (testing (pr-str probe)
+        (testing "alone, it sends the request the batch schedule builds"
+          (reset! requests [])
+          (let [stats (atom {})]
+            (is (= [expected]
+                   (binding [direct/*physical-stats* stats]
+                     (direct/dispatch native [probe]))))
+            (is (= [request] @requests))
+            (is (= {:cache-hits 0 :physical-subgroups 1
+                    :scalar-equivalent-predicates 1 :adapter-commands 1}
+                   (select-keys @stats [:cache-hits :physical-subgroups
+                                        :scalar-equivalent-predicates
+                                        :adapter-commands])))))
+        (testing "it answers as it does in a wider vector"
+          (is (= [expected expected] (direct/dispatch native [probe probe])))
+          (is (= [true expected] (direct/dispatch native [hit probe] lookup)))
+          (is (= [expected true] (direct/dispatch native [probe hit] lookup)))
+          (is (= [expected] (direct/dispatch scalar [probe]))))))
+    (testing "a cached probe asks the backend nothing"
+      (reset! requests [])
+      (is (= [true] (direct/dispatch native [hit] lookup)))
+      (is (empty? @requests)))
+    (testing "an invalid single probe fails before provider work"
+      (reset! requests [])
+      (is (= :eacl.backend/invalid-direct-membership-batch
+             (:type (error-data
+                     #(direct/dispatch
+                       native [{:direction :forward :descriptor forward
+                                :candidate [:user 4]}])))))
+      (is (empty? @requests)))))
+
 (deftest dispatcher-chunks-at-the-certified-width-test
   (let [widths (atom [])
         native
