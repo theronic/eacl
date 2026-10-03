@@ -1514,3 +1514,175 @@
       (is (contains? #{:duplicate-key :duplicate-member}
                      (:reason (error-data #(f value))))
           (str label " " (pr-str value))))))
+
+
+;; ---------------------------------------------------------------------------
+;; Byte helpers restated on the portable byte vectors they return
+
+#?(:clj
+   (defn- reference-unsigned
+     [^bytes array]
+     (mapv #(bit-and (int %) 255) array)))
+
+#?(:clj
+   (defn- reference-byte-array
+     ^bytes [values]
+     (byte-array (map unchecked-byte values))))
+
+#?(:clj
+   (defn- reference-b64url-encode
+     [values]
+     (.encodeToString (.withoutPadding (java.util.Base64/getUrlEncoder))
+                      (reference-byte-array values))))
+
+#?(:clj
+   (defn- reference-hmac-sha-256
+     [key-values ^bytes message]
+     (let [mac (javax.crypto.Mac/getInstance "HmacSHA256")]
+       (.init mac (javax.crypto.spec.SecretKeySpec.
+                   (reference-byte-array key-values) "HmacSHA256"))
+       (reference-unsigned (.doFinal mac message)))))
+
+#?(:clj
+   (defn- reference-bytes->utf8
+     "The portable definition: integers in the byte range that decode to a
+     string whose UTF-8 encoding is the input."
+     [values]
+     (let [values (vec values)]
+       (if-not (every? #(and (integer? %) (<= -128 % 255)) values)
+         :malformed-utf8
+         (let [unsigned (mapv #(bit-and (int %) 255) values)
+               decoded (String. (reference-byte-array unsigned)
+                                java.nio.charset.StandardCharsets/UTF_8)]
+           (if (= unsigned
+                  (reference-unsigned
+                   (.getBytes decoded java.nio.charset.StandardCharsets/UTF_8)))
+             decoded
+             :malformed-utf8))))))
+
+#?(:clj
+   (defn- rand-nth-char
+     [^java.util.Random random]
+     (case (.nextInt random 6)
+       0 (char (+ 32 (.nextInt random 95)))
+       1 (char (+ 0xA0 (.nextInt random 0x700)))
+       2 (char (+ 0x800 (.nextInt random 0x7000)))
+       3 (str (char (+ 0xD800 (.nextInt random 0x400)))
+              (char (+ 0xDC00 (.nextInt random 0x400))))
+       4 (char (.nextInt random 32))
+       (char (+ 0xE000 (.nextInt random 0x1000))))))
+
+#?(:clj
+   (defn- byte-corpus
+     "Deterministic byte vectors of every length up to 70, then longer ones:
+     valid UTF-8, truncated and overlong sequences, encoded surrogates, and
+     arbitrary bytes."
+     []
+     (let [random (java.util.Random. 20261003)
+           arbitrary (fn [n] (vec (repeatedly n #(.nextInt random 256))))
+           text (fn [n]
+                  (reference-unsigned
+                   (.getBytes
+                    ^String (apply str (repeatedly n #(rand-nth-char random)))
+                    java.nio.charset.StandardCharsets/UTF_8)))]
+       (concat
+        (map arbitrary (range 71))
+        (map text (range 71))
+        (map arbitrary [127 128 129 255 256 257 1023 4096])
+        [[0xC0 0x80] [0xE0 0x80 0x80] [0xED 0xA0 0x80] [0xED 0xBF 0xBF]
+         [0xF0 0x9F 0x98] [0xF4 0x90 0x80 0x80] [0xFF] [0x80]
+         [0xEF 0xBF 0xBD] [0xF0 0x9F 0x98 0x80]]))))
+
+#?(:clj
+   (deftest host-byte-paths-return-the-portable-byte-vectors-test
+     (let [utf8 java.nio.charset.StandardCharsets/UTF_8
+           key (vec (range 32 64))
+           outcome (fn [f]
+                     (try (f)
+                          (catch clojure.lang.ExceptionInfo error
+                            (:reason (ex-data error)))))]
+       (doseq [values (byte-corpus)
+               :let [array (reference-byte-array values)
+                     signed (vec array)]]
+         (testing (pr-str values)
+           (is (= (reference-b64url-encode values)
+                  (secure/b64url-encode values)
+                  (secure/b64url-encode array)
+                  (secure/b64url-encode signed)
+                  (secure/b64url-encode (seq values))))
+           (is (= values (secure/b64url-decode (secure/b64url-encode values))))
+           (is (every? #(instance? Long %)
+                       (secure/b64url-decode (secure/b64url-encode values))))
+           (is (= (reference-unsigned
+                   (.digest (java.security.MessageDigest/getInstance "SHA-256")
+                            array))
+                  (secure/sha-256 values)
+                  (secure/sha-256 array)
+                  (secure/sha-256 (seq values))))
+           (is (= (reference-hmac-sha-256 key array)
+                  (secure/hmac-sha-256 key values)
+                  (secure/hmac-sha-256 key array)
+                  (secure/hmac-sha-256 (reference-byte-array key) values)
+                  (secure/hmac-sha-256 (map identity key) (seq values))))
+           (is (= (reference-bytes->utf8 values)
+                  (outcome #(secure/bytes->utf8 values))
+                  (outcome #(secure/bytes->utf8 array))
+                  (outcome #(secure/bytes->utf8 signed))
+                  (outcome #(secure/bytes->utf8 (seq values)))))
+           (let [decoded (reference-bytes->utf8 values)]
+             (when (string? decoded)
+               (is (= values (secure/utf8-bytes decoded)))
+               (is (= (count values) (secure/utf8-size decoded)))
+               (is (= (reference-unsigned
+                       (.digest (java.security.MessageDigest/getInstance "SHA-256")
+                                (.getBytes ^String decoded utf8)))
+                      (secure/sha-256 decoded)))
+               (is (= (reference-hmac-sha-256 key (.getBytes ^String decoded utf8))
+                      (secure/hmac-sha-256 key decoded)))))))
+       (testing "members outside the byte range, and non-integers, are malformed text"
+         (doseq [values [[256] [-129] [1.5] ["a"] [nil] [65 300 66]]]
+           (is (= :malformed-utf8 (outcome #(secure/bytes->utf8 values))))))
+       (testing "keys keep their admission rule"
+         (is (= key (secure/normalize-key key)))
+         (is (= key (secure/normalize-key (reference-byte-array key))))
+         (is (= key (secure/normalize-key (map identity key))))
+         (is (= key (secure/normalize-key (mapv int key))))
+         (is (= (mapv int (map #(+ 0.5 %) key))
+                (secure/normalize-key (mapv #(+ 0.5 %) key))))
+         (is (= :weak-key (outcome #(secure/normalize-key (vec (range 31))))))
+         (is (= :invalid-key-byte
+                (outcome #(secure/normalize-key (assoc key 3 256)))))
+         (is (= :invalid-key-byte
+                (outcome #(secure/normalize-key (assoc key 3 -1)))))))))
+
+(defn- reference-encode-authenticated
+  "`encode-authenticated` composed from the public byte-vector helpers."
+  [{:keys [domain prefix] :as options} payload]
+  (let [{:keys [kid key]} (secure/signing-context options domain)
+        encoded-payload (secure/b64url-encode
+                         (secure/utf8-bytes
+                          (secure/encode-canonical payload options)))
+        signed {:v secure/canonical-version :kid kid :payload encoded-payload}
+        tag (secure/hmac-sha-256
+             key (str domain "\n" (secure/encode-canonical signed options)))
+        envelope (assoc signed :tag (secure/b64url-encode tag))]
+    (str prefix
+         (secure/b64url-encode
+          (secure/utf8-bytes (secure/encode-canonical envelope options))))))
+
+(deftest authenticated-envelopes-equal-their-byte-vector-composition-test
+  (let [format-options (assoc options :domain "test/envelope/v1" :prefix "test_")
+        accepted (atom 0)]
+    (doseq [value (digest-corpus #?(:clj 600 :cljs 150))
+            :let [payload {:value value :text "aé中😀" :n 7}
+                  expected (digest-outcome
+                            #(reference-encode-authenticated format-options payload))
+                  actual (digest-outcome
+                          #(secure/encode-authenticated format-options payload))]]
+      (is (= expected actual) (pr-str value))
+      (when (string? actual)
+        (swap! accepted inc)
+        (is (= (secure/canonicalize payload)
+               (secure/decode-authenticated format-options actual))
+            (pr-str value))))
+    (is (< 100 @accepted))))

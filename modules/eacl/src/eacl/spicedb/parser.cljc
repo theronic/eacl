@@ -45,7 +45,7 @@
                           :dimension :source-bytes
                           :maximum maximum-schema-source-bytes
                           :actual-at-least lower-bound})))
-       (let [actual (count (secure/utf8-bytes schema-str))]
+       (let [actual (secure/utf8-size schema-str)]
          (when (> actual maximum-schema-source-bytes)
            (throw (ex-info "Schema source exceeds its byte limit."
                            {:type :eacl.schema/expression-limit

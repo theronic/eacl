@@ -1155,7 +1155,7 @@
                     (first
                      (reduce (fn [[out size] q]
                                (let [encoded (evidence/encode (get (:facts state) q))
-                                     size (+ size (count (secure-format/utf8-bytes encoded)))]
+                                     size (+ size (secure-format/utf8-size encoded))]
                                  (limit-counter! limits counters :checkpoint-weight :maximum-checkpoint-weight size)
                                  [(conj out [q encoded]) size]))
                              [[] 0] (sorted-questions (keys (:facts state)))))

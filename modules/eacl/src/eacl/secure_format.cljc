@@ -47,24 +47,47 @@
      :cljs (.charCodeAt value index)))
 
 (defn- unicode-utf8-size
-  "Counts UTF-8 bytes directly from UTF-16, rejecting unpaired surrogates."
+  "Counts UTF-8 bytes directly from UTF-16, rejecting unpaired surrogates.
+
+  The JVM scan keeps the string, its length and every code unit in primitive
+  locals: it runs over every string a token, cursor, digest or cache entry
+  carries."
   [value]
-  (let [length (count value)]
-    (loop [index 0 size 0]
-      (if (= index length)
-        size
-        (let [code (long (string-code-unit-at value index))]
-          (cond
-            (< code 0x80) (recur (inc index) (inc size))
-            (< code 0x800) (recur (inc index) (+ size 2))
-            (< code 0xD800) (recur (inc index) (+ size 3))
-            (<= code 0xDBFF)
-            (when (< (inc index) length)
-              (let [next-code (long (string-code-unit-at value (inc index)))]
-                (when (and (<= 0xDC00 next-code) (<= next-code 0xDFFF))
-                  (recur (+ index 2) (+ size 4)))))
-            (<= code 0xDFFF) nil
-            :else (recur (inc index) (+ size 3))))))))
+  #?(:clj
+     (let [^String text value
+           length (.length text)]
+       (loop [index 0 size 0]
+         (if (== index length)
+           size
+           (let [code (int (.charAt text index))]
+             (cond
+               (< code 0x80) (recur (unchecked-inc index) (unchecked-inc size))
+               (< code 0x800) (recur (unchecked-inc index) (unchecked-add size 2))
+               (< code 0xD800) (recur (unchecked-inc index) (unchecked-add size 3))
+               (<= code 0xDBFF)
+               (when (< (unchecked-inc index) length)
+                 (let [next-code (int (.charAt text (unchecked-inc index)))]
+                   (when (and (<= 0xDC00 next-code) (<= next-code 0xDFFF))
+                     (recur (unchecked-add index 2) (unchecked-add size 4)))))
+               (<= code 0xDFFF) nil
+               :else (recur (unchecked-inc index) (unchecked-add size 3)))))))
+     :cljs
+     (let [length (count value)]
+       (loop [index 0 size 0]
+         (if (= index length)
+           size
+           (let [code (long (string-code-unit-at value index))]
+             (cond
+               (< code 0x80) (recur (inc index) (inc size))
+               (< code 0x800) (recur (inc index) (+ size 2))
+               (< code 0xD800) (recur (inc index) (+ size 3))
+               (<= code 0xDBFF)
+               (when (< (inc index) length)
+                 (let [next-code (long (string-code-unit-at value (inc index)))]
+                   (when (and (<= 0xDC00 next-code) (<= next-code 0xDFFF))
+                     (recur (+ index 2) (+ size 4)))))
+               (<= code 0xDFFF) nil
+               :else (recur (inc index) (+ size 3)))))))))
 
 (defn- well-formed-unicode? [value]
   (some? (unicode-utf8-size value)))
@@ -137,13 +160,24 @@
 
 (defn- string-requires-escaping?
   [value]
-  (loop [index 0]
-    (if (= index (count value))
-      false
-      (let [code (string-code-unit-at value index)]
-        (if (or (< code 32) (= code 34) (= code 92))
-          true
-          (recur (inc index)))))))
+  #?(:clj
+     (let [^String text value
+           length (.length text)]
+       (loop [index 0]
+         (if (== index length)
+           false
+           (let [code (int (.charAt text index))]
+             (if (or (< code 32) (== code 34) (== code 92))
+               true
+               (recur (unchecked-inc index)))))))
+     :cljs
+     (loop [index 0]
+       (if (= index (count value))
+         false
+         (let [code (string-code-unit-at value index)]
+           (if (or (< code 32) (= code 34) (= code 92))
+             true
+             (recur (inc index))))))))
 
 (defn- render-string
   [value]
@@ -186,18 +220,24 @@
           (format-error! reason {}))
         (recur current (next remaining))))))
 
+(defn- rendered-key
+  [entry]
+  (nth entry 0))
+
 (defn- render-map
   [value]
-  (let [entries (sort-by first
-                         (map (fn [[k v]] [(portable-render k) v]) value))]
-    (require-distinct-renderings! :duplicate-key first entries)
+  ;; Each entry is `[rendered-key value]`. Reading the key by index keeps the
+  ;; sort and the duplicate check from building a sequence per comparison.
+  (let [entries (sort-by rendered-key
+                         (mapv (fn [[k v]] [(portable-render k) v]) value))]
+    (require-distinct-renderings! :duplicate-key rendered-key entries)
     (str
      "{"
      (str/join
       ", "
-      (map
-       (fn [[rendered-key v]]
-         (str rendered-key " " (portable-render v)))
+      (mapv
+       (fn [entry]
+         (str (nth entry 0) " " (portable-render (nth entry 1))))
        entries))
      "}")))
 
@@ -243,15 +283,35 @@
   printed namespace/name split is self-evident; unusual legal keywords keep
   the exact reader round-trip in `unambiguous-keyword?`."
   [text]
-  (let [length (count text)]
-    (and (pos? length)
-         (loop [index 0]
-           (cond
-             (= index length) true
-             (ordinary-keyword-code? (long (string-code-unit-at text index))
-                                     (zero? index))
-             (recur (inc index))
-             :else false)))))
+  #?(:clj
+     ;; The same rule as `ordinary-keyword-code?` on primitive code units:
+     ;; every keyword of every validated value passes through here.
+     (let [^String text text
+           length (.length text)]
+       (and (pos? length)
+            (loop [index 0]
+              (if (== index length)
+                true
+                (let [code (int (.charAt text index))]
+                  (if (or (and (<= 65 code) (<= code 90))
+                          (and (<= 97 code) (<= code 122))
+                          (and (pos? index) (<= 48 code) (<= code 57))
+                          (== code 33) (== code 36) (== code 37) (== code 38)
+                          (== code 42) (== code 43) (== code 45) (== code 46)
+                          (== code 60) (== code 61) (== code 62) (== code 63)
+                          (== code 95))
+                    (recur (unchecked-inc index))
+                    false))))))
+     :cljs
+     (let [length (count text)]
+       (and (pos? length)
+            (loop [index 0]
+              (cond
+                (= index length) true
+                (ordinary-keyword-code? (long (string-code-unit-at text index))
+                                        (zero? index))
+                (recur (inc index))
+                :else false))))))
 
 (defn- ordinary-keyword?
   [value]
@@ -297,59 +357,64 @@
   checked before each value is examined, so validation visits at most
   `maximum-entries` + 1 values: a huge collection, or an unbounded lazy
   sequence, fails with `:too-many-entries` instead of being walked first."
-  [value depth seen {:keys [maximum-depth maximum-entries allow-uuids?] :as limits}]
-  (when (> depth maximum-depth)
-    (format-error! :too-deep {:maximum-depth maximum-depth}))
-  (let [seen (inc seen)]
-    (when (> seen maximum-entries)
-      (format-error! :too-many-entries
-                     {:maximum-entries maximum-entries}))
-    (cond
-      (or (nil? value)
-          (boolean? value))
-      seen
+  [value depth seen {:keys [maximum-depth maximum-entries allow-uuids?]}]
+  ;; The limits are read once; the walk below closes over them instead of
+  ;; destructuring the same map at every value.
+  (let [uuids? (not (false? allow-uuids?))]
+    (letfn [(walk [value depth seen]
+              (when (> depth maximum-depth)
+                (format-error! :too-deep {:maximum-depth maximum-depth}))
+              (let [seen (inc seen)]
+                (when (> seen maximum-entries)
+                  (format-error! :too-many-entries
+                                 {:maximum-entries maximum-entries}))
+                (cond
+                  (or (nil? value)
+                      (boolean? value))
+                  seen
 
-      (string? value)
-      (if (well-formed-unicode? value)
-        seen
-        (format-error! :invalid-unicode {}))
+                  (string? value)
+                  (if (well-formed-unicode? value)
+                    seen
+                    (format-error! :invalid-unicode {}))
 
-      (and (not (false? allow-uuids?)) (uuid/value? value))
-      seen
+                  (and uuids? (uuid/value? value))
+                  seen
 
-      (keyword? value)
-      (if (unambiguous-keyword? value)
-        seen
-        (format-error! :ambiguous-keyword
-                       {:value (portable-render value)}))
+                  (keyword? value)
+                  (if (unambiguous-keyword? value)
+                    seen
+                    (format-error! :ambiguous-keyword
+                                   {:value (portable-render value)}))
 
-      (integer? value)
-      (if (exact-integer/exact? value)
-        seen
-        (format-error! :integer-out-of-range
-                       {:value value
-                        :minimum minimum-safe-integer
-                        :maximum maximum-safe-integer}))
+                  (integer? value)
+                  (if (exact-integer/exact? value)
+                    seen
+                    (format-error! :integer-out-of-range
+                                   {:value value
+                                    :minimum minimum-safe-integer
+                                    :maximum maximum-safe-integer}))
 
-      (map? value)
-      (reduce-kv
-       (fn [seen k v]
-         (validate-value v (inc depth)
-                         (validate-value k (inc depth) seen limits)
-                         limits))
-       seen
-       value)
+                  (map? value)
+                  (let [depth (inc depth)]
+                    (reduce-kv
+                     (fn [seen k v]
+                       (walk v depth (walk k depth seen)))
+                     seen
+                     value))
 
-      (or (set? value) (sequential? value))
-      (reduce
-       (fn [seen item]
-         (validate-value item (inc depth) seen limits))
-       seen
-       value)
+                  (or (set? value) (sequential? value))
+                  (let [depth (inc depth)]
+                    (reduce
+                     (fn [seen item]
+                       (walk item depth seen))
+                     seen
+                     value))
 
-      :else
-      (format-error! :unsupported-value
-                     {:value-type (str (type value))}))))
+                  :else
+                  (format-error! :unsupported-value
+                                 {:value-type (str (type value))}))))]
+      (walk value depth seen))))
 
 (defn canonicalize
   "Validates and canonicalizes portable EDN without changing collection types."
@@ -494,32 +559,81 @@
         (catch Exception _
           (format-error! :malformed {}))))))
 
+#?(:clj
+   (defn- unsigned-vector
+     "The bytes of `array` as a vector of unsigned values, the portable byte
+     representation of this namespace's public functions."
+     [^bytes array]
+     (let [length (alength array)]
+       (loop [index 0
+              result (transient [])]
+         (if (== index length)
+           (persistent! result)
+           (recur (unchecked-inc index)
+                  (conj! result (bit-and (long (aget array index)) 255))))))))
+
+#?(:clj
+   (defn- host-bytes
+     "Byte values (signed or unsigned) as a JVM byte array. A byte array is
+     returned as it is, so the JVM paths below convert a value at most once."
+     ^bytes [values]
+     (if (bytes? values)
+       values
+       (let [values (if (vector? values) values (vec values))
+             length (count values)
+             array (byte-array length)]
+         (dotimes [index length]
+           (aset array index (unchecked-byte (nth values index))))
+         array))))
+
 (defn utf8-bytes
   [value]
   (let [value (str value)]
     (when-not (well-formed-unicode? value)
       (format-error! :invalid-unicode {}))
     #?(:clj
-       (mapv #(bit-and (int %) 255)
-             (.getBytes ^String value StandardCharsets/UTF_8))
+       (unsigned-vector (.getBytes ^String value StandardCharsets/UTF_8))
        :cljs
        (vec (gcrypt/stringToUtf8ByteArray value)))))
 
+#?(:clj
+   (defn- checked-host-bytes
+     "`host-bytes` for untrusted input: every member must be an integer in
+     the signed or unsigned byte range."
+     ^bytes [values]
+     (if (bytes? values)
+       values
+       (let [values (if (vector? values) values (vec values))
+             length (count values)
+             array (byte-array length)]
+         (dotimes [index length]
+           (let [value (nth values index)]
+             (when-not (and (integer? value) (<= -128 value 255))
+               (format-error! :malformed-utf8 {}))
+             (aset array index (unchecked-byte value))))
+         array))))
+
 (defn bytes->utf8
   [bytes]
-  (let [bytes (vec bytes)]
-    (when-not (every? #(and (integer? %) (<= -128 % 255)) bytes)
-      (format-error! :malformed-utf8 {}))
-    (let [unsigned-bytes (mapv #(bit-and (int %) 255) bytes)
-          decoded
-          #?(:clj
-             (String. (byte-array (map unchecked-byte unsigned-bytes))
-                      StandardCharsets/UTF_8)
-             :cljs
-             (gcrypt/utf8ByteArrayToString (clj->js unsigned-bytes)))]
-      (when-not (= unsigned-bytes (utf8-bytes decoded))
-        (format-error! :malformed-utf8 {}))
-      decoded)))
+  #?(:clj
+     ;; The JVM decoder replaces every malformed sequence, encoded surrogates
+     ;; included, with U+FFFD, so the decoded string re-encodes to the same
+     ;; bytes exactly when the input was well-formed UTF-8.
+     (let [array (checked-host-bytes bytes)
+           decoded (String. array StandardCharsets/UTF_8)]
+       (when-not (java.util.Arrays/equals
+                  array (.getBytes decoded StandardCharsets/UTF_8))
+         (format-error! :malformed-utf8 {}))
+       decoded)
+     :cljs
+     (let [bytes (vec bytes)]
+       (when-not (every? #(and (integer? %) (<= -128 % 255)) bytes)
+         (format-error! :malformed-utf8 {}))
+       (let [unsigned-bytes (mapv #(bit-and (int %) 255) bytes)
+             decoded (gcrypt/utf8ByteArrayToString (clj->js unsigned-bytes))]
+         (when-not (= unsigned-bytes (utf8-bytes decoded))
+           (format-error! :malformed-utf8 {}))
+         decoded))))
 
 #?(:clj
    (defonce ^:private ^SecureRandom secure-random
@@ -535,7 +649,7 @@
   #?(:clj
      (let [bytes (byte-array n)]
        (.nextBytes secure-random bytes)
-       (mapv #(bit-and (int %) 255) bytes))
+       (unsigned-vector bytes))
      :cljs
      (let [crypto (or (.-crypto js/globalThis)
                       (.-webcrypto
@@ -569,13 +683,31 @@
        :cljs (js/console.warn
               "EACL: no token key material configured; using a process-local random key. Cursors/tokens will not survive restarts or load balancing. Set :security-key or :security-keyring, and rotate each key before 2^32 cursor encryptions."))))
 
+#?(:clj
+   (defn- unsigned-byte-vector?
+     "True for a vector whose every member is already a Long or Integer in
+     the unsigned byte range: `normalize-key` would copy it to an equal
+     vector."
+     [value]
+     (and (vector? value)
+          (let [length (count value)]
+            (loop [index 0]
+              (if (== index length)
+                true
+                (let [member (nth value index)]
+                  (if (and (or (instance? Long member) (instance? Integer member))
+                           (<= 0 (long member) 255))
+                    (recur (unchecked-inc index))
+                    false))))))))
+
 (defn normalize-key
   [key]
   (let [bytes
         (cond
           (string? key) (utf8-bytes key)
+          #?@(:clj [(unsigned-byte-vector? key) key])
           #?(:clj (bytes? key) :cljs false)
-          #?(:clj (mapv #(bit-and (int %) 255) key) :cljs nil)
+          #?(:clj (unsigned-vector key) :cljs nil)
           (sequential? key) (mapv int key)
           #?(:cljs (instance? js/Uint8Array key) :clj false)
           #?(:cljs (vec key) :clj nil)
@@ -586,27 +718,22 @@
       (format-error! :invalid-key-byte {}))
     bytes))
 
-(defn hmac-sha-256
+(defn- host-hmac-sha-256
+  "`hmac-sha-256` with its tag in the host's own byte container (a byte array
+  on the JVM, a vector in ClojureScript)."
   [key message]
   (let [key (normalize-key key)]
     #?(:clj
        (let [mac (Mac/getInstance "HmacSHA256")
-             key-bytes (byte-array (map unchecked-byte key))
              message-bytes
-             (cond
-               (string? message)
+             (if (string? message)
                (let [message ^String message]
                  (when-not (well-formed-unicode? message)
                    (format-error! :invalid-unicode {}))
                  (.getBytes message StandardCharsets/UTF_8))
-
-               (bytes? message)
-               message
-
-               :else
-               (byte-array (map unchecked-byte message)))]
-         (.init mac (SecretKeySpec. key-bytes "HmacSHA256"))
-         (mapv #(bit-and (int %) 255) (.doFinal mac message-bytes)))
+               (host-bytes message))]
+         (.init mac (SecretKeySpec. (host-bytes key) "HmacSHA256"))
+         (.doFinal mac ^bytes message-bytes))
        :cljs
        (let [message (if (string? message)
                        (utf8-bytes message)
@@ -615,6 +742,11 @@
           (.getHmac
            (goog.crypt.Hmac. (goog.crypt.Sha256.) (clj->js key) 64)
            (clj->js message)))))))
+
+(defn hmac-sha-256
+  [key message]
+  #?(:clj (unsigned-vector (host-hmac-sha-256 key message))
+     :cljs (host-hmac-sha-256 key message)))
 
 (defn derive-key
   "Derives a distinct 256-bit key for one authenticated format domain."
@@ -642,14 +774,15 @@
                       (get right index 0))))))]
     (zero? difference)))
 
+#?(:clj
+   (def ^:private ^java.util.Base64$Encoder b64url-encoder
+     ;; Encoders and decoders are immutable and thread-safe.
+     (.withoutPadding (Base64/getUrlEncoder))))
+
 (defn b64url-encode
   [bytes]
   #?(:clj
-     (.encodeToString
-      (.withoutPadding (Base64/getUrlEncoder))
-      (if (bytes? bytes)
-        bytes
-        (byte-array (map unchecked-byte bytes))))
+     (.encodeToString b64url-encoder (host-bytes bytes))
      :cljs
      (let [binary (apply str (map #(js/String.fromCharCode %) bytes))
            encoded (.call (.-btoa js/globalThis) js/globalThis binary)]
@@ -713,21 +846,15 @@
                            (string-code-unit-at encoded (dec length)))
                           (if (= 2 remainder) 0x0F 0x03))))))))
 
-(defn b64url-decode
-  "Decodes the unpadded Base64URL spelling that `b64url-encode` emits.
-
-  Host decoders also accept padding, nonzero unused bits in the last
-  character and, in JavaScript, whitespace, so several strings decode to the
-  same bytes. Those spellings fail with `:malformed-base64`: each byte string
-  has exactly one accepted encoding, and an authenticated string cannot be
-  respelled without failing to decode."
+(defn- host-b64url-decode
+  "`b64url-decode` into the host's own byte container (a byte array on the
+  JVM, a vector in ClojureScript)."
   [encoded]
   (when-not (canonical-b64url? encoded)
     (format-error! :malformed-base64 {}))
   (try
     #?(:clj
-       (mapv #(bit-and (int %) 255)
-             (.decode (Base64/getUrlDecoder) ^String encoded))
+       (.decode (Base64/getUrlDecoder) ^String encoded)
        :cljs
        (let [padding (subs "====" 0 (mod (- 4 (mod (count encoded) 4)) 4))
              standard (-> encoded
@@ -739,31 +866,17 @@
     (catch #?(:clj Exception :cljs :default) _
       (format-error! :malformed-base64 {}))))
 
-(defn sha-256
-  "Portable SHA-256 for non-secret, authenticated proof digests."
-  [message]
-  (let [message (if (string? message)
-                  (utf8-bytes message)
-                  (vec message))]
-    #?(:clj
-       (let [digest (MessageDigest/getInstance "SHA-256")]
-         (mapv #(bit-and (int %) 255)
-               (.digest digest
-                        (byte-array
-                         (map unchecked-byte message)))))
-       :cljs
-       (let [digest (goog.crypt.Sha256.)]
-         (.update digest (clj->js message))
-         (vec (.digest digest))))))
+(defn b64url-decode
+  "Decodes the unpadded Base64URL spelling that `b64url-encode` emits.
 
-(defn canonical-digest
-  "Domain-separated digest of bounded canonical portable data."
-  [domain value]
-  (when-not (and (string? domain) (not-empty domain))
-    (format-error! :invalid-domain {:domain domain}))
-  (b64url-encode
-   (sha-256
-    (str domain "\n" (encode-canonical value)))))
+  Host decoders also accept padding, nonzero unused bits in the last
+  character and, in JavaScript, whitespace, so several strings decode to the
+  same bytes. Those spellings fail with `:malformed-base64`: each byte string
+  has exactly one accepted encoding, and an authenticated string cannot be
+  respelled without failing to decode."
+  [encoded]
+  #?(:clj (unsigned-vector (host-b64url-decode encoded))
+     :cljs (host-b64url-decode encoded)))
 
 (defn- host-utf8
   "`utf8-bytes` in the host's own byte container (a byte array on the JVM, a
@@ -774,6 +887,37 @@
       (format-error! :invalid-unicode {}))
     #?(:clj (.getBytes ^String value StandardCharsets/UTF_8)
        :cljs (gcrypt/stringToUtf8ByteArray value))))
+
+(defn- host-sha-256
+  "`sha-256` with its digest in the host's own byte container."
+  [message]
+  #?(:clj
+     (.digest (MessageDigest/getInstance "SHA-256")
+              ^bytes (if (string? message)
+                       (host-utf8 message)
+                       (host-bytes message)))
+     :cljs
+     (let [message (if (string? message)
+                     (utf8-bytes message)
+                     (vec message))
+           digest (goog.crypt.Sha256.)]
+       (.update digest (clj->js message))
+       (vec (.digest digest)))))
+
+(defn sha-256
+  "Portable SHA-256 for non-secret, authenticated proof digests."
+  [message]
+  #?(:clj (unsigned-vector (host-sha-256 message))
+     :cljs (host-sha-256 message)))
+
+(defn canonical-digest
+  "Domain-separated digest of bounded canonical portable data."
+  [domain value]
+  (when-not (and (string? domain) (not-empty domain))
+    (format-error! :invalid-domain {:domain domain}))
+  (b64url-encode
+   (host-sha-256
+    (str domain "\n" (encode-canonical value)))))
 
 (defn- framed
   "One record's bytes behind their length as four big-endian bytes, in the
@@ -965,19 +1109,23 @@
   [{:keys [domain prefix] :as options} payload]
   (when-not (and (string? prefix) (not-empty prefix))
     (format-error! :invalid-prefix {}))
+  ;; Text, tag and envelope stay in the host's byte container between the
+  ;; canonical encoder, the MAC and Base64URL: the portable byte vectors of
+  ;; the public helpers hold the same bytes and would be converted back at
+  ;; every step.
   (let [{:keys [kid key]} (signing-context options domain)
         encoded-payload (b64url-encode
-                         (utf8-bytes (encode-canonical payload options)))
+                         (host-utf8 (encode-canonical payload options)))
         signed {:v canonical-version
                 :kid kid
                 :payload encoded-payload}
-        tag (hmac-sha-256
+        tag (host-hmac-sha-256
              key
              (str domain "\n" (encode-canonical signed options)))
         envelope (assoc signed :tag (b64url-encode tag))]
     (str prefix
          (b64url-encode
-          (utf8-bytes (encode-canonical envelope options))))))
+          (host-utf8 (encode-canonical envelope options))))))
 
 (defn ^:no-doc decode-authenticated-envelope
   "Authenticates and decodes a token from `encode-authenticated`.
@@ -996,7 +1144,7 @@
   (let [envelope
         (decode-canonical
          (bytes->utf8
-          (b64url-decode (subs token (count prefix))))
+          (host-b64url-decode (subs token (count prefix))))
          (assoc options :allowed-keys #{:v :kid :payload :tag}))
         {:keys [v kid payload tag]} envelope
         options (capture-keyring options)
@@ -1018,7 +1166,7 @@
         (format-error! :authentication-failed {}))
       {:security-kid kid
        :payload (decode-canonical
-                 (bytes->utf8 (b64url-decode payload))
+                 (bytes->utf8 (host-b64url-decode payload))
                  (cond-> options payload-keys (assoc :allowed-keys payload-keys)))})))
 
 (defn decode-authenticated [options token]
