@@ -14,6 +14,7 @@
  "Anchor every point check at the concrete target. Recursive roots initialize the verified reverse indexed traversal and use its Boolean renderer. Certified acyclic roots use the exact inclusive bound-probe source specialization instead of entering the recursive state machine. Add direction/classification regressions and a 16-versus-1,040 reachable-resource logical/backend-work gate."
  :closing-evidence
  ["eacl.formal.state-trace-differential-test/generated-decisions-and-source-specialized-acyclic-paths-preserve-order-and-point-locality"
-  "eacl.bench.pagination-test/permission-check-benchmark"
+  ;; Historical: eacl.bench.pagination-test/permission-check-benchmark was
+  ;; retired with the analysis router (3395d961).
   "IndexedReverseCompleteness.ExhaustedReverseTraversalRefinesLeastFixedPoint"
   "IndexedTraversal.ReadRenderResult"]}

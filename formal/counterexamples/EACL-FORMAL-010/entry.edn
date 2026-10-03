@@ -12,9 +12,9 @@
  "Generated worklist authority is restricted to roots that transitively depend on a recursive SCC, whose public contract is traversal order. Direct and acyclic roots retain the optimized ordered merge. Dafny proves ordered step and bounded-chunk reconstruction; generated Java and JavaScript are differential oracles. Per-EID generated routing failed the performance gate, so source-digested specialization refinement and independent review remain release gates."
  :closing-evidence
  ["eacl.formal.state-trace-differential-test/generated-decisions-and-source-specialized-acyclic-paths-preserve-order-and-point-locality"
-  "eacl.formal.production-kernel-test/optimized-jvm-ordered-merge-refines-generated-chunks"
-  "eacl.formal.production-kernel-test/optimized-javascript-ordered-merge-refines-generated-chunks"
+  ;; Historical: eacl.formal.production-kernel-test/optimized-jvm-ordered-merge-refines-generated-chunks
+  ;; and its JavaScript twin were removed with the legacy engine (d96bc4c6).
+  ;; formal/verification/performance-gates.edn and indexed-traversal.edn
+  ;; were generated evidence ledgers, removed in 483911d6.
   "formal/dafny/OrderedMerge.dfy AscendingChunkReconstructsMerge and DescendingChunkReconstructsMerge"
-  "formal/mutations/registry.edn :ordered-merge-wrong-comparator"
-  "formal/verification/performance-gates.edn :rejected-acyclic-generated-prototype"
-  "formal/verification/indexed-traversal.edn explicitly withholds acyclic generated authority"]}
+  "formal/mutations/registry.edn :ordered-merge-wrong-comparator"]}

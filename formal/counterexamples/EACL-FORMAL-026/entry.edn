@@ -13,6 +13,6 @@
  :fix
  "Uncached recursive traversal and generated render rejection now expose one minimal stable public stale-cursor map containing only :eacl/error. Internal cursor and generated-render diagnostics are not part of public ExceptionInfo data, and regressions compare the entire map."
  :closing-evidence
- ["eacl.formal.state-trace-differential-test/recursive-shadow-compares-stale-cursor-error-shape"
-  "eacl.formal.production-kernel-test/datascript-public-recursive-cache-modes-compare-generated-javascript"
+ ["eacl.formal.state-trace-differential-test/generated-stale-cursor-error-shape"
+  "eacl.formal.production-kernel-test/datascript-public-recursive-cache-modes-use-generated-javascript"
   "formal mutation :generated-stale-cursor-leaks-render-details"]}

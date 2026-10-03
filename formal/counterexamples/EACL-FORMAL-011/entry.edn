@@ -11,6 +11,6 @@
  :fix
  "The host reverse evaluator now queues consumer registration before the dependent goal, matching the generated transition system. Shadow mode independently captures cache-free host and generated counters plus retained logical units and compares them without disclosing authorization values."
  :closing-evidence
- ["eacl.formal.state-trace-differential-test/recursive-shadow-compares-complete-public-results"
+ ["eacl.formal.state-trace-differential-test/recursive-generated-authority-covers-complete-public-results"
   "eacl.backend.v8-test reverse traversal characterization"
   "DataScript CLJS full suite: 127 tests, 4165 assertions"]}

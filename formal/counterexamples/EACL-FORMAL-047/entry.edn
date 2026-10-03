@@ -16,5 +16,6 @@
  ["formal/dafny/PageWindow.dfy/CurrentContinuationRequiresEqualProof"
   "formal/dafny/PageWindow.dfy/ChangedProofWithoutExactSnapshotIsRejected"
   "eacl.datascript.keyset-recursion-test/order-perturbing-write-rejects-current-only-cursor-test"
-  "eacl.datascript.keyset-recursion-test/revoked-boundary-is-stale-test"
-  "formal/verification/verified-authority-suites.edn"]}
+  ;; Historical: formal/verification/verified-authority-suites.edn was a
+  ;; generated evidence ledger, removed in 483911d6.
+  "eacl.datascript.keyset-recursion-test/revoked-boundary-is-stale-test"]}
