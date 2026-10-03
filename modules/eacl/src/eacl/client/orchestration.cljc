@@ -2662,7 +2662,8 @@
 (defrecord Basis [adapter selected-snapshot identity selection basis-kind
                   historical-basis? execution-constraints release-state
                   owner-thread acquired-at-ms maximum-retention-ms
-                  source-incarnation speculative evaluation-time-ms])
+                  source-incarnation speculative evaluation-time-ms
+                  token-memo])
 
 (def ^:private runtime-lifecycle-option-keys
   #{:source-lifecycle :basis-cache-store :continuation-cache-store
@@ -3019,13 +3020,44 @@
    :kind (:basis-kind basis)))
 
 (defn- basis-token*
+  "The causal token of a retained basis.
+
+  A token is a function of the basis identity, the second it is issued in,
+  the token lifetime and the signing key. The basis keeps the last token it
+  issued with those inputs, so asking again within the same second, under the
+  same captured keyring and format options, returns that token instead of
+  encoding and signing an equal one."
   [runtime basis]
   (basis-open! basis)
-  (consistency-v3/selected-basis-token
-   (or (get-in basis [:speculative :committed-root])
-       (:identity basis))
-   (let [opts (runtime-options runtime)]
-     (assoc opts :format-options (:zed-token-format-options opts)))))
+  (let [;; The token reads one option. The runtime holds it directly, so the
+        ;; whole options map is not rebuilt for it.
+        configured (:zed-token-format-options
+                    (or (get runtime prepared-runtime-options-key) runtime))
+        format-options (secure/capture-keyring configured)
+        keyring-snapshot (:keyring-snapshot format-options)
+        issued-at (causal-token/now-seconds)
+        identity (or (get-in basis [:speculative :committed-root])
+                     (:identity basis))
+        memo (:token-memo basis)
+        remembered (some-> memo deref)]
+    (if (and remembered
+             (= issued-at (:issued-at remembered))
+             (identical? identity (:identity remembered))
+             (identical? configured (:configured remembered))
+             (identical? keyring-snapshot (:keyring-snapshot remembered)))
+      (:token remembered)
+      (let [token
+            (consistency-v3/selected-basis-token
+             identity
+             {:format-options format-options
+              :issued-at issued-at})]
+        (when memo
+          (reset! memo {:issued-at issued-at
+                        :identity identity
+                        :configured configured
+                        :keyring-snapshot keyring-snapshot
+                        :token token}))
+        token))))
 
 (defn- basis-token-data
   [runtime basis token source]
@@ -3222,7 +3254,8 @@
                (get-in runtime-options
                        [:runtime-cache-lifecycle :source-incarnation]))
            speculative
-           (or evaluation-time-ms (:evaluation-time-ms runtime-options))))
+           (or evaluation-time-ms (:evaluation-time-ms runtime-options))
+           (atom nil)))
 
 (defn- snapshot-populate-cache?
   [basis requested?]
