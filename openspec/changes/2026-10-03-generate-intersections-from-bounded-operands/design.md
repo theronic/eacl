@@ -128,6 +128,19 @@ relationship of its own in it (`GrantedSubjectIsAnchored`).
 `WildcardAnchorOmitsAGrantedSubject` is the witness that an anchor with a
 wildcard cover does not have this property.
 
+### D6. A direct specialization serves the subject types it can merge
+
+An intersection or exclusion of relations seals a direct specialization with
+one relation per operand for each subject type that every operand declares.
+`operator-lookup/specialization-node` selected it by kind alone, and the merge
+refused any other subject type with `:eacl.operator/invalid-seekable-plan`
+(EACL-FORMAL-101). D2 makes such a node the generator of plans that generated
+from a wildcard relation: `subscriber & (viewer - banned)` with
+`banned: agent` answered a user's listing from `subscriber` and failed from
+the exclusion. The lookup now asks `seekable/operand-relation-ids` whether
+the specialization serves the subject type and otherwise takes the generic
+cover. The plan and its fingerprint do not change.
+
 ## Alternatives rejected
 
 - **Cost a permission reference by its closure.** `subscribed` (one arrow)

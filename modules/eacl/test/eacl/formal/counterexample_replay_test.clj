@@ -194,7 +194,9 @@
     :EACL-FORMAL-099
     eacl.datomic.self-counterexample-test/self-counterexample-replays-on-datomic-test
     :EACL-FORMAL-100
-    eacl.operator.wildcard-anchor-test/listing-succeeds-under-the-default-limits-test})
+    eacl.operator.wildcard-anchor-test/listing-succeeds-under-the-default-limits-test
+    :EACL-FORMAL-101
+    eacl.operator.lookup-test/a-direct-specialization-serves-only-the-subject-types-it-can-merge-test})
 
 (defn- read-edn
   [path]

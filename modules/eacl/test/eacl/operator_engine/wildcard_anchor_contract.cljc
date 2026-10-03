@@ -267,3 +267,63 @@ definition ledger {
               (str "lookup-subjects " index))
           (is (= (count expected) (:count (eacl/count-subjects client query)))
               (str "count-subjects " index)))))))
+
+(def typed-anchor-schema
+  "`open` generates from its exclusion, which no wildcard reaches. `banned`
+  declares agents alone, so the exclusion has one relation scan per operand
+  for agents and none for users."
+  "definition user {}
+definition agent {}
+definition ledger {
+  relation viewer: user | agent
+  relation banned: agent
+  relation subscriber: user:* | agent:*
+  permission open = subscriber & (viewer - banned)
+}")
+
+(defn assert-a-typed-anchor-answers-for-every-subject-type!
+  "A user's and an agent's listings, counts, checks and subject listings of
+  `open` when its anchor serves one of the two subject types through a direct
+  specialization. Generating from the wildcard relation never met the
+  exclusion's specialization; generating from the exclusion did, and a lookup
+  for users failed with `:eacl.operator/invalid-seekable-plan`."
+  [new-store]
+  (let [{:keys [client add-objects!]} (new-store {:cache cache/no-cache})
+        agent #(eacl/spice-object :agent %)
+        ledgers (mapv #(str "ledger-" %) (range 6))
+        on (fn [subject relation indexes]
+             (map #(eacl/->Relationship subject relation (ledger (nth ledgers %))) indexes))
+        expected {[:user "alice"] #{"ledger-0" "ledger-1"}
+                  [:agent "robot"] #{"ledger-0" "ledger-2"}}]
+    (add-objects! (concat ["alice" "robot"] ledgers))
+    (eacl/write-schema! client typed-anchor-schema)
+    (eacl/create-relationships!
+     client
+     (vec (concat (on (user "alice") :viewer [0 1 2])
+                  (on (agent "robot") :viewer [0 1 2 3])
+                  (on (agent "robot") :banned [1])
+                  (on (user "*") :subscriber [0 1 4])
+                  (on (agent "*") :subscriber [0 1 2 5]))))
+    (doseq [[[type id] mine] expected
+            :let [subject (eacl/spice-object type id)
+                  query {:subject subject :permission :open :resource/type :ledger}]]
+      (testing (str (name type) " " id)
+        (let [whole (walk client query 10)]
+          (is (= mine (set whole)) "lookup-resources")
+          (is (= (count mine) (count whole)) "each once")
+          (is (= whole (walk client query 1)) "pages of 1 follow the listing's order"))
+        (is (= (count mine) (:count (eacl/count-resources client query))) "count-resources")
+        (is (= {:count 1 :truncated? true}
+               (select-keys (eacl/count-resources client (assoc query :count-limit 1))
+                            [:count :truncated?]))
+            "count-resources with a limit below the count")
+        (doseq [resource ledgers]
+          (is (= (contains? mine resource) (eacl/can? client subject :open (ledger resource)))
+              (str "check " resource))
+          (let [subjects {:resource (ledger resource) :permission :open :subject/type type}]
+            (is (= (if (contains? mine resource) [id] [])
+                   (mapv :id (:data (eacl/lookup-subjects client (assoc subjects :first 10)))))
+                (str "lookup-subjects " resource))
+            (is (= (if (contains? mine resource) 1 0)
+                   (:count (eacl/count-subjects client subjects)))
+                (str "count-subjects " resource))))))))

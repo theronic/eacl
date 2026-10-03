@@ -208,13 +208,21 @@
          least-path/reverse-page)
        (raw-options options)))))
 
-(defn- specialization-node [plan permission]
+(defn- specialization-node
+  "The root, or the node its generator reads, when that node has a direct
+  specialization that serves `subject-type` (`seekable/operand-relation-ids`); nil
+  otherwise. A lookup for a subject type the specialization does not serve
+  takes the generic cover, whose exact predicates decide every candidate: an
+  operand that does not declare the subject type holds for none of its
+  subjects."
+  [plan permission subject-type]
   (let [root-id (get (operator-plan/expression-roots plan) permission)
         source-id (get-in plan [:generators permission root-id :source-node])]
-    (some #(when (contains? #{:direct-k-way-intersection
-                              :direct-monotone-exclusion}
-                            (get-in plan [:specializations permission % :kind]))
-             %)
+    (some (fn [node-id]
+            (when (seekable/operand-relation-ids
+                   (get-in plan [:specializations permission node-id])
+                   subject-type)
+              node-id))
           (distinct [root-id source-id]))))
 
 (defn- emission-witness-fn
@@ -377,7 +385,8 @@
                        :candidate-accept? candidate-accept?
                        :specialization-node
                        (when-not (false? (:direct-specializations? options))
-                         (specialization-node plan permission)))
+                         (specialization-node plan permission
+                                              (:subject-type options))))
         result-demand (inc page-size)]
     (loop [schedule (batch-schedule/initial result-demand candidate-window)
            boundary boundary
@@ -508,7 +517,8 @@
                        :candidate-accept? candidate-accept?
                        :specialization-node
                        (when-not (false? (:direct-specializations? options))
-                         (specialization-node plan permission)))
+                         (specialization-node plan permission
+                                              (:subject-type options))))
         target (when (some? count-limit) (inc count-limit))
         initial-width (if target
                         (min batch-schedule/maximum-width target)

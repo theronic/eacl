@@ -469,6 +469,21 @@ as replayed counterexamples against the stable engine.
 
 ## Correctness findings closed
 
+- **Lookups of a relation intersection or exclusion failed for a subject
+  type one relation does not declare (EACL-FORMAL-101).** With
+  `relation viewer: user | agent`, `relation banned: agent` and
+  `permission unbanned = viewer - banned`, a user's check answered, but
+  `lookup-resources`, `count-resources`, `lookup-subjects` and
+  `count-subjects` for users failed with
+  `:eacl.operator/invalid-seekable-plan` ("Direct specialization is not
+  eligible."); so did `viewer & editor` for a subject type `editor` does not
+  declare, and `viewer - viewer`. The merge of one relation scan per operand
+  was selected without asking whether it has a scan for the subject type. It
+  now runs only for the subject types every operand declares, and other
+  subject types take the generic generator. Sealed plans and cursors are
+  unchanged. The wildcard anchor rule of EACL-FORMAL-100 would otherwise
+  have reached the defect from plans that answered before
+  (`subscriber & (viewer - banned)`).
 - **Representation-sensitive public identity aliasing.** Ordered batch checks
   memoize unresolved public demands only when both IDs have canonical
   representations and the adapter certifies immutable/injective identities.

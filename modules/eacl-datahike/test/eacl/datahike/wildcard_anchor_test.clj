@@ -23,3 +23,6 @@
 (deftest answers-test
   (doseq [fixture (sort (keys contract/schemas))]
     (contract/assert-answers! new-store fixture 23)))
+
+(deftest a-typed-anchor-answers-for-every-subject-type-test
+  (contract/assert-a-typed-anchor-answers-for-every-subject-type! new-store))

@@ -1,0 +1,16 @@
+{:before {:lookup-resources [:thrown :eacl.operator/invalid-seekable-plan {:reason :ineligible}]
+          :count-resources [:thrown :eacl.operator/invalid-seekable-plan {:reason :ineligible}]
+          :lookup-subjects [:thrown :eacl.operator/invalid-seekable-plan {:reason :ineligible}]
+          :count-subjects [:thrown :eacl.operator/invalid-seekable-plan {:reason :ineligible}]
+          :check-permission :has-permission}
+ :after {:lookup-resources ["d"]
+         :count-resources 1
+         :lookup-subjects ["u"]
+         :count-subjects 1
+         :check-permission :has-permission}
+ :reached-by-the-anchor-rule
+ {:at-43f15050 {:lookup-resources ["d"] :count-resources 1 :lookup-subjects ["u"]}
+  :at-70bef372 {:lookup-resources [:thrown :eacl.operator/invalid-seekable-plan {:reason :ineligible}]
+                :count-resources [:thrown :eacl.operator/invalid-seekable-plan {:reason :ineligible}]
+                :lookup-subjects [:thrown :eacl.operator/invalid-seekable-plan {:reason :ineligible}]}
+  :after {:lookup-resources ["d"] :count-resources 1 :lookup-subjects ["u"]}}}

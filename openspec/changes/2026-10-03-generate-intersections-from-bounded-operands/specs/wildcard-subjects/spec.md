@@ -45,3 +45,14 @@ When the cover of a permission declares no wildcard for the requested subject ty
 #### Scenario: Owners of a ledger a wildcard subscription opens
 - **WHEN** `open = view & subscribed`, a ledger has two owners and a subscription holding `user:*`
 - **THEN** `lookup-subjects` of `open` returns the two owners and no `*` entry, and `count-subjects` returns 2
+
+### Requirement: A generator answers for every subject type
+A lookup or count whose generator is an intersection or exclusion of relations SHALL answer for every subject type. The merge of one relation scan per operand SHALL run only for a subject type that every operand declares, each through a relation of its own; for any other subject type the lookup SHALL take the generic cover and decide each candidate exactly. A request MUST NOT fail because an operand does not declare the requested subject type.
+
+#### Scenario: An exclusion whose subtracted relation does not declare the subject type
+- **WHEN** `unbanned = viewer - banned`, `viewer` declares `user | agent`, `banned` declares `agent`, and a user is a viewer of a document
+- **THEN** `lookup-resources`, `count-resources`, `lookup-subjects` and `count-subjects` of `unbanned` for users return that document and that user, as the check does
+
+#### Scenario: The anchor rule selects such an operand
+- **WHEN** `open = subscriber & (viewer - banned)`, `subscriber` declares `user:* | agent:*`, and the exclusion is the sealed anchor
+- **THEN** a user's and an agent's listings, counts and subject listings of `open` equal their checks
