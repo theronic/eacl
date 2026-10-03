@@ -80,6 +80,65 @@
         (when expected-field
           (is (= expected-field (:field data))))))))
 
+(deftest a-store-validates-an-identity-once-test
+  (let [store (derived/store)
+        first-partition
+        (derived/artifact-partition store (cache-identity) :sealed-plans)
+        artifacts [:parsed-schema :sealed-plans :permission-paths]]
+    (testing "an equal identity names the same partitions through one value"
+      (let [again (derived/artifact-partition
+                   store (cache-identity) :sealed-plans)
+            other (derived/artifact-partition
+                   store (cache-identity) :permission-paths)]
+        (is (= first-partition again))
+        (is (identical? (:identity first-partition) (:identity again)))
+        (is (identical? (:identity first-partition) (:identity other)))
+        (is (= (derived/entry-key first-partition [:document :view])
+               (derived/entry-key again [:document :view])))))
+    (testing "several partitions at once are the partitions asked one by one"
+      (let [partitions (derived/artifact-partitions
+                        store (cache-identity) artifacts)]
+        (is (= (set artifacts) (set (keys partitions))))
+        (doseq [artifact artifacts]
+          (is (= (derived/artifact-partition store (cache-identity) artifact)
+                 (get partitions artifact))))))
+    (testing "another generation is another identity"
+      (let [next-generation
+            (derived/artifact-partition store (cache-identity 8) :sealed-plans)]
+        (is (= 8 (get-in next-generation [:identity :schema-generation])))
+        (is (not= (derived/entry-key first-partition :plan)
+                  (derived/entry-key next-generation :plan)))))
+    (testing "an invalid identity, artifact or store is rejected every time"
+      (dotimes [_ 2]
+        (is (= :root
+               (:identity-part
+                (error-data
+                 #(derived/artifact-partition
+                   store (dissoc (cache-identity) :source) :sealed-plans)))))
+        (is (= :root
+               (:identity-part
+                (error-data
+                 #(derived/artifact-partitions
+                   store (dissoc (cache-identity) :source) artifacts)))))
+        (is (= :eacl/invalid-cache-key
+               (:type (error-data
+                       #(derived/artifact-partition
+                         store (cache-identity) "sealed-plans")))))
+        (is (= :eacl/invalid-cache-key
+               (:type (error-data
+                       #(derived/artifact-partitions
+                         store (cache-identity) [:sealed-plans "x"])))))
+        (is (= :eacl/invalid-cache-key
+               (:type (error-data
+                       #(derived/artifact-partitions
+                         {} (cache-identity) artifacts)))))))
+    (testing "the store remembers a bounded number of identities"
+      (doseq [generation (range 100 140)]
+        (derived/artifact-partition store (cache-identity generation) :sealed-plans))
+      (is (<= (count @(:validated-identities store)) 8))
+      (is (= first-partition
+             (derived/artifact-partition store (cache-identity) :sealed-plans))))))
+
 (deftest standard-lru-retains-a-hot-derived-entry-test
   (let [store (derived/store 2)
         partition

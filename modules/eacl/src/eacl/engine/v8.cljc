@@ -583,11 +583,17 @@
       :operator-capability (backend/operator-capability-identity snapshot)}
      :schema-generation schema-generation}))
 
+(def ^:private shared-schema-artifacts
+  [:parsed-schema :authorization-schema :validation-catalog
+   :expression-decodes :sealed-plans :permission-roots :permission-paths
+   :relationship-dependencies])
+
 (defn- shared-schema-cache
   [store snapshot basis-identity schema-generation]
   (let [identity
         (schema-cache-identity snapshot basis-identity schema-generation)
-        part #(derived-schema/artifact-partition store identity %)]
+        part (derived-schema/artifact-partitions
+              store identity shared-schema-artifacts)]
     {:schema-version schema-generation
      :parsed-schema (part :parsed-schema)
      ;; The structural schema writes validate against; read requests keep
