@@ -1757,6 +1757,59 @@ definition doc {
                                (second (sort children))))]
                (operator-sealed-plans))))))
 
+(def ^:private operator-wildcard-anchor-schema
+  "definition user {}
+definition doc {
+  relation anyone: user:*
+  relation owner: user
+  permission view = anyone & owner
+}")
+
+(def ^:private operator-wildcard-anchor-relationships
+  "The wildcard subject 99 opens documents 10..17 to every user; subject 1
+  owns document 12."
+  (into #{[:user 1 :owner :doc 12]}
+        (map (fn [resource-eid] [:user 99 :anyone :doc resource-eid]))
+        [10 11 12 13 14 15 16 17]))
+
+(defn- operator-wildcard-anchor-observation
+  "Subject 1's documents and the candidates its lookup examined."
+  []
+  (let [adapter (tuple-adapter/from-schema operator-wildcard-anchor-schema
+                                           operator-wildcard-anchor-relationships
+                                           {:wildcard-eid 99})
+        plan (operator-plan/seal-plan adapter [:doc :view])
+        stats (atom {})
+        page (binding [operator-lookup/*lookup-stats* stats]
+               (operator-lookup/lookup-page
+                {:adapter adapter :plan plan :traversal :forward
+                 :subject-type :user :anchor-eid 1 :page-size 8
+                 :permission [:doc :view]}))]
+    {:documents (mapv :value (:emissions page))
+     :candidates (:logical-candidates @stats)}))
+
+(defn operator-anchor-ignores-wildcard-cover-killed?
+  []
+  (let [original operator-plan/select-intersection-anchor
+        executed (volatile! 0)
+        counted (fn [& args]
+                  (vswap! executed inc)
+                  (apply original args))
+        expected {:documents [12] :candidates 1}]
+    (and
+     (= expected
+        (with-redefs [operator-plan/select-intersection-anchor counted]
+          (operator-wildcard-anchor-observation)))
+     (pos? @executed)
+     ;; An anchor chosen from the structural costs alone is the wildcard
+     ;; relation: the lookup then examines every document the wildcard opens
+     ;; to find the one the subject owns.
+     (not= expected
+           (with-redefs [operator-plan/select-intersection-anchor
+                         (fn [children costs]
+                           (first (sort-by #(get-in costs [% :tuple]) children)))]
+             (operator-wildcard-anchor-observation))))))
+
 (defn operator-active-recursion-as-false-killed?
   []
   (let [original operator-evaluator/active-recursion-outcome
@@ -3177,6 +3230,8 @@ definition doc {
    :operator-any-child-allocation operator-any-child-allocation-killed?
    :operator-cache-selected-generator
    operator-cache-selected-generator-killed?
+   :operator-anchor-ignores-wildcard-cover
+   operator-anchor-ignores-wildcard-cover-killed?
    :operator-active-recursion-as-false
    operator-active-recursion-as-false-killed?
    :alias-resolution-predicate alias-resolution-predicate-killed?

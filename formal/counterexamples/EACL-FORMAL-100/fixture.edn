@@ -1,0 +1,24 @@
+{:minimized-scenario
+ {:schema "definition user {}\ndefinition subscription {\n  relation everyone: user:*\n}\ndefinition ledger {\n  relation owner: user\n  relation subscription: subscription\n  permission view = owner\n  permission subscribed = subscription->everyone\n  permission open = view & subscribed\n}\n"
+  :ledgers 1500
+  :relationships
+  {:every-ledger [[:user "platform" :owner :ledger "ledger-i"]
+                  [:subscription "subscription-i" :subscription :ledger "ledger-i"]
+                  [:user "*" :everyone :subscription "subscription-i"]]
+   :five-ledgers [[:user "alice" :owner :ledger "ledger-i"]]}
+  :steps [{:op :lookup-resources
+           :request {:subject {:type :user :id "alice"} :permission :open
+                     :resource/type :ledger :first 100}}
+          {:op :count-resources
+           :request {:subject {:type :user :id "alice"} :permission :open
+                     :resource/type :ledger}}
+          {:op :count-resources
+           :request {:subject {:type :user :id "alice"} :permission :open
+                     :resource/type :ledger :count-limit 3}}]}
+ :equivalent-shapes
+ {:operand-order "permission open = subscribed & view"
+  :direct-wildcard-relation "relation subscriber: user:*, permission open = view & subscriber"
+  :two-arrows "permission subscribed = subscription->subscriber, permission subscriber = plan->subscriber, relation subscriber: user:* on plan"}
+ :unaffected-shapes
+ {:inline-arrow "permission open = view & subscription->everyone"
+  :operand-sorting-after-view "permission zsubscribed = subscription->everyone, permission open = view & zsubscribed"}}

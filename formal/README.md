@@ -107,8 +107,9 @@ explicit trusted or empirically checked boundaries.
 
 `dafny/WildcardSubjects.dfy` is the proof-only model of SpiceDB wildcard
 subjects (`user:*`): wildcard membership, the touch-cover representative
-theorem behind `lookup-subjects`' `*` entry and its exclusions, and the
-union-only split. Its production correspondence is the pinned SpiceDB fixture
+theorem behind `lookup-subjects`' `*` entry and its exclusions, the
+union-only split, and the exactness of a lookup whose cover declares no
+wildcard, which an intersection's anchor selection establishes. Its production correspondence is the pinned SpiceDB fixture
 in `fixtures/wildcards/`, the seeded reference differential and the backend
 contracts listed in [the assurance boundary](../docs/formal-verification.md).
 

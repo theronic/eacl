@@ -1,0 +1,12 @@
+{:before {:anchor [:permission :subscribed]
+          :lookup-at-1500 [:thrown :eacl.recursive-traversal/limit-exceeded
+                           {:limit-kind :advanced-datoms :limit 100000}]
+          :count-at-1500 [:thrown :eacl.recursive-traversal/limit-exceeded
+                          {:limit-kind :advanced-datoms :limit 100000}]
+          :lookup-fetched-values {50 2698 500 33998 1470 99958}}
+ :after {:anchor [:permission :view]
+         :lookup-at-1500 ["ledger-0" "ledger-300" "ledger-600" "ledger-900" "ledger-1200"]
+         :count-at-1500 5
+         :bounded-count-at-1500 {:count 3 :truncated? true}
+         :lookup-fetched-values {50 5 500 5 1500 5}}
+ :answers-unchanged true}

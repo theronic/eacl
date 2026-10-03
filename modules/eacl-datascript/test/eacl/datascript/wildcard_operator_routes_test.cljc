@@ -9,7 +9,10 @@
   and a member that recurses through two operands (the tabled evaluator).
   Most user relations declare `user:*`; some cases also declare a Caveated
   wildcard branch and a Caveated concrete branch. Relationships, including
-  wildcard ones, expire at random times between the evaluation times.
+  wildcard ones, expire at random times between the evaluation times. A
+  second campaign runs the same cases over every subset of relations that
+  declare `user:*`, so that intersections whose operands differ in whether a
+  wildcard reaches them generate from either side.
 
   One caching client answers checks, batched checks, resource walks and
   counts, and subject walks and counts at each evaluation time, with a
@@ -39,8 +42,11 @@
 (def ^:private wildcard "*")
 (def ^:private listed-users (conj users unmentioned))
 
-(def ^:private wildcard-relations
-  "The user relations that declare `user:*`. `owner` stays concrete."
+(def ^:private user-relations [:reader :owner :deleter :eligible :blocked])
+
+(def ^:private ^:dynamic *wildcard-relations*
+  "The user relations that declare `user:*`. `owner` stays concrete unless a
+  case binds another set."
   #{:reader :deleter :eligible :blocked})
 
 (def ^:private base-permissions
@@ -116,20 +122,24 @@
     :exclusion (str (render-operand a) " - " (render-operand b))))
 
 (defn- render-schema [permissions caveats?]
-  (str (when caveats? "caveat enabled(flag bool) { flag }\n")
-       "definition user {}\n"
-       "definition folder {\n"
-       "  relation parent: folder\n"
-       "  relation link: folder\n"
-       "  relation reader: user | user:*" (when caveats? " | user:* with enabled") "\n"
-       "  relation owner: user\n"
-       "  relation deleter: user | user:*\n"
-       "  relation eligible: user | user:*\n"
-       "  relation blocked: user | user:*" (when caveats? " | user with enabled") "\n"
-       (apply str (for [[permission body] (sort-by key permissions)]
-                    (str "  permission " (name permission) " = "
-                         (render-expression body) "\n")))
-       "}\n"))
+  (let [wildcard? #(contains? *wildcard-relations* %)]
+    (str (when caveats? "caveat enabled(flag bool) { flag }\n")
+         "definition user {}\n"
+         "definition folder {\n"
+         "  relation parent: folder\n"
+         "  relation link: folder\n"
+         (apply str
+                (for [relation user-relations]
+                  (str "  relation " (name relation) ": user"
+                       (when (wildcard? relation) " | user:*")
+                       (when (and caveats? (= :reader relation) (wildcard? relation))
+                         " | user:* with enabled")
+                       (when (and caveats? (= :blocked relation)) " | user with enabled")
+                       "\n")))
+         (apply str (for [[permission body] (sort-by key permissions)]
+                      (str "  permission " (name permission) " = "
+                           (render-expression body) "\n")))
+         "}\n")))
 
 ;; ---------------------------------------------------------------------------
 ;; Relationships
@@ -178,8 +188,8 @@
            [:folder other :link child])
          (for [folder folders
                subject (conj users wildcard)
-               relation [:reader :owner :deleter :eligible :blocked]
-               :when (and (or (not= wildcard subject) (contains? wildcard-relations relation))
+               relation user-relations
+               :when (and (or (not= wildcard subject) (contains? *wildcard-relations* relation))
                           (rng/chance? state (if (= wildcard subject) 22 26)))]
            [:user subject relation folder]))))
 
@@ -200,7 +210,7 @@
 (defn- member? [live subject relation folder]
   (or (contains? live [:user subject relation folder])
       (and (not= wildcard subject)
-           (contains? wildcard-relations relation)
+           (contains? *wildcard-relations* relation)
            (contains? live [:user wildcard relation folder]))))
 
 (defn- intermediates [live via folder]
@@ -441,7 +451,9 @@
                                           subject (conj users wildcard)
                                           relation [:reader :deleter :eligible :blocked]
                                           :let [key [:user subject relation id]]
-                                          :when (not (contains? relationships key))]
+                                          :when (and (or (not= wildcard subject)
+                                                         (contains? *wildcard-relations* relation))
+                                                     (not (contains? relationships key)))]
                                       key))
                     created (into {}
                                   (comp (filter (fn [_] (rng/chance? state 12)))
@@ -477,6 +489,14 @@
           {:cases 0}
           (range first-seed (+ first-seed cases))))
 
+(defn- wildcard-declarations
+  "The user relations that declare `user:*` in case `seed`: bit `i` of the
+  seed decides relation `i`, so 32 consecutive seeds cover every subset."
+  [seed]
+  (into #{}
+        (keep-indexed (fn [index relation] (when (bit-test seed index) relation)))
+        user-relations))
+
 (deftest restored-cache-keeps-paged-recursive-decisions-test
   ;; Seeds 162 and 276 first exposed one decision kept under two keys: a
   ;; recursive operator cursor carries native entity ids, which decode as
@@ -492,3 +512,20 @@
     (is (pos? (:wildcard-relationships report)))
     (is (pos? (:writes report)))
     (is (pos? (:reused report)) "later requests reuse cached membership decisions")))
+
+(deftest wildcard-answers-follow-the-reference-whichever-relations-declare-the-wildcard-test
+  ;; An intersection generates its candidates from an operand no wildcard
+  ;; reaches when it has one. Which operands those are follows the
+  ;; declarations, so this campaign varies them.
+  (let [report (reduce (fn [totals seed]
+                         (let [declared (wildcard-declarations seed)
+                               result (binding [*wildcard-relations* declared]
+                                        (run-case seed))]
+                           (if-let [failure (:failure result)]
+                             (reduced (assoc totals :failure
+                                             (assoc failure :wildcard-relations declared)))
+                             (merge-with + totals result))))
+                       {:cases 0}
+                       #?(:clj (range 1 33) :cljs [6 13 19 28]))]
+    (is (nil? (:failure report)) (pr-str (:failure report)))
+    (is (pos? (:wildcard-relationships report)))))

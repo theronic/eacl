@@ -469,6 +469,21 @@ as replayed counterexamples against the stable engine.
 
 ## Correctness findings closed
 
+- **Lookups of a relation intersection or exclusion failed for a subject
+  type one relation does not declare (EACL-FORMAL-101).** With
+  `relation viewer: user | agent`, `relation banned: agent` and
+  `permission unbanned = viewer - banned`, a user's check answered, but
+  `lookup-resources`, `count-resources`, `lookup-subjects` and
+  `count-subjects` for users failed with
+  `:eacl.operator/invalid-seekable-plan` ("Direct specialization is not
+  eligible."); so did `viewer & editor` for a subject type `editor` does not
+  declare, and `viewer - viewer`. The merge of one relation scan per operand
+  was selected without asking whether it has a scan for the subject type. It
+  now runs only for the subject types every operand declares, and other
+  subject types take the generic generator. Sealed plans and cursors are
+  unchanged. The wildcard anchor rule of EACL-FORMAL-100 would otherwise
+  have reached the defect from plans that answered before
+  (`subscriber & (viewer - banned)`).
 - **Representation-sensitive public identity aliasing.** Ordered batch checks
   memoize unresolved public demands only when both IDs have canonical
   representations and the adapter certifies immutable/injective identities.
@@ -887,6 +902,27 @@ concrete branches. A relationship whose subject is `(eacl/spice-object :user
 - Schemas without wildcards keep their plans, fingerprints, cursors and cache
   keys. Upgrade every serving Peer before writing a schema that uses
   wildcards.
+- A lookup or count of an intersection generates its candidates from an
+  operand that no wildcard relation reaches when it has one. Before,
+  `permission open = view & subscribed`, with `subscribed` granted by a
+  wildcard on every resource, listed a subject's five resources by reading
+  68 values per resource of the platform and failed with
+  `:eacl.recursive-traversal/limit-exceeded` from 1,471 resources
+  (EACL-FORMAL-100); it now reads the subject's own `view` relationships.
+  A plan with an intersection or exclusion that reads a wildcard relation has
+  a new fingerprint, so a cursor that 8.0.0-RC-2026-10-02 issued for such a
+  plan is refused with `:eacl.pagination/invalid-cursor`, and the
+  plan-compatibility identity gains `:intersection-anchor`, so completed
+  answers and cache snapshots of that release are not reused. Every other
+  plan keeps its fingerprint and cursors. When the operand that now
+  generates is recursive, a page counted from the end (`:last` without
+  `:before`) needs `:evaluation :complete-denotation`, as that operand's
+  own last page does; it answered without it while the wildcard relation
+  generated. The cost of such an intersection is now the subject's listing
+  of the generating operand: a lookup that found a few wildcard
+  relationships among many resources of the subject, a lookup for a subject
+  type the wildcard relation does not declare, and a subject listing of a
+  resource the wildcard does not reach read more than before.
 
 The behavior is compared with SpiceDB v1.56.0's answers to 72 requests
 ([fixture](../formal/fixtures/wildcards/README.md)), with an independent

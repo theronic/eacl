@@ -639,7 +639,70 @@
    (sorted-map)
    (:edges dependency-certificate)))
 
-(defn- node-costs [nodes]
+(defn- wildcard-partition? [partitions]
+  (boolean (some :wildcard-eid partitions)))
+
+(defn- node-wildcard-covers
+  "The ids of `nodes` whose candidate cover reads a wildcard branch, given
+  the permissions whose root's cover does (`wildcard-root?`). Children
+  precede their parents in `nodes`."
+  [nodes wildcard-root?]
+  (reduce
+   (fn [covered {:keys [id op record descriptor target-node]}]
+     (let [children (expression-limits/record-children record)
+           covered?
+           (case op
+             :relation (wildcard-partition? (:partitions descriptor))
+             :permission (wildcard-root? target-node)
+             :arrow (boolean
+                     (some (fn [{:keys [target-relation target-node]}]
+                             (if target-relation
+                               (wildcard-partition? (:partitions target-relation))
+                               (wildcard-root? target-node)))
+                           (:partitions descriptor)))
+             :union (boolean (some covered children))
+             ;; The anchor is an operand outside this set whenever one exists
+             ;; (`select-intersection-anchor`).
+             :intersection (every? covered children)
+             :exclusion (contains? covered (second record)))]
+       (cond-> covered covered? (conj id))))
+   #{}
+   nodes))
+
+(defn- wildcard-covers
+  "Per permission, the ids of its expression nodes whose candidate cover reads
+  a wildcard branch: a relation that declares `T:*`, an arrow to such a
+  relation, a reference or an arrow to a permission whose root is such a
+  node, a union with such a child, an exclusion with such a left operand, and
+  an intersection whose operands are all such nodes.
+
+  The cover of a node is what generates its lookup candidates: every child of
+  a union, the anchor of an intersection, the left operand of an exclusion.
+  A wildcard relationship belongs to no subject, so a cover that reads one
+  enumerates, for every subject, every resource the wildcard reaches. Every
+  other cover reads the relationships of the subject alone.
+
+  The least fixed point over the closure, by iteration from no permission:
+  the equations are monotone, so recursion that reaches no wildcard relation
+  has none. A pure function of the expressions and relation definitions;
+  relationship data is never an input."
+  [enriched]
+  (loop [wildcard-roots #{}]
+    (let [covers (into {}
+                       (map (fn [[permission {:keys [nodes]}]]
+                              [permission
+                               (node-wildcard-covers nodes wildcard-roots)]))
+                       enriched)
+          reached (into #{}
+                        (keep (fn [[permission {:keys [root]}]]
+                                (when (contains? (get covers permission) root)
+                                  permission)))
+                        enriched)]
+      (if (= wildcard-roots reached)
+        covers
+        (recur reached)))))
+
+(defn- node-costs [nodes wildcard-cover?]
   (reduce
    (fn [costs {:keys [id op record descriptor]}]
      (let [children (expression-limits/record-children record)
@@ -662,22 +725,37 @@
            tuple [(if direct? 0 1)
                   (if sequence-compatible? 0 1)
                   depth work id]]
-       (assoc costs id {:depth depth
-                        :work work
-                        :direct? direct?
-                        :sequence-compatible? sequence-compatible?
-                        :tuple tuple})))
+       (assoc costs id (cond-> {:depth depth
+                                :work work
+                                :direct? direct?
+                                :sequence-compatible? sequence-compatible?
+                                :tuple tuple}
+                         ;; Sealed only where it holds: a plan that reads no
+                         ;; wildcard branch keeps its costs and fingerprint.
+                         (wildcard-cover? id) (assoc :wildcard-cover? true)))))
    (sorted-map)
    nodes))
 
 (defn select-intersection-anchor
   "Selects the deterministic generator anchor from sealed structural costs.
 
+  An operand whose candidate cover reads a wildcard branch
+  (`:wildcard-cover?`, see `wildcard-covers`) is the anchor only when every
+  operand's does. Such an operand holds for every subject wherever a wildcard
+  relationship reaches, so generating from it enumerates those resources for
+  every subject, and the other operands are then decided once per resource
+  the wildcard reaches instead of once per resource of the subject. Among
+  the remaining operands the structural tuple decides, as it does among
+  operands that all read a wildcard.
+
   This decision is deliberately pure: request state, cache contents, observed
   selectivity, and backend timing are not inputs and therefore cannot change
   plan identity or result order."
   [children costs]
-  (first (sort-by #(get-in costs [% :tuple]) children)))
+  (first (sort-by (fn [child]
+                    (let [{:keys [wildcard-cover? tuple]} (get costs child)]
+                      [(if wildcard-cover? 1 0) tuple]))
+                  children)))
 
 (defn- compile-node-programs [nodes costs]
   (reduce
@@ -925,10 +1003,12 @@
         (into (sorted-map)
               (for [[permission data] enriched]
                 [permission (child-consumers (:nodes data))]))
+        wildcard-covered (wildcard-covers enriched)
         costs
         (into (sorted-map)
               (for [[permission data] enriched]
-                [permission (node-costs (:nodes data))]))
+                [permission (node-costs (:nodes data)
+                                        (get wildcard-covered permission))]))
         programs
         (into (sorted-map)
               (for [[permission data] enriched]

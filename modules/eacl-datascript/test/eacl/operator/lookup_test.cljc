@@ -66,6 +66,21 @@
      permission view = a_dense & b_identity & z_sparse
    }")
 
+(def typed-operand-schema
+  "`both` has relations to merge for users alone and `unbanned` for agents
+  alone: the other subject type is not declared by every operand. `emptied`
+  subtracts a relation from itself."
+  "definition user {}
+   definition agent {}
+   definition document {
+     relation viewer: user | agent
+     relation editor: user
+     relation banned: agent
+     permission both = viewer & editor
+     permission unbanned = viewer - banned
+     permission emptied = viewer - viewer
+   }")
+
 (defn- object [type id]
   (eacl/spice-object type [:eacl/id id]))
 
@@ -417,6 +432,68 @@
            (:logical-candidates @generic-stats)))
     (is (<= (:driver-reseeks @seek-stats)
             (:anchor-rounds @seek-stats)))))
+
+(deftest a-direct-specialization-serves-only-the-subject-types-it-can-merge-test
+  ;; A lookup or count of a direct intersection or exclusion for a subject
+  ;; type that one operand does not declare, and every lookup of `a - a`,
+  ;; failed with `:eacl.operator/invalid-seekable-plan`: the specialization
+  ;; was selected without asking whether it serves the subject type.
+  (let [user (object :user "u")
+        agent (object :agent "a")
+        documents (mapv #(object :document (str "d" %)) (range 6))
+        env (custom-fixture
+             typed-operand-schema (into [user agent] documents)
+             (mapcat
+              (fn [[index document]]
+                (cond-> [(eacl/->Relationship user :viewer document)
+                         (eacl/->Relationship agent :viewer document)]
+                  (even? index)
+                  (conj (eacl/->Relationship user :editor document))
+                  (zero? (mod index 3))
+                  (conj (eacl/->Relationship agent :banned document))))
+              (map-indexed vector documents)))
+        eid (:eid env)
+        chosen (fn [indexes] (set (map #(eid (nth documents %)) indexes)))
+        cases
+        ;; permission, subject, the documents it holds, whether a
+        ;; specialization serves its subject type
+        [[:both user (chosen [0 2 4]) true]
+         [:both agent #{} false]
+         [:unbanned agent (chosen [1 2 4 5]) true]
+         [:unbanned user (chosen (range 6)) false]
+         [:emptied user #{} false]
+         [:emptied agent #{} false]]]
+    (doseq [[permission subject expected specialized?] cases
+            :let [sealed (plan/seal-plan (:adapter env) [:document permission])
+                  subject-type (:type subject)
+                  forward {:adapter (:adapter env) :plan sealed
+                           :traversal :forward :subject-type subject-type
+                           :anchor-eid (eid subject)}
+                  label (str permission " for " (name subject-type))]]
+      (testing label
+        (doseq [order-direction [:asc :desc]
+                page-size [1 4 30]
+                :let [options (assoc forward :order-direction order-direction
+                                     :page-size page-size)
+                      seeks (atom {})
+                      values (binding [seekable/*seek-stats* seeks]
+                               (drain-pages options))]]
+          (is (= expected (set values)))
+          (is (= (count expected) (count values)))
+          (is (= (drain-pages (assoc options :direct-specializations? false))
+                 values)
+              "the generic cover lists the same sequence")
+          (is (= specialized? (some? (seq @seeks)))
+              "the specialization runs exactly where it serves the subject type"))
+        (is (= {:count (count expected) :truncated? false}
+               (select-keys (lookup/count-results forward) [:count :truncated?])))
+        (doseq [[index document] (map-indexed vector documents)
+                :let [reverse-options {:adapter (:adapter env) :plan sealed
+                                       :traversal :reverse :subject-type subject-type
+                                       :anchor-eid (eid document) :page-size 4}]]
+          (is (= (if (contains? expected (eid document)) [(eid subject)] [])
+                 (drain-pages reverse-options))
+              (str "subjects of document " index)))))))
 
 (deftest zero-specialization-demand-opens-no-stream-test
   (is (= {:emissions [] :has-more? nil :exhausted? false

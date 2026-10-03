@@ -1,0 +1,26 @@
+{:minimized-scenario
+ {:schema "definition user {}\ndefinition agent {}\ndefinition document {\n  relation viewer: user | agent\n  relation banned: agent\n  permission unbanned = viewer - banned\n}\n"
+  :objects ["u" "d"]
+  :relationships [[:user "u" :viewer :document "d"]]
+  :steps [{:op :lookup-resources
+           :request {:subject {:type :user :id "u"} :permission :unbanned
+                     :resource/type :document :first 10}}
+          {:op :count-resources
+           :request {:subject {:type :user :id "u"} :permission :unbanned
+                     :resource/type :document}}
+          {:op :lookup-subjects
+           :request {:resource {:type :document :id "d"} :permission :unbanned
+                     :subject/type :user :first 10}}
+          {:op :count-subjects
+           :request {:resource {:type :document :id "d"} :permission :unbanned
+                     :subject/type :user}}
+          {:op :check-permission
+           :request {:subject {:type :user :id "u"} :permission :unbanned
+                     :resource {:type :document :id "d"}}}]}
+ :equivalent-shapes
+ {:intersection "relation editor: user, permission both = viewer & editor, requested for agents"
+  :one-relation-twice "permission emptied = viewer - viewer, requested for either subject type"}
+ :reached-by-the-anchor-rule
+ {:schema "relation subscriber: user:* | agent:*, permission open = subscriber & (viewer - banned)"
+  :relationships [[:user "u" :viewer :document "d"] [:user "*" :subscriber :document "d"]]
+  :note "43f15050 generated `open` from `subscriber` and answered; 70bef372 generates it from the exclusion"}}

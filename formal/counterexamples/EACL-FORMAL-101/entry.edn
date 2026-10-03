@@ -1,0 +1,22 @@
+{:id :EACL-FORMAL-101
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace "eacl.operator-engine.subject-type-differential, seed 2: `pm1 = owner - banned` with `owner: user | agent` and `banned: agent` failed every listing for users. First seen while reviewing the anchor rule of EACL-FORMAL-100, where `owner & (banned - editor)` with `owner: user:*`, `banned: agent`, `editor: user | agent` answered a user's listing on 43f15050 and failed once the exclusion generated"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions
+ ["v8.0 pre-release since the direct operator specializations (0038f398), 8.0.0-RC-2026-09-12 and 8.0.0-RC-2026-10-02 included"]
+ :affected-backends [:shared :datomic :datascript :datahike]
+ :root-cause
+ "An intersection or exclusion whose operands are all relations seals a direct specialization: one relation scan per operand, merged in entity order. Its `:typed-partitions` hold those relations for each subject type that every operand declares. `operator-lookup/specialization-node` selected the specialization of the root, or of the node the root generates from, by its kind alone, and `seekable/page` then refused a subject type without a partition, or with one relation for two operands (`a - a`), with `:eacl.operator/invalid-seekable-plan` (\"Direct specialization is not eligible.\"). `lookup-resources`, `count-resources`, `lookup-subjects` and `count-subjects` of such a permission therefore failed for a subject type that one operand does not declare, although its checks answered. The anchor rule of EACL-FORMAL-100 made a nested exclusion or intersection of relations the generator of plans that had generated from a wildcard relation, so `subscriber & (viewer - banned)` began to fail the same way."
+ :fix
+ "`seekable/operand-relation-ids` states when a specialization serves a subject type: every operand has a relation for it, each a different one. `operator-lookup/specialization-node` selects a specialization only then, and `seekable/page` keeps the same predicate as its guard. A lookup or count for any other subject type takes the generic cover, whose exact predicates decide each candidate: an operand that does not declare the subject type holds for none of its subjects. Sealed plans, fingerprints and cursors are unchanged."
+ :notes
+ "No cursor existed for an affected request: every page of one failed. The generic cover and the specialization share cover coordinates, so served subject types keep their cursors."
+ :closing-evidence
+ ["eacl.operator.lookup-test/a-direct-specialization-serves-only-the-subject-types-it-can-merge-test"
+  "eacl.operator.subject-type-differential-test/reads-for-either-subject-type-follow-the-reference-test"
+  "eacl.datahike.subject-type-differential-test/reads-for-either-subject-type-follow-the-reference-test"
+  "eacl.operator.wildcard-anchor-test/a-typed-anchor-answers-for-every-subject-type-test"
+  "eacl.datahike.wildcard-anchor-test/a-typed-anchor-answers-for-every-subject-type-test"
+  "eacl.datomic.wildcard-anchor-test/a-typed-anchor-answers-for-every-subject-type-test"]}

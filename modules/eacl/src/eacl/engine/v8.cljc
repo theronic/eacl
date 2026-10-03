@@ -1026,6 +1026,11 @@
     ;; completed answers differ from those of the canonical order.
     :operand-order :static-cost-v1
     :certificate-rule :later-when-both-decide-v1
+    ;; An intersection generates its candidates from an operand whose cover
+    ;; reads no wildcard branch when it has one
+    ;; (`operator-plan/select-intersection-anchor`): the candidate order of
+    ;; such a plan differs from the one its structural costs alone sealed.
+    :intersection-anchor :wildcard-cover-last-v1
     ;; Strong-Kleene faults: operand decisions, including reordered batched
     ;; membership, are independent of evaluation order.
     :qualified-membership :kleene-fault-operands-v3

@@ -260,6 +260,21 @@
                     right (if match? (second (advance options right)) right)]
                 (recur left right emissions)))))))))
 
+(defn ^:no-doc operand-relation-ids
+  "The relation each operand of a direct specialization scans for
+  `subject-type`, the driver's first, or nil when the specialization does not
+  serve that subject type. It serves the subject types every operand
+  declares, each through a relation of its own: an operand that does not
+  declare the type has no relation to scan, and one relation is not merged
+  with itself (`a - a`)."
+  [{:keys [kind typed-partitions driver operands]} subject-type]
+  (let [by-node (into {} (map (juxt :node :relation-eid)) (get typed-partitions subject-type))
+        ids (mapv by-node (into [driver] operands))]
+    (when (and (contains? #{:direct-k-way-intersection :direct-monotone-exclusion} kind)
+               (every? some? ids)
+               (= (count ids) (count (distinct ids))))
+      ids)))
+
 (defn page
   "Returns a raw exact generator page for one certified direct
    specialization, with the generic cover coordinates and qualified evidence.
@@ -274,14 +289,10 @@
      :counters {:commands 0 :fetched-values 0 :stream-opens 0 :emissions 0}}
     (let [permission (first (:operator-root-semantic cover-plan))
           specialization (get-in plan [:specializations permission specialization-node])
-          {:keys [kind typed-partitions driver operands]} specialization
-          by-node (into {} (map (juxt :node :relation-eid)) (get typed-partitions subject-type))
-          relation-ids (mapv by-node (into [driver] operands))
-          _ (when-not (and (contains? #{:direct-k-way-intersection :direct-monotone-exclusion} kind)
-                           (= (count relation-ids) (count (distinct relation-ids)))
-                           (every? some? relation-ids))
-              (invalid! :ineligible "Direct specialization is not eligible."
-                        {:permission permission :node specialization-node :subject-type subject-type :kind kind}))
+          {:keys [kind driver]} specialization
+          relation-ids (or (operand-relation-ids specialization subject-type)
+                           (invalid! :ineligible "Direct specialization is not eligible."
+                                     {:permission permission :node specialization-node :subject-type subject-type :kind kind}))
           coords-prefix (relation-path cover-plan specialization-node driver subject-type (first relation-ids))
           boundary-eid (when boundary
                          (when-not (and (= coords-prefix (pop (vec boundary))) (integer? (peek boundary)))

@@ -134,7 +134,10 @@
             [eacl.datascript.storage-test]
             [eacl.datascript.wildcard-test]
             [eacl.datascript.wildcard-differential-test]
-            [eacl.datascript.wildcard-operator-routes-test]))
+            [eacl.datascript.wildcard-operator-routes-test]
+            [eacl.operator.wildcard-anchor-test]
+            [eacl.operator.wildcard-anchor-differential-test]
+            [eacl.operator.subject-type-differential-test]))
 
 (nodejs/enable-util-print!)
 
@@ -280,6 +283,9 @@
                'eacl.datascript.storage-test
                'eacl.datascript.wildcard-test
                'eacl.datascript.wildcard-differential-test
-               'eacl.datascript.wildcard-operator-routes-test))
+               'eacl.datascript.wildcard-operator-routes-test
+               'eacl.operator.wildcard-anchor-test
+               'eacl.operator.wildcard-anchor-differential-test
+               'eacl.operator.subject-type-differential-test))
 
 (set! *main-cli-fn* -main)

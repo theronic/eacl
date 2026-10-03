@@ -1,0 +1,22 @@
+{:id :EACL-FORMAL-100
+ :status :fixed
+ :discovered-by :benchmark
+ :seed-or-trace "0tx scale review, 2026-10-03: lookup-resources of `open = view & subscribed` for the owner of 5 of N subscribed ledgers on Datahike; 68N - 2 fetched values, limit exceeded from N = 1,471"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions
+ ["v8.0 pre-release with wildcard subjects, 8.0.0-RC-2026-10-02 included"]
+ :affected-backends [:shared :datomic :datascript :datahike]
+ :root-cause
+ "A lookup or count over an intersection generates its candidates from one operand, the sealed anchor, and decides the other operands per candidate. `operator-plan/select-intersection-anchor` took the operand with the smallest structural tuple [direct? sequence-compatible? depth work node-id]. A reference to a permission has depth 0 and work 1 whatever it expands to, so two named operands tied and the canonical node id, which follows the operand's name, decided; a relation always won, a wildcard relation included. An operand whose cover reads a wildcard relation holds for every subject wherever a wildcard relationship reaches, so generating from it enumerated every such resource for every subject: 68 fetched values per ledger of the platform for `view & subscribed`, and `:eacl.recursive-traversal/limit-exceeded` under the default limits from 1,471 ledgers."
+ :fix
+ "Sealing computes, as a least fixed point over the permission closure, the expression nodes whose candidate cover reads a wildcard branch: a relation that declares `T:*`, an arrow to one, a reference or arrow to a permission whose root is one, a union with such a child, an exclusion with such a left operand, an intersection whose operands all are. The cost entry of such a node carries `:wildcard-cover? true`, inside the plan fingerprint and only where it holds, and `select-intersection-anchor` takes such an operand only when every operand is one. Plans that read no wildcard branch are unchanged. `compiler-plan-compatibility` gains `:intersection-anchor`."
+ :notes
+ "The listed subject's five resources cost 5 fetched values at every platform size after the fix. An intersection whose operands all read a wildcard, and the choice among operands that read none, still follow structural costs; a choice by observed selectivity is not part of the sealed plan."
+ :closing-evidence
+ ["eacl.operator.wildcard-anchor-test/listing-succeeds-under-the-default-limits-test"
+  "eacl.operator.wildcard-anchor-test/listing-work-is-independent-of-the-platform-test"
+  "eacl.operator.wildcard-anchor-test/answers-test"
+  "eacl.operator.wildcard-anchor-differential-test/wildcard-intersections-follow-the-reference-test"
+  "eacl.operator.plan-test/an-intersection-generates-from-an-operand-no-wildcard-reaches-test"
+  "eacl.formal.executed-mutation-controls/operator-anchor-ignores-wildcard-cover-killed?"]}
