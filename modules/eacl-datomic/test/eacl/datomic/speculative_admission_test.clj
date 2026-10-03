@@ -444,5 +444,10 @@
                     prospective {:resource doc :permission :view})))
               (let [after (datomic/cache-stats client)]
                 (is (= (:puts before) (:puts after)))
-                (is (= (:exact-size before) (:exact-size after)))
-                (is (= (:managed-size before) (:managed-size after)))))))))))
+                (is (= (:exact-entries before) (:exact-entries after)))
+                (is (= (:managed-entries before) (:managed-entries after)))
+                (eacl/check-permission base demand)
+                (let [committed (datomic/cache-stats client)]
+                  (is (< (:puts after) (:puts committed))
+                      "the same check against the committed snapshot publishes")
+                  (is (< (:exact-entries after) (:exact-entries committed))))))))))))

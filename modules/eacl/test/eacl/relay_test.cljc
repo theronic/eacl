@@ -843,7 +843,7 @@
             :result-eid "document-1"}
            (get-in prepared [:query :after]))
         "the old authenticated transport is internalized to its exact boundary")
-    (is (not (contains? (:cursor-context (:opts prepared)) :exp))
+    (is (false? (:expiring-cursor-input? prepared))
         "elapsed age far beyond five minutes is irrelevant without an explicit TTL")))
 
 (deftest one-page-builds-one-snapshot-context-test

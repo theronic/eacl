@@ -14,7 +14,6 @@
             [eacl.cursor :as cursor]
             [eacl.datascript.core :as datascript]
             [eacl.datascript.schema :as schema]
-            [eacl.engine.v8 :as engine]
             [eacl.execution :as execution]
             [eacl.proof-frame :as proof-frame]
             [eacl.relay :as relay]
@@ -1653,23 +1652,30 @@
       (eacl/create-relationships!
        client
        [(eacl/->Relationship other-user :owner document-2)])
+      ;; A permission's plan is sealed once per schema generation whatever
+      ;; the cache mode, so seal read_b's before comparing the two modes.
+      (is (true? (decision user :read_b server-1 false)))
       (let [cached-work (atom {})
             bypass-work (atom {})
             cached-allowed?
-            (binding [engine/*backend-work-stats* cached-work]
+            (binding [backend/*backend-op-stats* cached-work]
               (decision user :read_b server-1 true))
             bypass-allowed?
-            (binding [engine/*backend-work-stats* bypass-work]
-              (decision user :read_b server-1 false))
-            after (datascript/cache-stats client)]
+            (binding [backend/*backend-op-stats* bypass-work]
+              (decision user :read_b server-1 false))]
         (is (true? cached-allowed?))
         (is (= cached-allowed? bypass-allowed?))
-        (is (= (:executed-backend-operations @bypass-work)
-               (:executed-backend-operations @cached-work))
-            "a cold demand cache attempt performs the same semantic work as bypass")
-        (is (not (contains? (:subproblems after)
-                            :managed-projection-hits))
-            "demand mode has no shared partial-projection cache")))
+        (is (pos? (get @bypass-work :subject->resources 0))
+            "the bypass scans the backend")
+        (is (= (if orchestration/*qualified-authorization-enabled?*
+                 @bypass-work
+                 ;; Under the legacy binding one proof-frame read lets the
+                 ;; attempt reuse read_a's team scan across the unrelated write.
+                 (-> @bypass-work
+                     (dissoc :resource->subjects)
+                     (assoc :proof-frame 1)))
+               @cached-work)
+            "a cold demand cache attempt adds no scan to the bypass's work")))
 
     ;; A write to the depended-on relation must select a different managed key,
     ;; not reuse the previous negative projection.

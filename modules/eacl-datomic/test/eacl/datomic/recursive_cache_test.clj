@@ -427,7 +427,7 @@
             "an alternate cache resolves its own denotation instead of trusting foreign state")
         (is (true? (:cached? retry-page2))
             "a retry reuses the originating client's completed answer")
-        (is (zero? (stat retry-stats :stream-fills))
+        (is (= {} @retry-stats)
             "an answer hit does not re-enter recursive traversal")
         (is (<= (stat previous-stats :derived-grants) 30)
             "bounded prefix replay retains at most the requested window")))))
