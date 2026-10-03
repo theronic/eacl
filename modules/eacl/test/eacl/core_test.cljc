@@ -446,6 +446,43 @@
     (is (empty? @calls)
         "incomplete authorization demands must not reach a reader")))
 
+(deftest request-shape-errors-name-every-offending-key-test
+  (let [calls (atom [])
+        acl (->RecordingAcl calls nil)
+        subject {:type :user :id "user-1"}
+        resource {:type :document :id "document-1"}
+        demand {:subject subject :permission :view :resource resource}]
+    (testing "an object names its unknown keys, as a map and as a record"
+      (doseq [object [(assoc subject :tenant "t")
+                      (assoc (eacl/spice-object :user "user-1") :tenant "t")
+                      (assoc subject :relation nil :tenant "t")]]
+        (let [data (error-data
+                    #(eacl/check-permission acl (assoc demand :subject object)))]
+          (is (= :eacl/invalid-request (:type data)))
+          (is (= :unknown-object-key (:reason data)))
+          (is (= :subject (:position data)))
+          (is (= [:tenant] (:unknown-keys data))))))
+    (testing "every unknown request key is listed"
+      (let [data (error-data
+                  #(eacl/check-permission
+                    acl (assoc demand :cachee? false :timeout 1)))]
+        (is (= :unknown-request-key (:reason data)))
+        (is (= #{:cachee? :timeout} (set (:unknown-keys data))))))
+    (testing "every missing key is listed, objects before names"
+      (let [data (error-data #(eacl/lookup-resources acl {}))]
+        (is (= :missing-request-key (:reason data)))
+        (is (= [:subject :permission :resource/type] (:missing-keys data))))
+      (let [data (error-data #(eacl/check-permission acl {:permission :view}))]
+        (is (= [:subject :resource] (:missing-keys data)))))
+    (is (empty? @calls))
+    (testing "closed objects of every admitted spelling reach the reader"
+      (doseq [object [subject
+                      (assoc subject :relation nil)
+                      (eacl/spice-object :user "user-1")]]
+        (is (true? (:allowed? (eacl/check-permission
+                               acl (assoc demand :subject object))))))
+      (is (= 3 (count @calls))))))
+
 (deftest public-reader-extensions-receive-only-validated-request-shapes-test
   (let [calls (atom [])
         acl (->RecordingAcl calls nil)

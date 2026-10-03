@@ -201,6 +201,22 @@
   #{:resource :permission :consistency :timeout-ms :cancellation-token
     :cache? :populate-cache?})
 
+(defn- every-key-known?
+  "True when every key of the map `value` is in `known-keys`. An admitted
+  request is the ordinary case, and it allocates no key sequence."
+  [value known-keys]
+  (reduce-kv (fn [_ key _]
+               (if (contains? known-keys key) true (reduced false)))
+             true
+             value))
+
+(defn- every-position-present?
+  [request positions]
+  (reduce (fn [_ position]
+            (if (contains? request position) true (reduced false)))
+          true
+          positions))
+
 (defn- validate-request-keys!
   [operation request known-keys]
   (when-not (map? request)
@@ -209,7 +225,8 @@
       :eacl/invalid-request
       (str (name operation) " requires a request map.")
       {:operation operation :reason :invalid-request-shape :value request})))
-  (when-let [unknown-keys (seq (remove known-keys (keys request)))]
+  (when-let [unknown-keys (when-not (every-key-known? request known-keys)
+                            (seq (remove known-keys (keys request))))]
     (throw
      (typed-error
       :eacl/invalid-request
@@ -225,7 +242,8 @@
 (defn- validate-required-request-keys!
   [operation request required-keys]
   (when-let [missing-keys
-             (seq (remove #(contains? request %) required-keys))]
+             (when-not (every-position-present? request required-keys)
+               (seq (remove #(contains? request %) required-keys)))]
     (throw
      (typed-error
       :eacl/invalid-request
@@ -235,10 +253,20 @@
        :missing-keys (vec missing-keys)})))
   request)
 
+(defn- endpoint-keys-closed?
+  "True when the map or record `endpoint` has no key but `:type`, `:id` and
+  `:relation`: its entry count is the number of those keys it contains."
+  [endpoint]
+  (= (count endpoint)
+     (+ (if (contains? endpoint :type) 1 0)
+        (if (contains? endpoint :id) 1 0)
+        (if (contains? endpoint :relation) 1 0))))
+
 (defn- validate-endpoint-keys!
   [operation position endpoint]
   (when (map? endpoint)
-    (when-let [unknown-keys (seq (remove endpoint-keys (keys endpoint)))]
+    (when-let [unknown-keys (when-not (endpoint-keys-closed? endpoint)
+                              (seq (remove endpoint-keys (keys endpoint))))]
       (throw
        (typed-error
         :eacl/invalid-request
@@ -279,17 +307,18 @@
 
 (defn- validate-keyword-fields!
   [operation request positions]
-  (doseq [position positions
-          :when (contains? request position)]
-    (when-not (keyword? (get request position))
-      (throw
-       (typed-error
-        :eacl/invalid-request
-        (str (name operation) " requires keyword authorization names and types.")
-        {:operation operation
-         :reason :invalid-request-value
-         :position position
-         :value (get request position)}))))
+  (run! (fn [position]
+          (when (and (contains? request position)
+                     (not (keyword? (get request position))))
+            (throw
+             (typed-error
+              :eacl/invalid-request
+              (str (name operation) " requires keyword authorization names and types.")
+              {:operation operation
+               :reason :invalid-request-value
+               :position position
+               :value (get request position)}))))
+        positions)
   request)
 
 (defn- validate-stable-page-basis!
@@ -316,11 +345,13 @@
                      :count-resources :count-subjects}
                    operation)
     (authorization-result/result-policy request))
-  (validate-required-request-keys!
-   operation request (concat endpoint-positions keyword-positions))
-  (doseq [position endpoint-positions
-          :let [endpoint (get request position)]]
-    (validate-public-object! operation position endpoint))
+  (when-not (and (every-position-present? request endpoint-positions)
+                 (every-position-present? request keyword-positions))
+    (validate-required-request-keys!
+     operation request (concat endpoint-positions keyword-positions)))
+  (run! (fn [position]
+          (validate-public-object! operation position (get request position)))
+        endpoint-positions)
   (validate-keyword-fields! operation request keyword-positions)
   request)
 
