@@ -266,6 +266,21 @@ which stays correct.
   previous implementation over random values, plus pinned vectors).
 - Request scaffolding: validate derived-schema identities once per
   generation; precompute per-client option maps and adapter capabilities.
+- Compiled size: HotSpot never compiles a method over 8,000 bytes of
+  bytecode, and nothing reports one. The operator point evaluator was such a
+  method. The compile gate fails on any production method over the limit.
+
+As built (tasks 10.1, 10.1a, part of 10.2, 10.3), after D4 and ahead of D5 to
+D9. On 0tx's Central schema (Datahike, 600 ledgers) evaluation was a minority
+of every request: a cached check spent 12% of its time normalizing adapter
+capabilities and 13% validating its shape twice; an uncached union check spent
+21% validating one derived-schema identity eight times; a snapshot token cost
+more (67 µs) than the cached check it accompanied (20 µs). What is left of D10
+is listed under task 10.2. A new client still costs about 1.9 ms before its
+first decision (45% sealing the plan, 16% reading the schema, 14% construction
+checks), which a host that builds a client per database value pays on every
+commit; sharing sealed plans between clients of one source is an API decision
+and is not part of this change.
 
 ## Certification
 
