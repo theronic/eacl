@@ -55,6 +55,7 @@
             [eacl.datascript.qualified-write-test]
             [eacl.datascript.self-test]
             [eacl.caveats.schema-admission-test]
+            [eacl.schema.qualification-admission-test]
             [eacl.schema.relation-allowance-test]
             [eacl.datascript.qualified-schema-test]
             [eacl.authorization.inspection-test]
@@ -191,6 +192,7 @@
                'eacl.datascript.qualified-write-test
                'eacl.datascript.self-test
                'eacl.caveats.schema-admission-test
+               'eacl.schema.qualification-admission-test
                'eacl.schema.relation-allowance-test
                'eacl.datascript.qualified-schema-test
                'eacl.authorization.inspection-test
