@@ -864,21 +864,30 @@
                       id)))
         edge! (fn [from d r]
                 (let [to (node! d r)]
-                  (vswap! graph update-in [:edges from] conj to)))]
+                  (vswap! graph update-in [:edges from] conj to)))
+        ;; Each loop body is a function of its own: `doseq` copies its body
+        ;; for every combination of chunked and unchunked bindings, which
+        ;; made this one method larger than the JVM compiles.
+        relation-reference!
+        (fn [from {:keys [subject-type subject-relation wildcard?]}]
+          (if (and subject-relation (not wildcard?))
+            (edge! from subject-type subject-relation)
+            (vswap! graph update-in [:types from] conj subject-type)))
+        permission-leaf!
+        (fn [name relations from {:keys [kind tupleset target] :as leaf}]
+          (case kind
+            :computed (edge! from name (:name leaf))
+            :arrow (doseq [subject-type (sort (distinct (map :subject-type (get relations tupleset))))]
+                     (edge! from subject-type target))))]
     (doseq [[name {:keys [relations permissions]}] definitions]
       (doseq [[relation refs] relations
               :let [from (node! name relation)]
-              {:keys [subject-type subject-relation wildcard?]} refs]
-        (if (and subject-relation (not wildcard?))
-          (edge! from subject-type subject-relation)
-          (vswap! graph update-in [:types from] conj subject-type)))
+              reference refs]
+        (relation-reference! from reference))
       (doseq [[permission member] permissions
               :let [from (node! name permission)]
-              {:keys [kind tupleset target] :as leaf} (expression-leaves (last member))]
-        (case kind
-          :computed (edge! from name (:name leaf))
-          :arrow (doseq [subject-type (sort (distinct (map :subject-type (get relations tupleset))))]
-                   (edge! from subject-type target)))))
+              leaf (expression-leaves (last member))]
+        (permission-leaf! name relations from leaf)))
     @graph))
 
 (defn- terminal-types

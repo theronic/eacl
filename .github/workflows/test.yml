@@ -91,9 +91,11 @@ jobs:
           key: cljdeps-${{ runner.os }}-${{ hashFiles('deps.edn', 'modules/*/deps.edn') }}
           restore-keys: cljdeps-${{ runner.os }}-
 
-      - name: Reflection warnings gate
+      - name: Reflection warnings and method size gate
         # trusted-surface-hygiene 11.2: core + backend production namespaces
-        # compile with *warn-on-reflection*; any warning fails the build.
+        # compile with *warn-on-reflection*; any warning fails the build. The
+        # same compilation fails on a method the JVM would never compile
+        # (over 8,000 bytes of bytecode).
         run: |
           chmod +x bin/reflection-gate
           bin/reflection-gate target/reflection-gate.log

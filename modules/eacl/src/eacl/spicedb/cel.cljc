@@ -272,31 +272,43 @@
     (unify? a b) :bool
     :else (invalid! :no-matching-overload offset)))
 
-(defn- relation-type [op a b offset]
-  (case op
-    ("==" "!=") (equality-type a b offset)
-    ("<" "<=" ">" ">=")
-    (if (and (not (opaque? a))
-             (not (opaque? b))
-             (cond
-               (= :dyn a) (or (= :dyn b) (contains? orderable b))
-               (= :dyn b) (contains? orderable a)
-               :else (and (= a b) (contains? orderable a))))
-      :bool
-      (invalid! :no-matching-overload offset))
-    "in"
+(defn- ordering-type [a b offset]
+  (if (and (not (opaque? a))
+           (not (opaque? b))
+           (cond
+             (= :dyn a) (or (= :dyn b) (contains? orderable b))
+             (= :dyn b) (contains? orderable a)
+             :else (and (= a b) (contains? orderable a))))
+    :bool
+    (invalid! :no-matching-overload offset)))
+
+(defn- membership-type [a b offset]
+  (cond
+    (opaque? b) (invalid! :no-matching-overload offset)
+    (= :dyn b) (if (opaque? a) (unknown! :null offset) :bool)
+    (and (vector? b) (= :list (first b)))
     (cond
-      (opaque? b) (invalid! :no-matching-overload offset)
-      (= :dyn b) (if (opaque? a) (unknown! :null offset) :bool)
-      (and (vector? b) (= :list (first b)))
-      (cond
-        (and (opaque? a) (= :dyn (second b))) (unknown! :null offset)
-        (opaque? a) (invalid! :no-matching-overload offset)
-        (unify? a (second b)) :bool
-        :else (invalid! :no-matching-overload offset))
-      (and (vector? b) (= :map (first b)))
-      (if (and (not (opaque? a)) (unify? a :string)) :bool (invalid! :no-matching-overload offset))
-      :else (invalid! :no-matching-overload offset))))
+      (and (opaque? a) (= :dyn (second b))) (unknown! :null offset)
+      (opaque? a) (invalid! :no-matching-overload offset)
+      (unify? a (second b)) :bool
+      :else (invalid! :no-matching-overload offset))
+    (and (vector? b) (= :map (first b)))
+    (if (and (not (opaque? a)) (unify? a :string)) :bool (invalid! :no-matching-overload offset))
+    :else (invalid! :no-matching-overload offset)))
+
+(def ^:private relation-families
+  {"==" :equality "!=" :equality
+   "<" :ordering "<=" :ordering ">" :ordering ">=" :ordering
+   "in" :membership})
+
+;; The operator is looked up, not switched on: `case` over these seven
+;; strings compiles to a table spanning their hash codes, 13 KB of bytecode,
+;; and the JVM does not compile a method that large.
+(defn- relation-type [op a b offset]
+  (case (get relation-families op op)
+    :equality (equality-type a b offset)
+    :ordering (ordering-type a b offset)
+    :membership (membership-type a b offset)))
 
 (defn- arithmetic-type
   "CEL's standard arithmetic overloads (no cross-type numeric arithmetic)."
