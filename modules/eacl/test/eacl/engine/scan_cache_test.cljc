@@ -182,17 +182,63 @@
       (is (= 2 (:entry-count stats)))
       (is (pos? (:scope-unavailable stats))))))
 
-(deftest shared-tier-keeps-the-longer-prefix-under-concurrent-extension-test
-  (let [tier (scan-cache/tier {:max-entries 16 :max-prefix 8})
-        key [[:scope 17] (scan-cache/descriptor-key descriptor)]
-        store (:store tier)
-        short {:prefix [1 2 3] :exhausted? false}
-        long {:prefix [1 2 3 4 5 6] :exhausted? false}]
-    (is (true? (lru/put-if-absent! store key short)))
-    (is (true? (lru/replace-if! store key short long)))
-    (is (false? (lru/replace-if! store key short {:prefix [1 2 3 4] :exhausted? false}))
-        "a stale expected entry never overwrites the longer prefix")
-    (is (= long (:value (lru/lookup! store key))))))
+(deftest racing-deposits-leave-one-exact-prefix-in-the-shared-tier-test
+  ;; Two requests miss on the same resident state. The racing request runs to
+  ;; completion inside the outer request's adapter command, so its deposit
+  ;; lands between the outer request's lookup and the outer request's own
+  ;; deposit. `warm?` starts from a resident prefix (an extension) instead of
+  ;; an empty tier (a first deposit).
+  (doseq [warm? [true false]
+          [outer-limit racing-limit] [[1 3] [3 1]]]
+    (testing (str (if warm? "extension" "first deposit") ", outer limit "
+                  outer-limit ", racing limit " racing-limit)
+      (let [tier (scan-cache/tier {:max-entries 16 :max-prefix 8})
+            commands (atom [])
+            adapter (counting-inner {7 [1 2 3 4 5 6 7 8]} commands)
+            request (fn [inner]
+                      (scan-cache/caching-fetch-fn
+                       inner {:memo (scan-cache/memo)
+                              :tier tier
+                              :scope-fn (fn [relation-eid]
+                                          [:scope relation-eid])}))
+            command (fn [limit]
+                      (cond-> (assoc descriptor :limit limit)
+                        warm? (assoc :bound-eid 3)))
+            reply (fn [limit]
+                    (vec (take limit (if warm? [4 5 6 7 8] [1 2 3 4 5 6 7 8]))))
+            deposit (fn [limit]
+                      (into (if warm? [1 2 3] []) (reply limit)))
+            resident #(:value
+                       (lru/lookup!
+                        (:store tier)
+                        (scan-cache/shared-key
+                         [:scope 17] (scan-cache/descriptor-key descriptor))))
+            racing-reply (atom nil)]
+        (when warm?
+          (is (= [1 2 3] ((request adapter) (assoc descriptor :limit 3))))
+          (is (= {:prefix [1 2 3] :exhausted? false} (resident))))
+        (let [before (count @commands)
+              outer (request
+                     (fn [d]
+                       (reset! racing-reply
+                               ((request adapter) (command racing-limit)))
+                       (adapter d)))]
+          (is (= (reply outer-limit) (outer (command outer-limit))))
+          (is (= (reply racing-limit) @racing-reply))
+          (is (= 2 (- (count @commands) before))
+              "both requests missed and issued their own command")
+          (is (contains? #{{:prefix (deposit outer-limit) :exhausted? false}
+                           {:prefix (deposit racing-limit) :exhausted? false}}
+                         (resident))
+              "the tier holds one request's exact prefix, never a mixture")
+          (when (< outer-limit racing-limit)
+            (is (= (deposit racing-limit) (:prefix (resident)))
+                "a deposit against a state that has since moved never overwrites the longer prefix"))
+          (is (= (reply 3) ((request adapter) (command 3)))
+              "a later request is answered exactly from whichever prefix stayed")
+          (is (<= (- (count @commands) before) 3)
+              "losing the race costs a later request at most one command")
+          (is (= {:prefix (deposit 3) :exhausted? false} (resident))))))))
 
 (deftest unknown-operations-and-unbounded-limits-bypass-the-cache-test
   (with-ledger
