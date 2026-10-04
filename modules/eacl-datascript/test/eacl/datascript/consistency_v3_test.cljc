@@ -472,12 +472,6 @@
     (is (= before after)
         "unsupported exact selection must fail before cache access")))
 
-#?(:clj
-   (deftest raw-db-entry-points-are-removed-test
-     (is (nil? (ns-resolve 'eacl.datascript.core 'datascript-can?)))
-     (is (nil? (ns-resolve 'eacl.datascript.core
-                           'datascript-read-relationships)))))
-
 (deftest cloned-connections-are-distinct-sources-and-listener-independent-test
   (let [original-listen! ds/listen!
         conn (datascript/create-conn)

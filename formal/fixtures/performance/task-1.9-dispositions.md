@@ -54,3 +54,7 @@ the negative decision only so it is not silently reintroduced.
 The red tests are intentional task-1.9 anchors. They must turn green in the
 owning implementation/spec tasks; weakening or deleting them is not an
 acceptable resolution.
+
+`durable-cache-contracts-forbid-request-joining-test` was removed on 2026-10-04,
+after the specs it searched stopped requiring flights: it checked the text of
+those files, not behavior.

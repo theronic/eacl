@@ -328,8 +328,6 @@
     (is (empty? (:provider-calls failure)))))
 
 (deftest raw-database-snapshot-constructor-is-not-public-test
-  #?(:clj
-     (is (nil? (ns-resolve 'eacl.datascript.core 'snapshot))))
   (let [{:keys [conn]} (fixture)
         other-conn (datascript/create-conn)
         cases

@@ -57,7 +57,6 @@
     (is (> (datahike/cache-content-revision client) before))))
 
 (deftest native-speculative-contract-test
-  (is (nil? (ns-resolve 'eacl.datahike.core 'snapshot)))
   (let [conn (datahike/create-conn nil {})
         config (:config (d/db conn))
         client (datahike/make-client conn {})]

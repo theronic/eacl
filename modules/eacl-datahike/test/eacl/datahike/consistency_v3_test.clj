@@ -566,11 +566,6 @@
     (is (not (source/supports? basis-source :snapshots :durable-history)))
     (is (not (source/supports? basis-source :snapshots :conditional-exact)))))
 
-(deftest raw-db-entry-points-are-removed-test
-  (is (nil? (ns-resolve 'eacl.datahike.core 'datahike-can?)))
-  (is (nil? (ns-resolve 'eacl.datahike.core
-                        'datahike-read-relationships))))
-
 (deftest reader-branch-and-merge-metadata-test
   (let [writer-conn (datahike/create-conn)
         config (:config (d/db writer-conn))

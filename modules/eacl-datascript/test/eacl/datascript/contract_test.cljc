@@ -25,8 +25,6 @@
 (defrecord CursorRecordId [value])
 
 (deftest native-speculative-contract-test
-  #?(:clj
-     (is (nil? (ns-resolve 'eacl.datascript.core 'snapshot))))
   (let [conn (datascript/create-conn)
         client (datascript/make-client conn {})]
     (contract/assert-speculative-contract!

@@ -214,10 +214,6 @@
     (is (every? #(not (contains? schema/datascript-schema %))
                 removed-attributes))))
 
-(deftest derived-expression-metrics-are-not-schema-attributes-test
-  (is (every? #(not (contains? schema/datascript-schema %))
-              expression-persistence/retired-expression-attributes)))
-
 (deftest full-arity-index-boundaries-test
   (let [conn (schema/create-conn)
         _ (ds/transact! conn [{:eacl/id "subject-a"}

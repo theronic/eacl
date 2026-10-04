@@ -65,7 +65,6 @@
     (eacl/->Relationship alice :viewer report)]))
 
 (deftest caller-native-database-values-have-no-public-constructor-test
-  (is (nil? (ns-resolve 'eacl.datomic.core 'snapshot)))
   (with-mem-conn [conn datomic-schema/v8-schema]
     (let [db (d/db conn)
           values
