@@ -13,7 +13,9 @@
  :fix
  "Run the routing gate first in the fresh 1 GiB generated-resource JVM, use 40 deterministic warmups and 11 samples per size, and print the complete observation before a failed result throws. The exact P+2V+E logical checks and all allocation/latency ceilings remain unchanged."
  :closing-evidence
- ["eacl.characterization-fixture-test/formal-ci-isolates-and-stops-performance-nrepls-test"
+ [;; Historical: eacl.characterization-fixture-test/formal-ci-isolates-and-stops-performance-nrepls-test
+  ;; asserted only the text of formal.yml.
   "eacl.formal.routing-certificate-benchmark/run-gate!"
-  ".github/workflows/formal.yml/Gate routing-certificate logical work and JVM allocation"
-  "formal/verification/performance-gates.edn"]}
+  ;; Historical: formal/verification/performance-gates.edn was a generated
+  ;; evidence ledger, removed in 483911d6.
+  ".github/workflows/formal.yml/Gate routing-certificate logical work and JVM allocation"]}

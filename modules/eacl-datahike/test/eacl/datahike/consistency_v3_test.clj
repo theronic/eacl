@@ -370,7 +370,6 @@
             after (datahike/cache-stats authorization)]
         (is (= [(second documents)] (:data historical-1)))
         (is (= (:data historical-1) (:data historical-2)))
-        (is (nil? (get-in historical-1 [:page-info :cursor-recovery])))
         (is (true? (:cached? historical-1)))
         (is (true? (:cached? historical-2)))
         (is (= (:bypasses before) (:bypasses after))
@@ -566,11 +565,6 @@
     (is (not (backend/supports? adapter :snapshots :exact)))
     (is (not (source/supports? basis-source :snapshots :durable-history)))
     (is (not (source/supports? basis-source :snapshots :conditional-exact)))))
-
-(deftest raw-db-entry-points-are-removed-test
-  (is (nil? (ns-resolve 'eacl.datahike.core 'datahike-can?)))
-  (is (nil? (ns-resolve 'eacl.datahike.core
-                        'datahike-read-relationships))))
 
 (deftest reader-branch-and-merge-metadata-test
   (let [writer-conn (datahike/create-conn)
@@ -800,7 +794,6 @@
                (get-in page-2 [:page-info :end-cursor])
                (:runtime authorization))]
           (is (= [(second relationships)] (:data page-2)))
-          (is (nil? (get-in page-2 [:page-info :cursor-recovery])))
           (is (= (get-in cursor-data [:graph-head :exact-locator])
                  (get-in exact-cursor-data [:graph-head :exact-locator])))))
       (let [fresh-page-1
@@ -817,8 +810,7 @@
                 (eacl/read-relationships
                  authorization
                  (assoc query :after fresh-cursor))]
-            (is (= [(second relationships)] (:data page)))
-            (is (nil? (get-in page [:page-info :cursor-recovery])))))
+            (is (= [(second relationships)] (:data page)))))
         (testing "a changed consistency contract is a different query scope"
           (is (= :eacl.pagination/invalid-cursor
                  (:type

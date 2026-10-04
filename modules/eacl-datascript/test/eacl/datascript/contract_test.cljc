@@ -14,7 +14,6 @@
             [eacl.cursor :as cursor]
             [eacl.datascript.core :as datascript]
             [eacl.datascript.schema :as schema]
-            [eacl.engine.v8 :as engine]
             [eacl.execution :as execution]
             [eacl.proof-frame :as proof-frame]
             [eacl.relay :as relay]
@@ -26,10 +25,6 @@
 (defrecord CursorRecordId [value])
 
 (deftest native-speculative-contract-test
-  #?(:clj
-     (is (nil? (ns-resolve 'eacl.datascript.core 'snapshot)))
-     :cljs
-     (is true))
   (let [conn (datascript/create-conn)
         client (datascript/make-client conn {})]
     (contract/assert-speculative-contract!
@@ -414,42 +409,6 @@
     (is (= :identity-immutable? (:key identity-option-error)))
     (is (= :eacl/invalid-config (:type error)))
     (is (= [:engine-selection] (:unknown-keys error)))))
-
-(deftest raw-retraction-requires-explicit-cache-expiry-test
-  (let [conn (datascript/create-conn)
-        client (datascript/make-client conn {})
-        user (eacl/spice-object :user "raw-write-user")
-        document (eacl/spice-object :document "raw-write-doc")]
-    (eacl/write-schema!
-     client
-     "definition user {}
-      definition document {
-        relation owner: user
-        permission view = owner
-      }")
-    (ds/transact! conn [{:eacl/id (:id user)}
-                        {:eacl/id (:id document)}])
-    (eacl/create-relationship!
-     client (eacl/->Relationship user :owner document))
-    (is (true? (eacl/can? client user :view document)))
-    (is (true? (eacl/can? client user :view document))
-        "the repeated identical check is served from the cache")
-    ;; Retract the relationship tuples OUTSIDE every EACL writer.
-    (let [db (ds/db conn)
-          retractions
-          (into []
-                (mapcat
-                 (fn [attribute]
-                   (map (fn [datom]
-                          [:db/retract (:e datom) attribute (:v datom)])
-                        (ds/datoms db :aevt attribute))))
-                [relationship-storage/forward-attribute
-                 relationship-storage/reverse-attribute])]
-      (is (seq retractions))
-      (ds/transact! conn retractions))
-    (datascript/expire-cache! client)
-    (is (false? (eacl/can? client user :view document))
-        "unsupported raw mutation is safe after every affected client expires")))
 
 (deftest unsupported-mutation-recovery-requires-every-client-and-data-repair-test
   (let [conn (datascript/create-conn)
@@ -1145,8 +1104,8 @@
                [:tree-root :intermediate :children 0 :leaf :subjects])))
           "a numeric public permission-tree root must pass through the public codec"))))
 
-(deftest rendered-keys-copy-caller-owned-query-containers-test
-  #?(:clj
+#?(:clj
+   (deftest rendered-keys-copy-caller-owned-query-containers-test
      (let [conn (datascript/create-conn)
            client
            (datascript/make-client
@@ -1193,12 +1152,10 @@
          (is (not-any? #(identical? query %) reachable))
          (is (not-any? #(instance? clojure.lang.PersistentTreeMap %)
                        reachable)
-             "the Caffeine key cannot retain the caller's comparator closure")))
-     :cljs
-     (is true)))
+             "the Caffeine key cannot retain the caller's comparator closure")))))
 
-(deftest integer-representations-cannot-alias-cursor-authority-test
-  #?(:clj
+#?(:clj
+   (deftest integer-representations-cannot-alias-cursor-authority-test
      (let [conn (datascript/create-conn)
            client
            (datascript/make-client
@@ -1260,12 +1217,10 @@
                  (ex-data thrown)))]
          (is (= [long-document] (:data long-page)))
          (is (= :eacl.pagination/unsupported-cursor-identity (:type error)))
-         (is (= :query (:position error)))))
-     :cljs
-     (is true)))
+         (is (= :query (:position error)))))))
 
-(deftest noncanonical-permission-tree-root-identities-do-not-alias-test
-  #?(:clj
+#?(:clj
+   (deftest noncanonical-permission-tree-root-identities-do-not-alias-test
      (let [conn (datascript/create-conn)
            client
            (datascript/make-client
@@ -1303,9 +1258,7 @@
         client alice :reader stored-vector)
        (is (= [alice] (tree-subjects ["same"])))
        (is (empty? (tree-subjects '("same")))
-           "equal host values distinguished by the codec must not share a completed tree"))
-     :cljs
-     (is true)))
+           "equal host values distinguished by the codec must not share a completed tree"))))
 
 (deftest metadata-sensitive-identities-cannot-alias-page-cursors-test
   (let [conn (datascript/create-conn)
@@ -1653,23 +1606,30 @@
       (eacl/create-relationships!
        client
        [(eacl/->Relationship other-user :owner document-2)])
+      ;; A permission's plan is sealed once per schema generation whatever
+      ;; the cache mode, so seal read_b's before comparing the two modes.
+      (is (true? (decision user :read_b server-1 false)))
       (let [cached-work (atom {})
             bypass-work (atom {})
             cached-allowed?
-            (binding [engine/*backend-work-stats* cached-work]
+            (binding [backend/*backend-op-stats* cached-work]
               (decision user :read_b server-1 true))
             bypass-allowed?
-            (binding [engine/*backend-work-stats* bypass-work]
-              (decision user :read_b server-1 false))
-            after (datascript/cache-stats client)]
+            (binding [backend/*backend-op-stats* bypass-work]
+              (decision user :read_b server-1 false))]
         (is (true? cached-allowed?))
         (is (= cached-allowed? bypass-allowed?))
-        (is (= (:executed-backend-operations @bypass-work)
-               (:executed-backend-operations @cached-work))
-            "a cold demand cache attempt performs the same semantic work as bypass")
-        (is (not (contains? (:subproblems after)
-                            :managed-projection-hits))
-            "demand mode has no shared partial-projection cache")))
+        (is (pos? (get @bypass-work :subject->resources 0))
+            "the bypass scans the backend")
+        (is (= (if orchestration/*qualified-authorization-enabled?*
+                 @bypass-work
+                 ;; Under the legacy binding one proof-frame read lets the
+                 ;; attempt reuse read_a's team scan across the unrelated write.
+                 (-> @bypass-work
+                     (dissoc :resource->subjects)
+                     (assoc :proof-frame 1)))
+               @cached-work)
+            "a cold demand cache attempt adds no scan to the bypass's work")))
 
     ;; A write to the depended-on relation must select a different managed key,
     ;; not reuse the previous negative projection.

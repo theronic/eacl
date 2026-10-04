@@ -110,7 +110,6 @@
             [eacl.spicedb.resource-bounds-test]
             [eacl.subproblem-cache-test]
             [eacl.verified-kernel-test]
-            [eacl.formal.cache-strategy-adversarial-test]
             [eacl.formal.differential-runner-test]
             [eacl.formal.executed-mutation-controls]
             [eacl.formal.generators-test]
@@ -256,7 +255,6 @@
                'eacl.spicedb.resource-bounds-test
                'eacl.subproblem-cache-test
                'eacl.verified-kernel-test
-               'eacl.formal.cache-strategy-adversarial-test
                'eacl.formal.differential-runner-test
                'eacl.formal.executed-mutation-controls
                'eacl.formal.generators-test

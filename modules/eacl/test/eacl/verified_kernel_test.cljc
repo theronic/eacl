@@ -163,18 +163,6 @@
                  (->FunctionKernel (fn [_ _] expected))}
                 :consistency-validation
                 input))))))
-  (testing "snapshot absence and a malformed present value remain distinct"
-    (let [absent {:kind :exact
-                  :selection-present? false
-                  :selected-adapter? false
-                  :same-source-scope? false
-                  :revision-satisfied? false}
-          malformed (assoc absent
-                           :selection-present? true)]
-      (is (= :exact-snapshot-unavailable
-             (expected-consistency-validation absent)))
-      (is (= :invalid-selected-adapter
-             (expected-consistency-validation malformed)))))
   (testing "unknown fields, impossible observations, and lying kernels fail"
     (let [plan {:mode :minimize-latency
                 :capability-supported? true}

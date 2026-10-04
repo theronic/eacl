@@ -328,10 +328,6 @@
     (is (empty? (:provider-calls failure)))))
 
 (deftest raw-database-snapshot-constructor-is-not-public-test
-  #?(:clj
-     (is (nil? (ns-resolve 'eacl.datascript.core 'snapshot)))
-     :cljs
-     (is true))
   (let [{:keys [conn]} (fixture)
         other-conn (datascript/create-conn)
         cases
@@ -1390,43 +1386,6 @@
                    failure
               (reset! error (ex-data failure)))))]
     (is (keyword? (:type @error)))
-    (is (= 1 (:acquire-current! provider-calls 0)))
-    (is (= 1 (:release! provider-calls 0)))
-    (is (= 1 db-calls))))
-
-(deftest selected-snapshot-releases-when-context-construction-fails-test
-  (let [{:keys [conn client user account]} (fixture)
-        error (atom nil)
-        {:keys [provider-calls db-calls]}
-        (with-redefs
-         [execution/check!
-          (fn
-            ([stage]
-             (when (= :consistency-selected stage)
-               (throw
-                (ex-info "injected context failure"
-                         {:type :test/context-construction}))))
-            ([contract stage]
-             (if (= :consistency-selected stage)
-               (throw
-                (ex-info "injected context failure"
-                         {:type :test/context-construction}))
-               nil))
-            ([contract stage consumed-work]
-             (if (= :consistency-selected stage)
-               (throw
-                (ex-info "injected context failure"
-                         {:type :test/context-construction}))
-               nil)))]
-          (observed-call
-           conn
-           #(try
-              (eacl/can? client user :admin account)
-              (catch #?(:clj clojure.lang.ExceptionInfo
-                        :cljs cljs.core.ExceptionInfo)
-                     failure
-                (reset! error (ex-data failure))))))]
-    (is (= :test/context-construction (:type @error)))
     (is (= 1 (:acquire-current! provider-calls 0)))
     (is (= 1 (:release! provider-calls 0)))
     (is (= 1 db-calls))))

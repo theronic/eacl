@@ -15,7 +15,6 @@
             [eacl.datomic.core :as spiceomic]
             [eacl.datomic.db :as ddb]
             [eacl.datomic.impl :as impl :refer [Relationship]]
-            [eacl.datomic.impl.indexed :as impl.indexed]
             [eacl.datomic.schema :as schema]
             [eacl.engine.stable-page :as stable-page]
             [eacl.engine.v8 :as engine]
@@ -234,7 +233,7 @@
   (let [stats (atom {})
         start (System/nanoTime)
         {:keys [ids pages]}
-        (binding [impl.indexed/*recursive-traversal-stats* stats]
+        (binding [engine/*recursive-traversal-stats* stats]
           (loop [after nil
                  ids []
                  pages 0]

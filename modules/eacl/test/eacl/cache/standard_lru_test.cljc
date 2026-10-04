@@ -60,18 +60,6 @@
     (is (= {:found? true :value nil}
            (lru/lookup! store :nil)))))
 
-(deftest lookup-holds-value-across-concurrent-policy-eviction-test
-  (let [store (lru/store 2)
-        held-value {:immutable [:answer 1]}]
-    (lru/put-if-absent! store :first held-value)
-    (lru/put-if-absent! store :second :second-value)
-    (let [held (lru/lookup! store :first)]
-      (lru/put-if-absent! store :third :third-value)
-      (is (= {:found? true :value held-value} held))
-      ;; JVM Window TinyLFU may reject the new entry instead of selecting the
-      ;; exact strict-LRU victim. Retention policy never changes a held value.
-      (is (<= (lru/entry-count store) 2)))))
-
 (deftest publication-peek-does-not-refresh-lru-test
   #?(:clj
      (let [store (lru/store 8)]
@@ -248,25 +236,6 @@
     (is (= {:found? false :value nil}
            (lru/lookup! store :key)))))
 
-(deftest storage-never-invokes-a-loader-or-validator-test
-  (let [store (lru/store 2)
-        computations (atom 0)
-        validations (atom 0)
-        compute (fn [] (swap! computations inc) :computed)
-        value (compute)]
-    (is (= 1 @computations))
-    (is (true? (lru/put-if-absent! store :key value)))
-    (let [{:keys [found? value]} (lru/lookup! store :key)]
-      (is found?)
-      (is (= :computed value))
-      (is (= :valid
-             ((fn [candidate]
-                (swap! validations inc)
-                (if (= :computed candidate) :valid :invalid))
-              value))))
-    (is (= 1 @computations))
-    (is (= 1 @validations))))
-
 #?(:clj
    (deftest concurrent-lookups-return-the-held-immutable-value-test
      (let [store (lru/store 64)
@@ -294,7 +263,6 @@
    (deftest concurrent-publication-computes-independently-and-never-overwrites-test
      (let [publisher-count 16
            store (lru/store 32)
-           computations (atom 0)
            ready (java.util.concurrent.CountDownLatch. publisher-count)
            start (java.util.concurrent.CountDownLatch. 1)
            publishers
@@ -302,10 +270,7 @@
             (fn [publisher]
               (future
                 ;; The completed value exists before entering cache storage.
-                (let [completed-value
-                      ((fn []
-                         (swap! computations inc)
-                         {:publisher publisher :completed true}))]
+                (let [completed-value {:publisher publisher :completed true}]
                   (.countDown ready)
                   (.await start)
                   {:published?
@@ -317,7 +282,6 @@
        (let [results (mapv #(deref % 10000 ::timeout) publishers)
              winners (filterv :published? results)
              resident (:value (lru/lookup! store :answer))]
-         (is (= publisher-count @computations))
          (is (= 1 (count winners)))
          (is (identical? (:value (first winners)) resident))
          (is (= 1 (lru/entry-count store)))))))

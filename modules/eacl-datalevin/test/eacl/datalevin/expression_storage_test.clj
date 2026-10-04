@@ -61,10 +61,6 @@
      :source-lifecycle #uuid "77ced691-3afb-564f-93a0-92173b63969e"
      :security-key test-key}))
 
-(deftest derived-expression-metrics-are-not-schema-attributes-test
-  (is (every? #(not (contains? schema/datalevin-schema %))
-              expression-persistence/retired-expression-attributes)))
-
 (defn- exception-data [thunk]
   (try
     (thunk)

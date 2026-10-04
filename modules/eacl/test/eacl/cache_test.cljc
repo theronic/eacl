@@ -179,8 +179,8 @@
 
 (defrecord CustomCursorId [value])
 
-(deftest concurrent-exact-hit-telemetry-counts-every-hit-test
-  #?(:clj
+#?(:clj
+   (deftest concurrent-exact-hit-telemetry-counts-every-hit-test
      (let [store (cache/basis-cache {:max-entries 8})
            semantic (semantic-key :concurrent-hot)
            workers 8
@@ -207,9 +207,7 @@
          (is (zero? (:managed-hits stats)))
          (is (= expected (get-in stats [:subproblems :hits])))
          (is (= expected
-                (get-in stats [:subproblems :answer-hits])))))
-     :cljs
-     (is true)))
+                (get-in stats [:subproblems :answer-hits])))))))
 
 (deftest rendered-pages-are-exact-read-through-values-test
   (let [store (cache/basis-cache {:max-entries 8})
@@ -352,9 +350,7 @@
              (sorted-map-by #(compare %2 %1)))))
        (is (false?
             (cache/canonical-cursor-identity?
-             (sorted-set-by #(compare %2 %1))))))
-     :cljs
-     (is true)))
+             (sorted-set-by #(compare %2 %1))))))))
 
 (deftest cursor-identities-are-bounded-before-cache-key-construction-test
   (let [deep (nth (iterate vector "id") 40)
@@ -624,7 +620,6 @@
                 (cache/resolve-basis!
                  live-store (basis-context 1) semantic
                  #(do (swap! calls inc) valid)))))
-          (is (= 1 @calls))
           (is (= 1 @calls)
               "an accepted resident value is not recomputed per hit"))
         (let [source (cache/basis-cache {:max-entries 4})

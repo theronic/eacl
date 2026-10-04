@@ -136,9 +136,7 @@
       (eacl/write-schema! acl schema-viewer-only)
       (let [page2 (eacl/lookup-resources acl (assoc query :after cursor))]
         (is (= 1 (count (:data page2))))
-        (is (not= (:data page1) (:data page2)))
-        (is (nil? (get-in page2 [:page-info :cursor-recovery]))
-            "exact continuation has no rebase/restart marker"))
+        (is (not= (:data page1) (:data page2))))
       (is (empty? (:data (eacl/lookup-resources acl query)))
           "a new enumeration uses the new schema generation"))))
 

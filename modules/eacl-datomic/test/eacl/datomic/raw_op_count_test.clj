@@ -3,9 +3,10 @@
 
   The raw impl API is the 0tx consumer surface: bare immutable db values,
   no client caches. Envelopes are the ratcheted numbers recorded in
-  formal/baselines/recursive-op-count-envelopes.edn (V1/V2 current
-  truth: two schema proofs and two plan compiles per raw list request;
-  zero proofs per raw point check). Per-push, no wall-clock assertions."
+  formal/baselines/recursive-op-count-envelopes.edn. Every measurement is
+  taken from an observer that production writes on this path; the
+  self-checks below fail when one of them goes quiet. Per-push, no
+  wall-clock assertions."
   (:require [clojure.edn :as edn]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [datomic.api :as d]
@@ -17,6 +18,9 @@
             [eacl.datomic.impl.indexed :as impl.indexed]
             [eacl.datomic.schema :as dschema]
             [eacl.engine.v8 :as engine]
+            [eacl.formal.production-kernel :as production]
+            [eacl.request.counters :as request-counters]
+            [eacl.subproblem-cache :as subproblem]
             [eacl.test-support.repo :as repo]
             [eacl.verified-kernel :as verified]))
 
@@ -63,28 +67,39 @@
         (d/delete-database (:uri @state))))))
 
 (defn- measured
-  "The raw Datomic facade rebinds engine/*recursive-traversal-stats* to
+  "Runs one raw request with every observer bound.
+
+  The raw Datomic facade rebinds engine/*recursive-traversal-stats* to
   impl.indexed's dynamic (with-shared-engine), so raw callers observe
-  through the impl-level var."
+  through the impl-level var. :scans is :advanced-datoms, the adapter
+  commands the stable engine issued; :crossings sums every generated-kernel
+  invocation; :plan-seals is the request ledger's :seals. Denotation key
+  builds have no counter of their own, so they are counted by binding a
+  counting key constructor."
   [f]
-  (let [kx (atom {}) bops (atom {}) rts (atom {}) shape (atom {})]
-    (binding [verified/*kernel-crossing-stats* kx
-              backend/*backend-op-stats* bops
-              impl.indexed/*recursive-traversal-stats* rts
-              engine/*request-shape-stats* shape]
+  (let [crossings (atom {}) backend-ops (atom {}) traversal (atom {})
+        shape (atom {}) key-builds (atom 0)
+        ledger (request-counters/make-ledger)]
+    (binding [verified/*kernel-crossing-stats* crossings
+              backend/*backend-op-stats* backend-ops
+              impl.indexed/*recursive-traversal-stats* traversal
+              engine/*request-shape-stats* shape
+              request-counters/*ledger* ledger
+              subproblem/*exact-denotation-key-fn*
+              (fn [_]
+                (swap! key-builds inc)
+                nil)]
       (f))
-    {:proof-frame (get @bops :proof-frame 0)
-     :plan-compiles (get @rts :compiled-recursive-plans 0)
-     :key-builds (get @shape :denotation-key-builds 0)
-     :dep-calcs (get @shape :denotation-dependency-calcs 0)
-     :drive (get @kx :indexed-traversal-drive 0)
-     :resume (get @kx :indexed-traversal-resume 0)
-     :stream-fills (get @rts :stream-fills 0)
-     :advanced (get @rts :advanced-datoms 0)
-     :derived-grants (get @rts :derived-grants 0)}))
+    {:proof-frame (get @backend-ops :proof-frame 0)
+     :plan-seals (:seals (request-counters/snapshot ledger))
+     :key-builds @key-builds
+     :path-calcs (get @shape :permission-path-calcs 0)
+     :crossings (reduce + (vals @crossings))
+     :scans (get @traversal :advanced-datoms 0)
+     :derived-grants (get @traversal :derived-grants 0)}))
 
 (defn- assert-crossing-law!
-  [render-kind {:keys [drive resume stream-fills advanced]}]
+  [render-kind {:keys [crossings scans]}]
   (let [{default-batch-size :batch-size
          page-batch-size :page-batch-size
          :keys [constant fuel]}
@@ -92,16 +107,12 @@
         batch-size (if (= :page render-kind)
                      page-batch-size
                      default-batch-size)
-        batches (quot (+ stream-fills (dec batch-size)) batch-size)
-        fuel-yields (quot advanced fuel)]
-    (is (<= resume stream-fills)
-        "one ordered response wave resumes one or more backend scans")
-    (is (<= drive (+ resume 1 fuel-yields))
-        ":indexed-traversal-drive bounded by response waves + completion + fuel yields")
-    (is (<= (+ drive resume)
+        batches (quot (+ scans (dec batch-size)) batch-size)
+        fuel-yields (quot scans fuel)]
+    (is (<= crossings
             (+ (* 2 batches) constant fuel-yields))
         (str (name render-kind)
-             " crossings <= 2*ceil(streams/batch)+recorded constant"))))
+             " crossings <= 2*ceil(scans/batch)+recorded constant"))))
 
 (deftest raw-lookup-op-count-test
   (let [e (:raw-lookup-first-50 envelopes)
@@ -111,20 +122,22 @@
              db
              {:subject {:type :user :id user-1-eid}
               :permission :view :resource/type :account :first 50}))]
-    (testing "recursion active (suite self-check)"
-      ;; :stream-fills belonged to the retired streaming engine; the stable
-      ;; engine's physical work shows up as :advanced-datoms (commands).
-      (is (pos? (:advanced m)) (pr-str m))
-      (is (pos? (:derived-grants m)) (pr-str m)))
+    (testing "recursion active and every observer live (suite self-check)"
+      (is (pos? (:scans m)) (pr-str m))
+      (is (pos? (:derived-grants m)) (pr-str m))
+      (is (pos? (:plan-seals m)) (pr-str m))
+      (is (pos? (:path-calcs m)) (pr-str m))
+      (is (pos? (:crossings m)) (pr-str m)))
     (testing "ordered-generation frames per raw list request"
       (is (<= (:proof-frame m) (:maximum-proof-frame-reads e)) (pr-str m)))
-    (testing "recursive plan compiles per raw request (:compiled-recursive-plans)"
-      (is (<= (:plan-compiles m) (:maximum-plan-compiles e)) (pr-str m)))
+    (testing "plan seals per raw request (ledger :seals)"
+      (is (<= (:plan-seals m) (:maximum-plan-compiles e)) (pr-str m)))
     (testing "denotation cache-key work against a nil store"
-      (is (<= (:key-builds m) (:maximum-denotation-key-builds e)) (pr-str m))
-      (is (<= (:dep-calcs m) (:maximum-denotation-dependency-calcs e)) (pr-str m)))
-    (testing "streaming early-stop scan envelope (:stream-fills)"
-      (is (<= (:stream-fills m) (:maximum-backend-scans e)) (pr-str m)))
+      (is (<= (:key-builds m) (:maximum-denotation-key-builds e)) (pr-str m)))
+    (testing "permission path calculations (:permission-path-calcs)"
+      (is (<= (:path-calcs m) (:maximum-permission-path-calcs e)) (pr-str m)))
+    (testing "early-stop scan envelope (:advanced-datoms)"
+      (is (<= (:scans m) (:maximum-backend-scans e)) (pr-str m)))
     (assert-crossing-law! :page m)))
 
 (deftest raw-can-op-count-test
@@ -140,13 +153,23 @@
       (testing (str label " raw point check")
         (is (<= (:proof-frame m) (:maximum-proof-frame-reads e))
             (str label " :proof-frame " (pr-str m)))
-        (is (<= (:plan-compiles m) (:maximum-plan-compiles e))
-            (str label " :compiled-recursive-plans " (pr-str m)))
+        (is (pos? (:scans m))
+            (str label " point check reads the backend " (pr-str m)))
+        (is (<= (:plan-seals m) (:maximum-plan-compiles e))
+            (str label " plan seals " (pr-str m)))
         (is (zero? (:key-builds m))
             (str label " raw can? builds no denotation keys " (pr-str m)))
-        (is (<= (:stream-fills m) (:maximum-backend-scans e))
+        (is (<= (:scans m) (:maximum-backend-scans e))
             (str label " bounded reverse point check " (pr-str m)))
-        (assert-crossing-law! :order-independent m)))))
+        (assert-crossing-law! :order-independent m)))
+    (testing "the key-build counter is live: the same check keys its reuse lookups once a store is bound"
+      (is (pos? (:key-builds
+                 (binding [subproblem/*store*
+                           (subproblem/store {:denotation-max-entries 16
+                                              :answer-max-entries 2})]
+                   (measured
+                    #(dimpl/can? db {:type :user :id user-1-eid} :view
+                                 {:type :account :id deep-child-eid})))))))))
 
 (deftest raw-count-linearity-test
   (let [e (:count-full envelopes)
@@ -163,23 +186,46 @@
       (is (<= (:derived-grants m)
               (* (:maximum-derived-grants-factor e) (inc accounts)))
           (pr-str m)))
-    (testing "scan count linear in fixture size (:stream-fills)"
-      (is (<= (:stream-fills m)
+    (testing "scan count linear in fixture size (:advanced-datoms)"
+      (is (pos? (:scans m)) (pr-str m))
+      (is (<= (:scans m)
               (+ accounts (:maximum-backend-scans-slack e)))
           (pr-str m)))
     (assert-crossing-law! :order-independent m)))
 
 (deftest interned-empty-response-immutability-test
   ;; 4.2 pin: the interned empty scan-response payload must stay empty
-  ;; after traversal storms — generated code mutates only freshly
-  ;; constructed wrappers (the collection shims' contract). The suite's
-  ;; other tests have already driven thousands of empty responses
-  ;; through the interned instance by the time this runs.
-  (let [{:keys [db user-1-eid]} @state]
-    (dimpl/count-resources
-     db {:subject {:type :user :id user-1-eid}
-         :permission :view :resource/type :account})
-    (is (zero? (.cardinalityInt
-                ^dafny.DafnySequence
-                @@(resolve 'eacl.formal.production-kernel/empty-values-sequence)))
+  ;; after the generated validator has been handed it many times —
+  ;; generated code mutates only freshly constructed wrappers (the
+  ;; collection shims' contract). A fresh interned instance shows that
+  ;; these responses, and nothing earlier in the JVM, are what realized it.
+  (let [interned (delay (#'production/dafny-sequence []))
+        exchange {:command {:request-scope 31
+                            :request-id 7
+                            :projection {:kind :subject->resources
+                                         :subject-type "user"
+                                         :subject-eid 1
+                                         :relation-eid 2
+                                         :resource-type "document"
+                                         :bound-eid 10}
+                            :chunk-size 3}
+                  :response {:request-scope 31
+                             :request-id 7
+                             :values []
+                             :terminal? true
+                             :fetched-values 0}}]
+    (with-redefs [production/empty-values-sequence interned]
+      (is (every? #(= {:status :accepted
+                       :values []
+                       :terminal? true
+                       :fetched-values 0}
+                      %)
+                  (repeatedly
+                   1000
+                   #(verified/decide production/default-selection
+                                     :indexed-scan-response
+                                     exchange)))))
+    (is (realized? interned)
+        "an empty scan response is handed to the validator as the interned payload")
+    (is (zero? (.cardinalityInt ^dafny.DafnySequence @interned))
         "interned empty DafnySequence mutated by generated code")))

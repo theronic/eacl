@@ -125,18 +125,3 @@
         (let [second-db-config (:config (d/db second-conn))]
           (d/release second-conn)
           (d/delete-database second-db-config))))))
-
-(deftest current-db-reference-identity-test
-  (testing "the exact-basis cache can use immutable DB object identity"
-    (let [conn (datahike/create-conn)
-          before-1 (d/db conn)
-          before-2 (d/db conn)
-          _ (d/transact conn [{:eacl/id "datahike-reference-identity"}])
-          after-1 (d/db conn)
-          after-2 (d/db conn)]
-      (is (identical? before-1 before-2)
-          "an unchanged connection must return the same immutable DB object")
-      (is (not (identical? before-1 after-1))
-          "a committed transaction must replace the immutable DB object")
-      (is (identical? after-1 after-2)
-          "the replacement remains stable until the next commit"))))

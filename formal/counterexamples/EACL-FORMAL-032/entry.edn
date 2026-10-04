@@ -13,6 +13,8 @@
  :fix
  "The portable boundary now canonicalizes and compares the complete public ExceptionInfo data map internally. Diagnostics retain only changed top-level field names and typed error keywords. Untyped or non-portable exception data is reported as comparison-unavailable instead of silently passing."
  :closing-evidence
- ["eacl.verified-kernel-test/shadow-error-comparison-covers-complete-portable-ex-data"
-  "eacl.verified-kernel-test/shadow-error-comparison-reports-unavailable-nonportable-data"
+ [;; Historical: eacl.verified-kernel-test/shadow-error-comparison-covers-complete-portable-ex-data
+  ;; and shadow-error-comparison-reports-unavailable-nonportable-data were
+  ;; removed with shadow mode (d96bc4c6).
+  "eacl.datascript.contract-test/one-authority-is-the-only-production-engine-test"
   "formal mutation :shadow-typed-error-drops-portable-values"]}

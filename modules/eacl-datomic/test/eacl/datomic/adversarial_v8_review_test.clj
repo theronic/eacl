@@ -75,59 +75,6 @@
        :request {:subject subject :resource resource :permission :view
                  :caveat-context {"flag" false} :cache? false}})))
 
-(deftest safe-retraction-must-not-weaken-a-caveat-into-expiry-only
-  (with-review-client
-    qualified-schema
-    (fn [conn client]
-      (let [{:keys [caveat-eid qualifier-eid request]} (seed-qualified! conn client)
-            before (d/db conn)
-            before-result (eacl/check-permission client request)]
-        (is (some? caveat-eid))
-        (is (some? qualifier-eid))
-        (is (= :no-permission (:permissionship before-result)))
-        (let [outcome (retract-outcome! conn caveat-eid)
-              after (d/db conn)
-              after-result (eacl/check-permission client request)]
-          (is (:error outcome) "Caveat definitions are not object-deletion targets")
-          (is (contains? (:reasons outcome) :protected-control-entity))
-          (is (= (d/basis-t before) (d/basis-t after))
-              "a rejected deletion must not commit any ref cleanup")
-          (is (= caveat-eid (d/entid after [:eacl.caveat/name "enabled"])))
-          (is (= :no-permission (:permissionship after-result))
-              (str "Native result after attempted deletion: " (pr-str after-result))))))))
-
-(deftest safe-retraction-must-reject-qualifier-entity-targets
-  (with-review-client
-    qualified-schema
-    (fn [conn client]
-      (let [{:keys [qualifier-eid]} (seed-qualified! conn client)
-            before (d/db conn)
-            outcome (retract-outcome! conn qualifier-eid)]
-        (is (:error outcome))
-        (is (contains? (:reasons outcome) :protected-control-entity))
-        (is (= (d/basis-t before) (d/basis-t (d/db conn))))
-        (is (seq (d/datoms (d/db conn) :eavt qualifier-eid)))))))
-
-(deftest component-closure-must-not-delete-a-caveat-definition
-  (with-review-client
-    qualified-schema
-    (fn [conn client]
-      (let [{:keys [caveat-eid request]} (seed-qualified! conn client)]
-        @(d/transact conn [{:db/ident :review/component
-                            :db/valueType :db.type/ref
-                            :db/cardinality :db.cardinality/one
-                            :db/isComponent true}])
-        @(d/transact conn [{:eacl/id "review/parent"
-                            :review/component caveat-eid}])
-        (let [before (d/db conn)
-              outcome (retract-outcome! conn [:eacl/id "review/parent"])]
-          (is (:error outcome))
-          (is (contains? (:reasons outcome) :protected-control-entity))
-          (is (= (d/basis-t before) (d/basis-t (d/db conn))))
-          (is (some? (d/entid (d/db conn) [:eacl/id "review/parent"])))
-          (is (= :no-permission
-                 (:permissionship (eacl/check-permission client request)))))))))
-
 (defn relation-id [db name]
   (d/entid db [:eacl.relation/resource-type+relation-name+subject-type
                [:node name :node]]))

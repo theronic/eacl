@@ -239,34 +239,11 @@
              (:reason
               (exception-data #(schema/read-schema (d/db conn)))))))))
 
-(deftest schema-does-not-include-persisted-grants-test
-  (testing "recursive traversal does not require persisted effective grant attrs"
-    (let [idents (set (map :db/ident schema/v8-schema))]
-      (is (not (contains? idents :eacl.v7.grant/subject-type+permission+resource-type+resource)))
-      (is (not (contains? idents :eacl.v7.grant/resource-type+permission+subject-type+subject)))
-      (is (not (contains? idents :eacl.grant/indexed-node))))))
-
-(deftest schema-does-not-include-derived-expression-metrics-test
-  (let [idents (set (map :db/ident schema/v8-schema))]
-    (is (empty?
-         (clojure.set/intersection
-          idents
-          expression-persistence/retired-expression-attributes)))))
-
 (deftest clean-v8-schema-retires-flat-permission-attributes-test
-  (let [idents (set (map :db/ident schema/v8-schema))]
-    (is (empty?
-         (clojure.set/intersection
-          idents
-          expression-persistence/legacy-flat-attributes)))
-    (is (empty?
-         (clojure.set/intersection
-          idents
-          expression-persistence/retired-expression-attributes)))
-    (with-mem-conn [conn schema/v8-schema]
-      (schema/write-schema! conn direct-storage-schema)
-      (is (= :expression
-             (schema/permission-storage-shape (d/db conn)))))))
+  (with-mem-conn [conn schema/v8-schema]
+    (schema/write-schema! conn direct-storage-schema)
+    (is (= :expression
+           (schema/permission-storage-shape (d/db conn))))))
 
 (deftest eacl-schema-comparison-tests
   (testing "we can calculate additions & retractions"

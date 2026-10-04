@@ -520,9 +520,7 @@
                       :after page1-end-cursor))]
           (is (= (:data expected-page2)
                  (:data recovered)))
-          (is (not-any? #(= new-server %) (:data recovered)))
-          (is (nil? (get-in recovered
-                            [:page-info :cursor-recovery])))))
+          (is (not-any? #(= new-server %) (:data recovered)))))
       (let [base-query {:resource/type :server
                         :permission :view
                         :subject (->user "super-user")}
@@ -548,9 +546,7 @@
                (assoc base-query
                       :first 2
                       :after page1-end-cursor))]
-          (is (some #(= victim %) (:data recovered)))
-          (is (nil? (get-in recovered
-                            [:page-info :cursor-recovery]))))))
+          (is (some #(= victim %) (:data recovered))))))
 
     (testing "spice-read-relationships results are constrained by filters for resource type & ID"
       (testing "transact the test entities we are about to use"

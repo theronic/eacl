@@ -1034,19 +1034,6 @@
                   adapter :user 1 10 :document 3)))
           (is (= (+ 2 before) (:direct-match-probes @work))))))))
 
-(deftest projection-cache-free-path-has-no-cache-effects-test
-  (let [adapter (projection-test-adapter)
-        work (atom {})]
-    (binding [subproblem/*store* nil
-              engine/*backend-work-stats* work]
-      (dotimes [_ 2]
-        (is (= (vec (range 1 6))
-               (vec
-                (take 5
-                      (engine/subject->resources
-                       adapter :user 1 10 :document nil))))))
-      (is (= 2 (:subject->resources-scans @work))))))
-
 (deftest generated-certified-projection-traces-match-cache-free-results-test
   (doseq [seed (range 1 41)]
     (let [values

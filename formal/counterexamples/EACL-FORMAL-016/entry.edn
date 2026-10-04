@@ -13,5 +13,6 @@
  :fix
  "The final v8 cache makes lookup read-only and removes flight installation. A miss never mutates state or starts work; independent computation precedes a separate bounded compare-and-set publication transition."
  :closing-evidence
- ["eacl.formal.cache-strategy-adversarial-test/publication-and-independent-computation-traces-exhaustive-test"
+ [;; Historical: eacl.formal.cache-strategy-adversarial-test/publication-and-independent-computation-traces-exhaustive-test
+  ;; exercised a model defined in its own file.
   "eacl.subproblem-cache-test/publication-validation-runs-once-and-never-on-hit-test"]}

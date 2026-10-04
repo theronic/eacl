@@ -504,15 +504,6 @@
     (is (identical? plan-1 plan-2)
         "re-wrapping the source at another basis must hit the plan registry")))
 
-(deftest default-lifecycle-is-the-portable-cross-process-constant-test
-  (let [{client-a :client} (seed-fixture-client!
-                            (fixture-for :explorer-acyclic))
-        {client-r :client} (seed-fixture-client!
-                            (fixture-for :explorer-recursive))]
-    (is (= #uuid "00000000-0000-0000-0000-000000000000"
-           (get-in client-a [:runtime :source-lifecycle])
-           (get-in client-r [:runtime :source-lifecycle])))))
-
 (deftest checkpoint-store-adopts-client-context-test
   (let [{:keys [conn]} (seed-fixture-client!
                         (fixture-for :explorer-acyclic))

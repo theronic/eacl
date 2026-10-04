@@ -12,7 +12,8 @@
  :fix
  "Return false before singleton/wide selection when the resource-side stream is empty. Model the exact empty/singleton/wide source control in Dafny, prove zero or one intermediate skips direct intersection and the optimized result equals complete far-side evaluation, and compare generated Java/JavaScript Boolean and work traces with actual CLJ/CLJS execution."
  :closing-evidence
- ["eacl.formal.production-kernel-test/generated-java-acyclic-arrow-path-refines-source-control"
-  "eacl.formal.production-kernel-test/generated-javascript-acyclic-arrow-path-refines-source-control"
+ [;; Historical: eacl.formal.production-kernel-test/generated-java-acyclic-arrow-path-refines-source-control
+  ;; and its JavaScript twin were removed with the legacy engine (d96bc4c6).
+  "eacl.datascript.contract-test/one-authority-is-the-only-production-engine-test"
   "formal acyclic-arrow source-control mutations"
   "formal/dafny/AcyclicEngine.dfy"]}

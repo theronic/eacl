@@ -12,6 +12,9 @@
  "Every cursor is authenticated to the complete semantic query. Non-exact continuation re-evaluates on one selected current graph, without treating proof equivalence as authorization; explicit at-exact-snapshot continuation alone selects retained history."
  :closing-evidence
  ["eacl.datomic.cache-review-regressions-test/proofless-cursor-falls-back-to-exact-snapshot-test"
-  "eacl.relay-test/non-exact-continuation-recovers-on-current-graph-test (CLJ and CLJS)"
-  "formal/dafny/TemporalSafety.dfy recovery-mode lemmas"
+  ;; Historical: eacl.relay-test/non-exact-continuation-recovers-on-current-graph-test
+  ;; and the recovery-mode lemmas were removed with cursor recovery
+  ;; (7a3cd3e6). The two lemmas below are what TemporalSafety.dfy has now.
+  "formal/dafny/TemporalSafety.dfy/MissingProofCannotLiftAcrossGraphs"
+  "formal/dafny/TemporalSafety.dfy/ExactContinuationUsesRetainedAuthenticatedGraph"
   "formal/tla/EaclTemporal.tla CursorCurrentSafe invariant"]}

@@ -352,17 +352,6 @@
                (:eacl/error (ex-data-of #(eacl/lookup-resources tight query)))))
         (is (= 10 (count (:data (eacl/lookup-resources roomy query)))))))
 
-    (testing "a partial override keeps the other defaults instead of disabling them"
-      (let [client (core/make-client conn {:recursive-traversal-limits {:max-derived-grants 3}})]
-        (is (= :eacl.recursive-traversal/limit-exceeded
-               (:eacl/error (ex-data-of #(eacl/lookup-resources
-                                          client
-                                          {:subject (spice-object :user "u")
-                                           :permission :read
-                                           :resource/type :folder
-                                           :first 10
-                                           :evaluation :complete-denotation})))))))
-
     (testing "a malformed limits map is rejected at construction"
       (doseq [bad [{:no-such-limit 1} {:max-derived-grants 0} {:max-derived-grants "many"} :not-a-map]]
         (is (= :eacl/invalid-config

@@ -13,6 +13,9 @@
  :fix
  "Add and generation-evict both shared slots in the Datomic schema cache, and make the forced-authority harness require a recursive-routing-certificate call from every backend."
  :closing-evidence
- ["eacl.datomic.impl.indexed-test/indexed-facade-has-no-shared-schema-cache-surface-test"
-  "eacl.formal.verified-authority-suite/run-nonbenchmark!"
-  "formal/verification/verified-authority-suites.edn"]}
+ [;; Historical: eacl.datomic.impl.indexed-test/indexed-facade-has-no-shared-schema-cache-surface-test
+  ;; asserted only that the deleted names stayed absent.
+  ;; formal/verification/verified-authority-suites.edn was a generated
+  ;; evidence ledger, removed in 483911d6.
+  "eacl.datomic.api-contract-test/generated-authority-is-the-only-production-engine-test"
+  "eacl.formal.verified-authority-suite/run-nonbenchmark!"]}

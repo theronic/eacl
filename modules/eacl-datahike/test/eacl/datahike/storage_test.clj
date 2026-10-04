@@ -1,6 +1,5 @@
 (ns eacl.datahike.storage-test
-  (:require [clojure.set]
-            [clojure.test :refer [deftest is testing]]
+  (:require [clojure.test :refer [deftest is testing]]
             [datahike.api :as d]
             [eacl.core :as eacl]
             [eacl.datahike.core :as datahike]
@@ -66,13 +65,6 @@
 (def ^:private modes
   {"attributes as keywords" false
    "attributes as numeric refs" true})
-
-(deftest derived-expression-metrics-are-not-schema-attributes-test
-  (let [idents (set (map :db/ident schema/datahike-schema))]
-    (is (empty?
-         (clojure.set/intersection
-          idents
-          expression-persistence/retired-expression-attributes)))))
 
 (defn- exception-data [thunk]
   (try

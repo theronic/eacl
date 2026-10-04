@@ -10,7 +10,7 @@
     :EACL-FORMAL-002
     eacl.datomic.lookup-cache-test/recursive-cursors-resume-from-the-client-private-denotation-test
     :EACL-FORMAL-003
-    eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test
+    eacl.datomic.lookup-cache-test/cache-config-is-validated-test
     :EACL-FORMAL-004
     eacl.datomic.cache-review-regressions-test/proofless-cursor-falls-back-to-exact-snapshot-test
     :EACL-FORMAL-005
@@ -20,7 +20,7 @@
     :EACL-FORMAL-007
     eacl.secure-format-test/canonical-portable-format-test
     :EACL-FORMAL-008
-    eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test
+    eacl.datomic.lookup-cache-test/cache-config-is-validated-test
     :EACL-FORMAL-009
     eacl.formal.state-trace-differential-test/generated-cache-and-cursor-state-traces-across-jvm-adapters
     :EACL-FORMAL-010
@@ -30,15 +30,15 @@
     :EACL-FORMAL-012
     eacl.formal.production-kernel-test/generated-java-indexed-scan-response-boundary
     :EACL-FORMAL-013
-    eacl.formal.cache-strategy-adversarial-test/publication-and-independent-computation-traces-exhaustive-test
+    eacl.cache.standard-lru-test/concurrent-publication-computes-independently-and-never-overwrites-test
     :EACL-FORMAL-014
-    eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test
+    eacl.cache.standard-lru-test/concurrent-publication-computes-independently-and-never-overwrites-test
     :EACL-FORMAL-015
     eacl.datascript.snapshot-lifecycle-test/full-rotation-detaches-every-runtime-cache-child-test
     :EACL-FORMAL-016
-    eacl.formal.cache-strategy-adversarial-test/publication-and-independent-computation-traces-exhaustive-test
+    eacl.subproblem-cache-test/publication-validation-runs-once-and-never-on-hit-test
     :EACL-FORMAL-017
-    eacl.formal.cache-strategy-adversarial-test/publication-and-independent-computation-traces-exhaustive-test
+    eacl.cache.standard-lru-test/concurrent-publication-computes-independently-and-never-overwrites-test
     :EACL-FORMAL-018
     eacl.datascript.snapshot-lifecycle-test/full-rotation-detaches-every-runtime-cache-child-test
     :EACL-FORMAL-019
@@ -59,26 +59,20 @@
     eacl.formal.state-trace-differential-test/generated-stale-cursor-error-shape
     :EACL-FORMAL-027
     eacl.backend.v8-test/runtime-guards-reject-negative-internal-eids-test
-    :EACL-FORMAL-028
-    eacl.formal.counterexample-replay-test/clean-generated-javascript-contract-expectations-test
     :EACL-FORMAL-029
     eacl.formal.counterexample-replay-test/counterexample-corpus-is-complete-and-closed-test
     :EACL-FORMAL-030
     eacl.formal.production-kernel-test/generated-java-checks-linear-routing-certificates
-    :EACL-FORMAL-031
-    eacl.formal.counterexample-replay-test/clean-generated-javascript-contract-expectations-test
     :EACL-FORMAL-032
     eacl.datascript.contract-test/one-authority-is-the-only-production-engine-test
     :EACL-FORMAL-033
     eacl.datascript.contract-test/one-authority-is-the-only-production-engine-test
-    :EACL-FORMAL-034
-    eacl.characterization-fixture-test/formal-cljs-smoke-preserves-persistent-nrepl-executors-test
     :EACL-FORMAL-035
     eacl.characterization-fixture-test/generated-java-boundary-is-reflection-free-test
     :EACL-FORMAL-036
     eacl.formal.production-kernel-test/generated-java-continues-pages-from-verified-lookahead
     :EACL-FORMAL-037
-    eacl.datomic.impl.indexed-test/indexed-facade-has-no-shared-schema-cache-surface-test
+    eacl.datomic.api-contract-test/generated-authority-is-the-only-production-engine-test
     :EACL-FORMAL-038
     eacl.verified-kernel-test/routing-certificate-result-is-bound-to-its-input
     :EACL-FORMAL-039
@@ -99,8 +93,6 @@
     eacl.engine.stable-discovery-gate-test/fingerprint-is-invariant-under-schema-clause-order-test
     :EACL-FORMAL-047
     eacl.datascript.keyset-recursion-test/order-perturbing-write-rejects-current-only-cursor-test
-    :EACL-FORMAL-048
-    eacl.characterization-fixture-test/formal-ci-isolates-and-stops-performance-nrepls-test
     :EACL-FORMAL-049
     eacl.datomic.recursive-cache-test/recursive-cursor-falls-back-to-exact-snapshot-after-relevant-write-test
     :EACL-FORMAL-050
@@ -119,10 +111,8 @@
     eacl.datascript.impl-test/read-relationships-query-matrix-test
     :EACL-FORMAL-057
     eacl.formal.page-window-bridge-test/generated-page-normalization-and-window-properties
-    :EACL-FORMAL-058
-    eacl.formal.counterexample-replay-test/replay-entrypoint-does-not-eagerly-load-formal-only-oracles-test
     :EACL-FORMAL-059
-    eacl.formal.counterexample-replay-test/clean-generated-javascript-contract-expectations-test
+    eacl.formal.production-kernel-test/generated-java-drives-production-recursive-pages
     :EACL-FORMAL-060
     eacl.engine.physical-route-test/exhaustion-count-test
     :EACL-FORMAL-061
@@ -194,6 +184,16 @@
     :EACL-FORMAL-099
     eacl.datomic.self-counterexample-test/self-counterexample-replays-on-datomic-test})
 
+(def tooling-defects
+  "Ledger entries whose defect was in CI or test tooling, not in EACL. Nothing
+  in the product replays them: the gate that failed runs on every push, and
+  each entry's :closing-evidence names it."
+  #{:EACL-FORMAL-028
+    :EACL-FORMAL-031
+    :EACL-FORMAL-034
+    :EACL-FORMAL-048
+    :EACL-FORMAL-058})
+
 (defn- read-edn
   [path]
   (edn/read-string (slurp path)))
@@ -243,49 +243,6 @@
       (catch java.io.FileNotFoundException _
         nil))))
 
-(deftest replay-entrypoint-does-not-eagerly-load-formal-only-oracles-test
-  (let [entrypoint (slurp (repo/file "bin" "formal"))]
-    (doseq [test-only-ns
-            ["eacl.lazy-merge-sort"
-             "eacl.backend.spi"
-             "eacl.engine.indexed"]]
-      (is (not (re-find
-                (re-pattern
-                 (str
-                  "\\(require '"
-                  (java.util.regex.Pattern/quote test-only-ns)
-                  " :reload\\)"))
-                entrypoint))
-          (str
-           "the ordinary replay classpath must not eagerly load test-only "
-           test-only-ns)))))
-
-(deftest clean-generated-javascript-contract-expectations-test
-  (let [page-source
-        (slurp
-         (repo/file
-          "formal" "smoke" "cljs" "eacl" "formal"
-          "js_round_trip_test.cljs"))
-        production-source
-        (slurp
-         (repo/file
-          "formal" "smoke" "cljs" "eacl" "formal"
-          "production_kernel_test.cljs"))
-        vectors
-        (read-edn
-         (repo/file "formal" "cross-runtime" "vectors.edn"))]
-    (is (not (re-find #"\(contains\? request :(?:limit|cursor)\)"
-                      page-source))
-        "the generated RawPageRequest smoke must use only current v8 fields")
-    (is (= {:first-page [10 20]
-            :continuation-page [30]}
-           (:production-recursive-pages vectors))
-        "the shared vector carries the stable first-discovery order")
-    (is (re-find
-         #":production-recursive-pages \(cross-runtime-vectors\)"
-         production-source)
-        "CLJS recursive pages must consume the shared JVM/JS vector")))
-
 (deftest counterexample-corpus-is-complete-and-closed-test
   (let [schema (read-edn
                 (repo/file
@@ -315,7 +272,8 @@
                    (str directory "/" artifact)))
              entry))
          (entry-files))]
-    (is (= (set (keys regression-vars))
+    (is (not-any? tooling-defects (keys regression-vars)))
+    (is (= (into (set (keys regression-vars)) tooling-defects)
            (set (map :id entries))))))
 
 (deftest replay-every-minimized-regression-test

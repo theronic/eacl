@@ -13,5 +13,5 @@
  :fix
  "Generated traversal errors now recover the exact configured limit from the validated limit map without adding generated-only direction data, and the redacted shadow projection compares bounded numeric limit fields internally while diagnostics continue to expose only changed field names and result variants."
  :closing-evidence
- ["eacl.formal.state-trace-differential-test/recursive-shadow-compares-complete-public-results"
+ ["eacl.formal.state-trace-differential-test/recursive-generated-authority-covers-complete-public-results"
   "formal mutation :shadow-typed-error-omits-limit"]}

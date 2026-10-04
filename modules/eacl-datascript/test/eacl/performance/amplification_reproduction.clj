@@ -27,8 +27,7 @@
             [eacl.request.counters :as request-counters]
             [eacl.schema.errors :as schema-errors]
             [eacl.schema.expression-persistence :as expression-persistence]
-            [eacl.subproblem-cache :as subproblem]
-            [eacl.test-support.repo :as repo]))
+            [eacl.subproblem-cache :as subproblem]))
 
 (def source-base "e137dc55512d4eeebcc31cfbe5087d61ab04465b")
 (def classpath-sha256
@@ -1004,30 +1003,6 @@
      (and (:cached? old-hit)
           (not (:cached? current-cold))
           (:cached? current-hit))}))
-
-(defn cache-flight-contract-probe
-  []
-  (let [specs
-        ["openspec/specs/single-flight-coordination/spec.md"
-         "openspec/specs/answer-cache-bounding/spec.md"
-         "openspec/specs/verified-subproblem-cache/spec.md"]
-        positive-pattern
-        #"(?i)joins that flight|must wait or reject|inheriting[^\n]*single-flight coordination|registered flights|single-flight waits"
-        observations
-        (mapv
-         (fn [path]
-           (let [file (repo/file path)
-                 text (when (.isFile file) (slurp file))
-                 matches (when text (re-seq positive-pattern text))]
-             {:path path
-              :exists? (.isFile file)
-              :positive-flight-requirements (count matches)}))
-         specs)]
-    {:observations observations
-     :positive-flight-requirements
-     (reduce + 0 (map :positive-flight-requirements observations))
-     :reconciled?
-     (zero? (reduce + 0 (map :positive-flight-requirements observations)))}))
 
 (def ^:private rejection-scan-schema
   "definition user {}

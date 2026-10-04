@@ -313,7 +313,6 @@
           (is (= :eacl.pagination/stale-cursor (:type recovered-page-2)))
           (do
             (is (= [(second documents)] (:data recovered-page-2)))
-            (is (nil? (get-in recovered-page-2 [:page-info :cursor-recovery])))
             (is (true? (:cached? recovered-page-2))))))
       (testing "a newly signed cursor for the same boundary also reuses it"
         (is (not=
@@ -472,12 +471,6 @@
     (is (= :exact-snapshot-unavailable (:reason exact-error)))
     (is (= before after)
         "unsupported exact selection must fail before cache access")))
-
-#?(:clj
-   (deftest raw-db-entry-points-are-removed-test
-     (is (nil? (ns-resolve 'eacl.datascript.core 'datascript-can?)))
-     (is (nil? (ns-resolve 'eacl.datascript.core
-                           'datascript-read-relationships)))))
 
 (deftest cloned-connections-are-distinct-sources-and-listener-independent-test
   (let [original-listen! ds/listen!

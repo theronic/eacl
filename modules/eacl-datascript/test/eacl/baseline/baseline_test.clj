@@ -50,13 +50,8 @@
             (str "missing frozen snapshot for " fixture-key
                  " — run (eacl.baseline.capture/capture-all!)"))
         (when frozen
-          (is (= (comparable frozen) (comparable fresh))))))))
-
-(deftest baseline-invariants-test
-  (doseq [fixture-key (keys capture/fixtures)]
-    (testing (str fixture-key)
-      (let [{:keys [forward]} (capture/read-snapshot fixture-key)]
-        (doseq [[principal-key result] forward]
+          (is (= (comparable frozen) (comparable fresh))))
+        (doseq [[principal-key result] (:forward fresh)]
           (testing (str principal-key)
             (is (true? (:page-composition-equals-one-shot? result)))
             (is (true? (:duplicate-free? result)))

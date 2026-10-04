@@ -3,7 +3,7 @@
 These inputs are exercised against current code:
 
 - `minimized-counterexamples.edn`: `eacl.operator-engine.counterexamples-test`
-  compares the oracle and intentionally faulty algorithms on retained graphs.
+  checks the reference oracle on retained graphs that defeated earlier designs.
 - `union-only-baseline.edn`: `eacl.operator-engine.union-only-baseline-test`
   captures current public behavior and compares its canonical denotation,
   order, pagination, and error results with the expected fixture values.

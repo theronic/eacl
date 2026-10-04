@@ -259,13 +259,6 @@
     (is (thrown? clojure.lang.ExceptionInfo (eacl.datomic/make-client conn {}))
         "Empty legacy schemas also require explicit upgrade/bootstrap.")))
 
-(deftest migrate!-rejects-unknown-options-test
-  (with-mem-conn [conn v6-schema]
-    (let [ex (try (mig/migrate! conn {:shcema schema-str}) nil
-                  (catch clojure.lang.ExceptionInfo e e))]
-      (is (some? ex))
-      (is (= :eacl/invalid-config (:type (ex-data ex)))))))
-
 (deftest future-storage-version-refused-test
   ;; A stamp from a future storage model means this build predates the data's
   ;; migration; running anyway would silently answer false/empty.

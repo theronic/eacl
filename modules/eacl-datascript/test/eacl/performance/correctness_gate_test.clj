@@ -23,9 +23,3 @@
     (is (:incompatible-entry-missed? observation)
         (str "pre-rollout answer survived compatibility change: "
              observation))))
-
-(deftest durable-cache-contracts-forbid-request-joining-test
-  (let [observation (reproduction/cache-flight-contract-probe)]
-    (is (:reconciled? observation)
-        (str "positive flight/join requirements remain: "
-             (:observations observation)))))
