@@ -106,11 +106,36 @@
                     {:width (count identities)}))))
     normalized))
 
+(defn- witness-size! [bytes]
+  (when (> bytes maximum-evidence-witness-bytes)
+    (invalid! :witness-size "Evidence witnesses exceed the vector byte bound." {:bytes bytes}))
+  bytes)
+
+(defn- validate-witness-map!
+  "Checks every witness of one candidate against the plan, the request time
+  and the byte bound, and returns the running byte total."
+  [plan qualification bytes proofs]
+  (reduce-kv
+   (fn [bytes node value]
+     (execution/check! :evidence-witness)
+     (when-not (and (vector? node) (= 2 (count node))
+                    (get-in (:predicate-programs plan) node))
+       (invalid! :invalid-witness-node "Evidence witness is outside the sealed plan." {:node node}))
+     (let [bytes (witness-size!
+                  (+ bytes (if (boolean? value) 1
+                               (caveat-values/utf8-size (evidence/encode value)))))]
+       (when-not (evidence/before? (:time qualification) (evidence/valid-until value))
+         (invalid! :expired-witness "Evidence witness certificate has already expired." {}))
+       bytes))
+   bytes proofs))
+
 (defn- validate-evidence-witnesses!
   "Exact node evidence produced in this same selected request can discharge
    predicate work. A derivation's conditional lower bound is not an exact
    witness; its unresolved alternatives must still be evaluated by the owner.
-   Validate before point-cache lookup as well as before fresh evaluation."
+   Validate before point-cache lookup as well as before fresh evaluation.
+   Candidates that share one witness map have it checked once; the count and
+   byte bounds apply to every candidate's witnesses."
   [{:keys [plan qualification witness-scope]} candidates]
   (when (and qualification (some #(seq (:true-nodes %)) candidates))
     (invalid! :unqualified-witness "Qualified evaluation requires temporal witness evidence." {}))
@@ -122,20 +147,19 @@
         (invalid! :qualified-witness-required "Evidence witnesses require a qualified request." {}))
       (when-not (= witness-scope (qualification/exact-reuse-identity qualification))
         (invalid! :witness-scope "Evidence witnesses belong to another request scope." {}))
-      (reduce
-       (fn [bytes [node value]]
-         (execution/check! :evidence-witness)
-         (when-not (and (vector? node) (= 2 (count node))
-                        (get-in (:predicate-programs plan) node))
-           (invalid! :invalid-witness-node "Evidence witness is outside the sealed plan." {:node node}))
-         (let [bytes (+ bytes (if (boolean? value) 1
-                                  (caveat-values/utf8-size (evidence/encode value))))]
-           (when (> bytes maximum-evidence-witness-bytes)
-             (invalid! :witness-size "Evidence witnesses exceed the vector byte bound." {:bytes bytes}))
-           (when-not (evidence/before? (:time qualification) (evidence/valid-until value))
-             (invalid! :expired-witness "Evidence witness certificate has already expired." {}))
-           bytes))
-       0 (mapcat :evidence-witnesses candidates))))
+      (loop [index 0 bytes 0 checked nil checked-size 0]
+        (when (< index (count candidates))
+          (let [proofs (:evidence-witnesses (nth candidates index))]
+            (cond
+              (zero? (count proofs))
+              (recur (inc index) bytes checked checked-size)
+
+              (identical? proofs checked)
+              (recur (inc index) (witness-size! (+ bytes checked-size)) checked checked-size)
+
+              :else
+              (let [total (validate-witness-map! plan qualification bytes proofs)]
+                (recur (inc index) total proofs (- total bytes)))))))))
   nil)
 
 (defn- direct-probe [candidate relation-id subject-eid]
@@ -169,8 +193,10 @@
 (defn- held-decisions
   "Decisions for direct probes from the subject's retained holdings
   (`holdings`, see `stable-route/subject-holdings`), or nil to probe. Only
-  forward probes of one subject and relation slice qualify, and only when
-  the subject's holdings of that slice are complete. Each decision is the
+  forward probes of one subject and relation slice qualify; their number is
+  the slice's demand. A complete slice decides every probe. A truncated one
+  decides the resources up to its last endpoint, because scans are strictly
+  ordered, and leaves `unresolved` for a probe past it. Each decision is the
   one the probe gives: the stored compact edge, qualified on the request."
   [holdings qualification probes]
   (when holdings
@@ -180,14 +206,16 @@
                                (= descriptor (:descriptor %)))
                          probes))
         (let [{:keys [subject-type subject-eid relation-eid resource-type]} descriptor
-              {:keys [complete? edges]}
-              (holdings subject-type subject-eid relation-eid resource-type)]
-          (when complete?
+              {:keys [complete? edges bound]}
+              (holdings subject-type subject-eid relation-eid resource-type (count probes))]
+          (when (or complete? (some? bound))
             (mapv (fn [{[_ resource-eid] :candidate}]
-                    (let [compact-edge (get edges resource-eid)]
-                      (if qualification
-                        (qualification/qualify qualification relation-eid compact-edge)
-                        (some? compact-edge))))
+                    (if (or complete? (<= resource-eid bound))
+                      (let [compact-edge (get edges resource-eid)]
+                        (if qualification
+                          (qualification/qualify qualification relation-eid compact-edge)
+                          (some? compact-edge)))
+                      unresolved))
                   probes)))))))
 
 (defn- root-masks
@@ -251,6 +279,69 @@
   (validate-evidence-witnesses! options candidates)
   (check-many-normalized options))
 
+(defn- assoc-each
+  "`row` with `(value index)` at every index of `indexes`. `value` reads only
+  rows that are already persistent."
+  [row indexes value]
+  (if (zero? (count indexes))
+    row
+    (persistent!
+     (reduce (fn [row index] (assoc! row index (value index)))
+             (transient row) indexes))))
+
+(defn- witnessed-nodes
+  "The plan nodes some candidate carries a witness for. Candidates commonly
+  share one witness map, which is read once."
+  [candidates]
+  (loop [index 0 nodes #{} seen nil]
+    (if (= index (count candidates))
+      nodes
+      (let [candidate (nth candidates index)
+            proofs (:evidence-witnesses candidate)
+            true-nodes (:true-nodes candidate)
+            nodes (if (or (nil? proofs) (identical? proofs seen))
+                    nodes
+                    (into nodes (keys proofs)))]
+        (recur (inc index)
+               (if (seq true-nodes) (into nodes true-nodes) nodes)
+               (or proofs seen))))))
+
+(defn- held-leaf-decisions
+  "Decisions of one relation leaf for the `pending` candidates, read from the
+  subject's retained holdings without building a probe, or nil when probes
+  must decide them all. It applies when every pending candidate is a forward
+  point of one subject and resource type and the relation declares no
+  wildcard for another subject. A truncated slice decides the candidates up
+  to its bound and leaves `unresolved` for one past it. Each decision is the
+  one `held-decisions` gives the candidate's probe."
+  [holdings qualification candidates pending descriptor]
+  (when holdings
+    (let [{:keys [direction subject-type subject-eid resource-type]}
+          (nth candidates (nth pending 0))]
+      (when (and (= :forward direction)
+                 (every? #(let [candidate (nth candidates %)]
+                            (and (= :forward (:direction candidate))
+                                 (= subject-eid (:subject-eid candidate))
+                                 (= subject-type (:subject-type candidate))
+                                 (= resource-type (:resource-type candidate))))
+                         pending))
+        (when-let [{:keys [relation-id wildcard-eid]}
+                   (operator-plan/relation-partition descriptor subject-type)]
+          (when (or (nil? wildcard-eid) (= wildcard-eid subject-eid))
+            (let [{:keys [complete? edges bound]}
+                  (holdings subject-type subject-eid relation-id resource-type
+                            (count pending))]
+              (when (or complete? (some? bound))
+                (mapv (fn [index]
+                        (let [resource-eid (:resource-eid (nth candidates index))]
+                          (if (or complete? (<= resource-eid bound))
+                            (let [compact-edge (get edges resource-eid)]
+                              (if qualification
+                                (qualification/qualify qualification relation-id compact-edge)
+                                (some? compact-edge)))
+                            unresolved)))
+                      pending)))))))))
+
 (defn- check-many-normalized
   "Trusted core of `check-many-eids`: the candidate vector is already
   normalized (each caller normalizes exactly once at its boundary)."
@@ -269,7 +360,8 @@
             node-roots (operator-plan/expression-roots plan)
             predicate-programs (:predicate-programs plan)
             cache-lookup (or cache-lookup (constantly direct/cache-miss))
-            completed-leaves (volatile! [])]
+            completed-leaves (volatile! [])
+            witnessed-nodes (witnessed-nodes candidates)]
         (when-not (or (nil? cache-publish-many!)
                       (fn? cache-publish-many!))
           (invalid! :invalid-cache-publication
@@ -280,13 +372,30 @@
                     "Vector predicate root is outside the sealed plan."
                     {:permission root-permission :node-id node-id}))
         (letfn [(commit! [node-key values indexes]
-                  (let [current (get @memo node-key unresolved-row)
-                        resolved (reduce (fn [result index]
-                                           (assoc result index
-                                                  (nth values index)))
-                                         current indexes)]
+                  ;; Indexes are distinct, so a full set overwrites every
+                  ;; entry with `values`' own.
+                  (let [resolved (if (= width (count indexes))
+                                   values
+                                   (assoc-each (get @memo node-key unresolved-row)
+                                               indexes #(nth values %)))]
                     (vswap! memo assoc node-key resolved)
                     resolved))
+                ;; `row` with `values`, aligned with the ascending distinct
+                ;; `indexes`, at those indexes. Indexes that cover the row
+                ;; make it `values` itself.
+                (aligned [row indexes values]
+                  (if (= (count row) (count indexes))
+                    values
+                    (persistent!
+                     (reduce-kv (fn [row position index]
+                                  (assoc! row index (nth values position)))
+                                (transient row) indexes))))
+                ;; `row` with a child's decisions at `indexes`: the child's
+                ;; own row when the indexes cover it.
+                (adopt [row indexes child]
+                  (if (= width (count indexes))
+                    child
+                    (assoc-each row indexes #(nth child %))))
                 ;; Defer both child calls and completed continuations. An
                 ;; admitted chain may cross every permission in the schema;
                 ;; its depth must not consume the JVM or JavaScript stack.
@@ -296,18 +405,24 @@
                         ;; that node's value; composition decides whether a
                         ;; definite sibling absorbs its fault.
                         witnessed
-                        (reduce
-                         (fn [values index]
-                           (let [candidate (nth candidates index)
-                                 proofs (:evidence-witnesses candidate)]
-                             (cond
-                               (contains? proofs node-key) (assoc values index (get proofs node-key))
-                               (contains? (:true-nodes candidate) node-key) (assoc values index true)
-                               :else values)))
-                         initial indexes)
-                        _ (vswap! memo assoc node-key witnessed)
-                        pending (filterv #(= unresolved (nth witnessed %))
-                                         indexes)]
+                        (if (contains? witnessed-nodes node-key)
+                          (persistent!
+                           (reduce
+                            (fn [values index]
+                              (let [candidate (nth candidates index)
+                                    proofs (:evidence-witnesses candidate)]
+                                (cond
+                                  (contains? proofs node-key) (assoc! values index (get proofs node-key))
+                                  (contains? (:true-nodes candidate) node-key) (assoc! values index true)
+                                  :else values)))
+                            (transient initial) indexes))
+                          initial)
+                        _ (when-not (identical? witnessed initial)
+                            (vswap! memo assoc node-key witnessed))
+                        pending (if (identical? witnessed unresolved-row)
+                                  indexes
+                                  (filterv #(= unresolved (nth witnessed %))
+                                           indexes))]
                     (if (empty? pending)
                       (fn [] (continue witnessed))
                       (do
@@ -334,22 +449,35 @@
                                   (fn [] (continue resolved))))]
                           (case instruction
                             :direct-membership
-                            (let [indexed-probes
-                                  (into []
-                                        (keep (fn [index]
-                                                (let [probes (direct-probes
-                                                              (nth candidates index)
-                                                              (:descriptor predicate))]
-                                                  (when (seq probes) [index probes]))))
-                                        pending)
-                                  dispatch!
-                                  (fn [probes]
-                                    ;; Own probes share one subject's slice,
-                                    ;; as do wildcard probes, so each group
-                                    ;; can be decided from retained holdings.
-                                    (let [decisions
-                                          (if (seq probes)
-                                            (or (held-decisions holdings qualification probes)
+                            (let [held (when (nil? cache-publish-many!)
+                                         (held-leaf-decisions
+                                          holdings qualification candidates pending
+                                          (:descriptor predicate)))
+                                  witnessed (if held
+                                              (aligned witnessed pending held)
+                                              witnessed)
+                                  ;; Probes decide what the retained holdings
+                                  ;; did not.
+                                  pending (if held
+                                            (filterv #(= unresolved (nth witnessed %)) pending)
+                                            pending)]
+                              (if (empty? pending)
+                                (finish! witnessed)
+                                (let [indexed-probes
+                                      (into []
+                                            (keep (fn [index]
+                                                    (let [probes (direct-probes
+                                                                  (nth candidates index)
+                                                                  (:descriptor predicate))]
+                                                      (when (seq probes) [index probes]))))
+                                            pending)
+                                      dispatch!
+                                      (fn [probes]
+                                        ;; Own probes share one subject's slice,
+                                        ;; as do wildcard probes, so each group
+                                        ;; can be decided from retained holdings.
+                                        (let [probe!
+                                              (fn [probes]
                                                 (if qualification
                                                   (mapv (fn [probe compact-edge]
                                                           (qualification/qualify qualification
@@ -357,42 +485,58 @@
                                                                                  compact-edge))
                                                         probes (direct/dispatch-edges adapter probes))
                                                   (direct/dispatch adapter probes cache-lookup)))
-                                            [])]
-                                      ;; Publish only after every demanded
-                                      ;; subgroup in the vector succeeds.
-                                      (vswap! completed-leaves into (mapv vector probes decisions))
-                                      decisions))
-                                  own-decisions (dispatch! (mapv (comp first second) indexed-probes))
-                                  wildcard-probes
-                                  (into []
-                                        (keep (fn [[[index probes] own]]
-                                                (when (and (second probes)
-                                                           (not (evidence/has? own)))
-                                                  [index (second probes)])))
-                                        (map vector indexed-probes own-decisions))
-                                  ;; Match scalar union demand: a definite own
-                                  ;; grant decides alone. A faulting own tuple
-                                  ;; still demands the wildcard, whose grant
-                                  ;; absorbs the fault (strong Kleene).
-                                  decisions (into own-decisions
-                                                  (dispatch! (mapv second wildcard-probes)))
-                                  probe-indexes (into (mapv first indexed-probes)
-                                                      (map first wildcard-probes))]
-                              (finish!
-                               (reduce (fn [result index]
-                                         (assoc result index false))
-                                       ;; A wildcard probe unions with the
-                                       ;; candidate's own probe.
-                                       (reduce (fn [result [index decision]]
-                                                 (let [prior (nth result index)]
-                                                   (assoc result index
-                                                          (if (= unresolved prior)
-                                                            decision
-                                                            (evidence/combine :union prior decision)))))
-                                               witnessed
-                                               (map vector probe-indexes
-                                                    decisions))
-                                       (remove (set probe-indexes) pending))))
+                                              held (when (seq probes)
+                                                     (held-decisions holdings qualification probes))
+                                              past (when held
+                                                     (into [] (keep-indexed
+                                                               (fn [index decision]
+                                                                 (when (= unresolved decision) index)))
+                                                           held))
+                                              decisions
+                                              (cond
+                                                (empty? probes) []
+                                                (nil? held) (probe! probes)
+                                                (empty? past) held
+                                                ;; Probes decide the resources
+                                                ;; past a truncated slice.
+                                                :else
+                                                (aligned held past (probe! (mapv #(nth probes %) past))))]
+                                          ;; Publish only after every demanded
+                                          ;; subgroup in the vector succeeds.
+                                          (when cache-publish-many!
+                                            (vswap! completed-leaves into (mapv vector probes decisions)))
+                                          decisions))
+                                      own-decisions (dispatch! (mapv (comp first second) indexed-probes))
+                                      wildcard-probes
+                                      (into []
+                                            (keep (fn [[[index probes] own]]
+                                                    (when (and (second probes)
+                                                               (not (evidence/has? own)))
+                                                      [index (second probes)])))
+                                            (map vector indexed-probes own-decisions))
+                                      ;; Match scalar union demand: a definite own
+                                      ;; grant decides alone. A faulting own tuple
+                                      ;; still demands the wildcard, whose grant
+                                      ;; absorbs the fault (strong Kleene).
+                                      decisions (into own-decisions
+                                                      (dispatch! (mapv second wildcard-probes)))
+                                      probe-indexes (into (mapv first indexed-probes)
+                                                          (map first wildcard-probes))]
+                                  (finish!
+                                   (reduce (fn [result index]
+                                             (assoc result index false))
+                                           ;; A wildcard probe unions with the
+                                           ;; candidate's own probe.
+                                           (reduce (fn [result [index decision]]
+                                                     (let [prior (nth result index)]
+                                                       (assoc result index
+                                                              (if (= unresolved prior)
+                                                                decision
+                                                                (evidence/combine :union prior decision)))))
+                                                   witnessed
+                                                   (map vector probe-indexes
+                                                        decisions))
+                                           (remove (set probe-indexes) pending))))))
 
                             :permission-membership
                             (let [target (:target-node predicate)
@@ -404,27 +548,24 @@
                               (fn []
                                 (evaluate! [target target-root] pending
                                            (fn [child]
-                                             (finish! (reduce #(assoc %1 %2 (nth child %2))
-                                                              witnessed pending))))))
+                                             (finish! (adopt witnessed pending child))))))
 
                             :arrow-membership
-                            (finish! (reduce
-                                      (fn [result index]
-                                        (let [candidate (nth candidates index)
-                                              decision
-                                              (scalar/check-eids
-                                               {:adapter adapter :plan plan
-                                                :permission permission
-                                                :node-id node-id
-                                                :subject-type
-                                                (:subject-type candidate)
-                                                :subject-eid (:subject-eid candidate)
-                                                :resource-eid
-                                                (:resource-eid candidate)
-                                                :limits limits :qualification qualification
-                                                :delegate delegate})]
-                                          (assoc result index decision)))
-                                      witnessed pending))
+                            (finish! (assoc-each
+                                      witnessed pending
+                                      (fn [index]
+                                        (let [candidate (nth candidates index)]
+                                          (scalar/check-eids
+                                           {:adapter adapter :plan plan
+                                            :permission permission
+                                            :node-id node-id
+                                            :subject-type
+                                            (:subject-type candidate)
+                                            :subject-eid (:subject-eid candidate)
+                                            :resource-eid
+                                            (:resource-eid candidate)
+                                            :limits limits :qualification qualification
+                                            :delegate delegate})))))
 
                             :delegated-membership
                             ;; A union-only operand of a delegated view: the
@@ -441,10 +582,7 @@
                                           {:node node-key
                                            :expected (count pending)
                                            :actual (count decisions)}))
-                              (finish! (reduce (fn [result [index decision]]
-                                                 (assoc result index decision))
-                                               witnessed
-                                               (map vector pending decisions))))
+                              (finish! (aligned witnessed pending decisions)))
 
                             (:any-true :all-true)
                             (let [op (if (= :any-true instruction) :union :intersection)]
@@ -455,16 +593,17 @@
                                             (evaluate!
                                              [permission (first children)] remaining
                                              (fn [child]
-                                               (let [result (reduce (fn [row index]
-                                                                      (assoc row index (evidence/combine op
-                                                                                                         (nth row index)
-                                                                                                         (nth child index))))
-                                                                    result remaining)
+                                               (let [result (assoc-each
+                                                             result remaining
+                                                             #(evidence/combine op
+                                                                                (nth result %)
+                                                                                (nth child %)))
                                                      remaining (filterv #(not (decisive? op (nth result %))) remaining)]
                                                  (children! (subvec children 1) remaining result)))))))]
                                 (children! (operator-plan/operand-order plan permission node-id predicate)
                                            pending
-                                           (reduce #(assoc %1 %2 (not= op :union)) witnessed pending))))
+                                           (assoc-each witnessed pending
+                                                       (constantly (not= op :union))))))
 
                             :left-and-not-right
                             (fn []
@@ -472,18 +611,18 @@
                                [permission (:left predicate)] pending
                                (fn [left]
                                  (let [admitted (filterv #(not (decisive? :exclusion (nth left %))) pending)
-                                       result (reduce #(assoc %1 %2 (nth left %2)) witnessed pending)]
+                                       result (adopt witnessed pending left)]
                                    (if (empty? admitted)
                                      (finish! result)
                                      (fn []
                                        (evaluate!
                                         [permission (:right predicate)] admitted
                                         (fn [right]
-                                          (finish! (reduce (fn [row index]
-                                                             (assoc row index (evidence/combine :exclusion
-                                                                                                (nth left index)
-                                                                                                (nth right index))))
-                                                           result admitted))))))))))
+                                          (finish! (assoc-each
+                                                    result admitted
+                                                    #(evidence/combine :exclusion
+                                                                       (nth left %)
+                                                                       (nth right %))))))))))))
 
                             (invalid! :unknown-predicate-instruction
                                       "Vector plan contains an unknown predicate instruction."

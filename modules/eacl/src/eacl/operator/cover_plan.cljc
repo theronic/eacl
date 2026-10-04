@@ -412,3 +412,67 @@
     (assoc generator-plan
            :operator-root-semantic
            [permission (get (operator-plan/expression-roots plan) permission)])))
+
+;; ---------------------------------------------------------------------------
+;; Plain witnesses
+;; ---------------------------------------------------------------------------
+
+(defn ^:no-doc exact-generator-leaf?
+  "True when every generator row of a cover leaf derives exactly that leaf: a
+  relation, an arrow to relations, or a reference or arrow to a permission in
+  `delegated`, whose rows are that permission's own union rules. A reference
+  to any other permission names its generator node, which only covers it."
+  [plan delegated permission node-id]
+  (let [predicate (get-in plan [:predicate-programs permission node-id])]
+    (case (:instruction predicate)
+      :direct-membership true
+      :permission-membership (contains? delegated (:target-node predicate))
+      :arrow-membership
+      (every? (fn [{:keys [target-kind target-node]}]
+                (or (= :relation target-kind) (contains? delegated target-node)))
+              (get-in predicate [:descriptor :partitions]))
+      false)))
+
+(defn- exact-union?
+  "True when `node-id` is an exact generator leaf, or a union of such nodes:
+  it holds wherever one of its leaves does."
+  [plan delegated permission node-id]
+  (let [predicate (get-in plan [:predicate-programs permission node-id])]
+    (if (= :any-true (:instruction predicate))
+      (every? #(exact-union? plan delegated permission %) (:children predicate))
+      (exact-generator-leaf? plan delegated permission node-id))))
+
+(defn ^:no-doc plain-witness-node
+  "The expression node `[permission node-id]` that every plain candidate of
+  the plan's generator holds, or nil when its candidates prove no one node.
+
+  The generator of the root follows each exclusion's left operand, each
+  intersection's anchor and each reference to a permission outside
+  `delegated`, down to one cover leaf or one union (`generator-terms`,
+  `operator-plan/delegated-generator`). That node is the witness when it is
+  an exact leaf or a union of exact leaves (`exact-generator-leaf?`): every
+  generator row then derives one of its leaves, so a candidate reached
+  through ordinary relationships only, which hold at every time and under
+  every context, holds the node (CandidateCover.dfy,
+  `PlainCoverWitnessProvesGeneratorNode`). The operands the chain passed
+  still have to be decided. Pure over sealed fields."
+  [plan delegated]
+  (let [roots (operator-plan/expression-roots plan)]
+    (loop [permission (:root plan)
+           node-id (get roots permission)
+           seen #{}]
+      (when (and (some? node-id) (not (contains? seen [permission node-id])))
+        (let [seen (conj seen [permission node-id])
+              {:keys [kind source-node]} (get-in plan [:covers permission node-id])
+              predicate (get-in plan [:predicate-programs permission node-id])
+              target (:target-node predicate)]
+          (case kind
+            :child (recur permission source-node seen)
+            :union (when (exact-union? plan delegated permission node-id)
+                     [permission node-id])
+            :self (if (and (= :permission-membership (:instruction predicate))
+                           (not (contains? delegated target)))
+                    (recur target (get roots target) seen)
+                    (when (exact-generator-leaf? plan delegated permission node-id)
+                      [permission node-id]))
+            nil))))))

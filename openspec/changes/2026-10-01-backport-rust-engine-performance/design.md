@@ -149,6 +149,38 @@ the flattened union) plainly: it is passed to the vector evaluator as an
 evidence witness, and only the remaining operands are decided. A candidate
 first found through a qualified edge is decided as today.
 
+As built:
+
+- The generator node is a witness only when every generator row derives one
+  of its leaves exactly: a relation, an arrow to relations, or a reference
+  or arrow to a union-only permission. A row that only covers its leaf (a
+  reference to an operator permission, which names that permission's own
+  generator node) proves nothing, and the plan then has no witness. The
+  chain follows a reference to an operator permission into that permission,
+  so the witness may be a node of another permission at the same resource.
+- It applies to a recursive operator plan enumerated by its own generator
+  under a qualified request. The wildcard touch cover generates from every
+  operand, so its candidates carry no witness. An unqualified request
+  takes none and is unchanged.
+- A witness is `true` with no deadline. The exact evaluator may certify the
+  same node until its first decisive operand expires, so a witnessed
+  decision's certificate can be later than a check's; both are sound (D2). A
+  conditional decision is still recomputed by the point check with no
+  witness, so a lookup item's residual equals the check's.
+- Only a tracked first discovery proves a plain path. A result that an
+  earlier page retained as its lookahead is treated as qualified, and a
+  run that tracks paths never resumes the checkpoint of one that does not.
+
+Three changes ride with it, because the witness left them as the cost of an
+operator count:
+
+- an exact count streams its cover once, deciding and consuming every
+  candidate in cover order, instead of paging with a replayed lookahead;
+- a subject's retained holdings are read in proportion to the probes they
+  replace, and a truncated slice decides the resources up to its bound;
+- the relationship closure of an operator permission is memoized with its
+  failed union walk.
+
 ### D5. Order-free set evaluation for counts
 
 Counts need no order. For one subject, compute per plan node a sure set S
@@ -243,7 +275,7 @@ each decision, following the stack's practice (#199–#204):
 | Decision | Dafny | Executable refinement | Mutation controls | Contract |
 |---|---|---|---|---|
 | D2 | `QualifiedTemporal.dfy`: `OrderedShortCircuitIsSound` (in any operand order, the composition is that of every operand and the first decisive operand's certificate is sound), `BothDecisiveTakeTheLaterDeadline`, `CertificateFollowsTheOrder` (the value ignores the order, the certificate does not); `QualifiedEvidence.FoldsIgnoreOrder` (Kleene ∪/∩ ignore operand order) | `eacl.engine.operand-order-refinement-test`: a strong-Kleene transcription over completions of the residual atoms, with widest-witness deadlines and exact stability horizons, against every check, certificate band, detailed lookup and count in both directions, collection certificate, cached client over time and the tabled route, in the sealed order and in random permutations of it | evaluation order drops a child; a fault taken as decisive (the earlier-deadline mutant is equivalent until the tabled evaluator of D8 reads both operands from its table, where its control lands) | `:qualified-evaluation-model-gate` gains the order theorems |
-| D4 | lemma in `CandidateCover.dfy`: a plain cover witness proves the generator node | campaign: every plain-flagged candidate's generator node is plainly true by exact evaluation | plainness ignores the qualifier slot; plainness kept across a qualified edge | same entry |
+| D4 | lemma in `CandidateCover.dfy`: a plain cover witness proves the generator node | `eacl.engine.plain-witness-refinement-test`: every plain-flagged candidate's generator node is granted by exact evaluation, also in a store that holds only the plain relationships, and no lookup or count changes when the witnesses are withheld | plainness ignores the qualifier slot; plainness kept across a qualified edge; a witness for a generator row that only covers its leaf | `:abstract-operator-engine-phase-a`, which lists the model, gains the theorem |
 | D5 | `StructuralBounds.dfy`: S ⊆ Has(t, ctx) ⊆ non-F(t, ctx) ⊆ M for every time and context; semi-naive per component equals the least fixed point; the count decomposition | transcription of the semi-naive evaluator beside production, per node and round; independent check that every exact decision lies between S and M | qualified edge counted sure; `Sa − Sb` for exclusion; delta not propagated through an arrow | new `:structural-operator-bounds` operation and theorem policy |
 | D6 | none new (`MemoizedMembership.dfy` covers retained answers across searches) | batch against sequential `check-permission` per demand: decisions, residuals, failing index | memo shared across contexts; error attributed to the wrong index | `:check-permissions` entry points |
 | D7 | `BidirectionalMembership.dfy`, extending `BidirectionalArrowIntersection.dfy`: upward closure from the subject equals top-down reachability; the leveled certificate is preserved by reversal; work bounded by the smaller side | refinement against the memoized search on random group forests with qualified edges | upward closure skips a level; side choice ignored (caught by the gate's command bound) | `:delegated-operator-recursion` |

@@ -426,6 +426,17 @@
                             (let [value (get evidence eid true)]
                               (when-not (true? value) [eid value])))) (:eids result)))))
 
+(defn- with-path-marks
+  "A run that tracked plain paths (`:plain-paths?`) reports the results whose
+  first discovery crossed a qualified edge as `:qualified-discoveries`. A
+  result the run did not discover itself, a lookahead `retained` by an
+  earlier page, is reported as qualified: only a tracked discovery proves a
+  plain path. Any other run reports nothing."
+  [result marked retained]
+  (cond-> result
+    (some? marked)
+    (assoc :qualified-discoveries (into marked retained))))
+
 (defn- qualified-page-options [options]
   (if-let [request (:qualification options)]
     (let [direction (:direction options)
@@ -470,11 +481,12 @@
           (page-error! :eacl.page/invalid-cursor
                        "Backward run could not validate the supplied edge."
                        {:ordinal ordinal}))
-        (with-result-evidence options
-          {:eids (pop results)
-           :start-ordinal start
-           :has-next? true
-           :has-previous? (pos? start)} (:result-evidence replayed)))
+        (-> (with-result-evidence options
+              {:eids (pop results)
+               :start-ordinal start
+               :has-next? true
+               :has-previous? (pos? start)} (:result-evidence replayed))
+            (with-path-marks (:qualified-discoveries replayed) nil)))
 
       last-window?
       (let [run (governed-replay
@@ -485,11 +497,12 @@
                              anchor-eid
                              reducer/exhaustion-target))
             results (:results run)]
-        (with-result-evidence options
-          {:eids results
-           :start-ordinal (max 0 (- (:discovered run) (count results)))
-           :has-next? false
-           :has-previous? (> (:discovered run) (count results))} (:result-evidence run)))
+        (-> (with-result-evidence options
+              {:eids results
+               :start-ordinal (max 0 (- (:discovered run) (count results)))
+               :has-next? false
+               :has-previous? (> (:discovered run) (count results))} (:result-evidence run))
+            (with-path-marks (:qualified-discoveries run) nil)))
 
       :else
       (let [ordinal (:ordinal after 0)
@@ -498,7 +511,7 @@
               (state-at-boundary options checkpoints checkpoint-key
                                  anchor-eid ordinal (:eid after))
               {:state nil :pending []})
-            {:keys [page-ids lookahead end-state result-evidence]}
+            {:keys [page-ids lookahead end-state result-evidence qualified-discoveries]}
             (if state
               (if raw-candidates?
                 (deliver-raw-page options state pending pending-evidence page-size)
@@ -516,7 +529,8 @@
                               []
                               (into [] (subvec (:results run) page-size)))
                  :end-state (reducer/history-free run)
-                 :result-evidence (:result-evidence run)}))
+                 :result-evidence (:result-evidence run)
+                 :qualified-discoveries (:qualified-discoveries run)}))
             delivered (+ ordinal (count page-ids))]
         (when (and (seq page-ids) checkpoints checkpoint-key)
           (checkpoint-put!
@@ -528,11 +542,20 @@
              (:qualification options)
              (assoc :pending-evidence (into {} (map #(vector % (get result-evidence % true))) lookahead)
                     :qualification-certificate (qualification/certificate (:qualification options))))))
-        (with-result-evidence options
-          {:eids page-ids
-           :start-ordinal ordinal
-           :has-next? (boolean (seq lookahead))
-           :has-previous? (pos? ordinal)} result-evidence)))))
+        (-> (with-result-evidence options
+              {:eids page-ids
+               :start-ordinal ordinal
+               :has-next? (boolean (seq lookahead))
+               :has-previous? (pos? ordinal)} result-evidence)
+            (with-path-marks qualified-discoveries pending))))))
+
+(defn- path-marks
+  "The path marks of a continued run, or of a page served from retained
+  results alone when the request tracks plain paths."
+  [options continued]
+  (if continued
+    (:qualified-discoveries continued)
+    (when (and (:plain-paths? options) (nil? (:qualification options))) #{})))
 
 (defn- deliver-raw-page
   "Continues a checkpoint by exactly `page-size` candidates, with no
@@ -548,7 +571,8 @@
     {:page-ids (into pending (when continued (:results continued)))
      :lookahead []
      :end-state (if continued (reducer/history-free continued) state)
-     :result-evidence (when (:qualification options) (merge pending-evidence (:result-evidence continued)))}))
+     :result-evidence (when (:qualification options) (merge pending-evidence (:result-evidence continued)))
+     :qualified-discoveries (path-marks options continued)}))
 
 (defn- deliver-page
   "Runs from `state`+`pending` (whose scalar `:discovered` count is the
@@ -568,7 +592,8 @@
     {:page-ids page-ids
      :lookahead lookahead
      :end-state (if continued (reducer/history-free continued) state)
-     :result-evidence (when (:qualification options) (merge pending-evidence (:result-evidence continued)))}))
+     :result-evidence (when (:qualification options) (merge pending-evidence (:result-evidence continued)))
+     :qualified-discoveries (path-marks options continued)}))
 
 (defn page
   "Executes one stable-discovery page with self-contained authenticated

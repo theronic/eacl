@@ -154,3 +154,43 @@
       (is (seq @(:commands env)))
       (is (= cached (page! env options)))
       (is (= #{300} (set (keys (:result-evidence cached))))))))
+
+(deftest raw-pages-report-first-discovery-path-marks
+  ;; A structural candidate stream (design D4): the request is unqualified and
+  ;; tracks plain paths, so each page reports the candidates whose first
+  ;; discovery crossed a qualified edge.
+  (let [full (fixture/run (fixture/plain-path-environment {}))
+        marks (:qualified-discoveries full)]
+    (doseq [chunk [1 3] size [1 2 3] retained? [false true]]
+      (let [env (fixture/plain-path-environment {:physical-chunk-size chunk})
+            options {:page-size size :raw-candidates? true
+                     :checkpoints (when retained? (page/make-checkpoint-store))}
+            pages (loop [after nil pages []]
+                    (let [result (page! env (assoc options :after after))
+                          pages (conj pages result)]
+                      (if (= size (count (:eids result)))
+                        (recur {:ordinal (+ (:start-ordinal result) (count (:eids result)))
+                                :eid (peek (:eids result))} pages)
+                        pages)))]
+        (is (= (:results full) (into [] (mapcat :eids) pages)))
+        (doseq [result pages]
+          (is (= (set (filter marks (:eids result))) (:qualified-discoveries result))))
+        (doseq [ordinal [2 3 4 5]]
+          (let [result (page! env (assoc options :before {:ordinal ordinal :eid (nth (:results full) (dec ordinal))}))]
+            (is (= (set (filter marks (:eids result))) (set (filter (set (:eids result)) (:qualified-discoveries result)))))))))
+    (let [env (fixture/plain-path-environment {:plain-paths? false})]
+      (is (not (contains? (page! env {:page-size 2 :raw-candidates? true}) :qualified-discoveries))))))
+
+(deftest a-retained-lookahead-is-never-reported-plain
+  ;; A page that serves a result retained by an earlier page did not discover
+  ;; it: only a tracked discovery proves a plain path.
+  (let [env (fixture/plain-path-environment {})
+        store (page/make-checkpoint-store)
+        first-page (page! env {:page-size 3 :checkpoints store})
+        ;; The ordinary page kept 200, the fourth result, as its lookahead.
+        second-page (page! env {:page-size 3 :checkpoints store
+                                :after {:ordinal 3 :eid (peek (:eids first-page))}})]
+    (is (= [100 300 400] (:eids first-page)))
+    (is (= [200 500] (:eids second-page)))
+    (is (contains? (:qualified-discoveries second-page) 200))
+    (is (not (contains? (:qualified-discoveries second-page) 500)))))
