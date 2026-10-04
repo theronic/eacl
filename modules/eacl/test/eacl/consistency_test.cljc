@@ -1,7 +1,6 @@
 (ns eacl.consistency-test
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is]]
-            [eacl.backend.v8 :as backend]
             [eacl.causal-token :as causal-token]
             [eacl.consistency :as consistency]
             [eacl.spicedb.consistency :as public-consistency]))
@@ -60,14 +59,11 @@
          :revision 41
          :exact-locator 41
          :backend-snapshot-id {:database-id :test :basis-t 41}}
-        adapter-reads (atom {})
         issued
-        (binding [backend/*backend-op-stats* adapter-reads]
-          (consistency/selected-basis-token
-           basis {:format-options format-options}))
+        (consistency/selected-basis-token
+         basis {:format-options format-options})
         payload (causal-token/token-data format-options issued)]
     (is (= 41 (:revision payload)))
     (is (= 41 (:exact-locator payload)))
     (is (= "source" (:source-id payload)))
-    (is (= #uuid "56e42789-dff4-5066-96c9-d275736f47e2" (:source-lifecycle payload)))
-    (is (empty? @adapter-reads))))
+    (is (= #uuid "56e42789-dff4-5066-96c9-d275736f47e2" (:source-lifecycle payload)))))

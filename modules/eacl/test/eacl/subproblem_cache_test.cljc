@@ -152,8 +152,8 @@
       (is (:cached? false-hit))
       (is (false? (:value false-hit))))))
 
-(deftest concurrent-lookup-telemetry-counts-every-hit-test
-  #?(:clj
+#?(:clj
+   (deftest concurrent-lookup-telemetry-counts-every-hit-test
      (let [store (subproblem/store small-options)
            key (storage-key :answer :concurrent-hot)
            workers 8
@@ -177,9 +177,7 @@
          (is (= expected (:hits metrics)))
          (is (= expected (:answer-hits metrics)))
          (is (zero? (:lookup-misses metrics)))
-         (is (zero? (:denotation-hits metrics)))))
-     :cljs
-     (is true)))
+         (is (zero? (:denotation-hits metrics)))))))
 
 (deftest invalid-values-never-publish-test
   (let [store (subproblem/store small-options)]

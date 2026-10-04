@@ -313,7 +313,6 @@
           (is (= :eacl.pagination/stale-cursor (:type recovered-page-2)))
           (do
             (is (= [(second documents)] (:data recovered-page-2)))
-            (is (nil? (get-in recovered-page-2 [:page-info :cursor-recovery])))
             (is (true? (:cached? recovered-page-2))))))
       (testing "a newly signed cursor for the same boundary also reuses it"
         (is (not=

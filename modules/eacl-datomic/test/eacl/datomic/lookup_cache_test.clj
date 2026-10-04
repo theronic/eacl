@@ -8,7 +8,6 @@
             [eacl.datomic.datomic-helpers :refer [with-mem-conn
                                                   with-mem-conns]]
             [eacl.datomic.impl :as impl]
-            [eacl.datomic.impl.indexed :as idx]
             [eacl.datomic.schema :as schema]
             [eacl.engine.v8 :as engine]))
 
@@ -371,15 +370,18 @@
             cursor (get-in first-page [:page-info :end-cursor])
             expected-page (eacl/lookup-resources first-client
                                                  (assoc query :after cursor))
-            stats (atom {})]
-        (is (= (:data expected-page)
-               (:data
-                (binding [idx/*recursive-traversal-stats* stats]
-                  (eacl/lookup-resources second-client
-                                         (assoc query :after cursor)))))
+            stats (atom {})
+            replayed (binding [engine/*recursive-traversal-stats* stats]
+                       (eacl/lookup-resources second-client
+                                              (assoc query :after cursor)))]
+        (is (= (:data expected-page) (:data replayed))
             "another client replays the cursor against its authenticated snapshot")
-        (is (nil? (:recursive-page-hits @stats))
-            "no unauthenticated recursive page is reused across clients")))))
+        (is (false? (:cached? replayed))
+            "no page the first client rendered is reused across clients")
+        (is (zero? (get @stats :continuation-hits 0))
+            "no checkpoint the first client retained is reused across clients")
+        (is (pos? (get @stats :derived-grants 0))
+            "the second client derives the page from its own snapshot")))))
 
 (deftest recursive-cursors-resume-from-the-client-private-denotation-test
   (with-mem-conn [conn schema/v8-schema]
@@ -409,7 +411,7 @@
       (let [first-page (eacl/lookup-resources client query)
             stats (atom {})
             second-page
-            (binding [idx/*recursive-traversal-stats* stats]
+            (binding [engine/*recursive-traversal-stats* stats]
               (eacl/lookup-resources
                client
                (assoc query
@@ -421,7 +423,9 @@
         ;; the closure. The stable engine resumes from the client-private
         ;; checkpoint and derives only the next page plus lookahead, so the
         ;; bound is page-proportional rather than zero.
-        (is (<= (get @stats :derived-grants 0) 4)
+        (is (= 1 (get @stats :continuation-hits 0))
+            "a later page resumes the client-private checkpoint")
+        (is (<= 1 (get @stats :derived-grants 0) 4)
             "a later page resumes private state with page-bounded work"))
       (testing "a bounded shared cache does not disturb denotation reuse"
         (let [bounded-client
@@ -432,17 +436,19 @@
               first-page (eacl/lookup-resources bounded-client query)
               stats (atom {})
               second-page
-              (binding [idx/*recursive-traversal-stats* stats]
+              (binding [engine/*recursive-traversal-stats* stats]
                 (eacl/lookup-resources
                  bounded-client
                  (assoc query
                         :after
                         (get-in first-page [:page-info :end-cursor]))))]
           (is (= ["child"] (mapv :id (:data second-page))))
-          ;; The tiny weight budget may evict the checkpoint; governed
-          ;; replay of a three-folder chain stays below the closure bound.
-          (is (<= (get @stats :derived-grants 0) 10)
-              "an evicted checkpoint replays a bounded prefix, never the closure"))))))
+          ;; The continuation store holds as many checkpoints as the cache
+          ;; holds entries, so the one the first page left is still there.
+          (is (= 1 (get @stats :continuation-hits 0))
+              "the one retained checkpoint serves the next page")
+          (is (<= 1 (get @stats :derived-grants 0) 4)
+              "the next page is derived with page-bounded work, never the closure"))))))
 
 (deftest long-count-does-not-hold-relationship-writer-test
   (with-mem-conn [conn schema/v8-schema]

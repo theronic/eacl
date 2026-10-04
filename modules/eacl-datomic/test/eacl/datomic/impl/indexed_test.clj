@@ -1069,39 +1069,20 @@
 
 (deftest recursive-arrow-permission-lookup-resources-visited-state-test
   (with-mem-conn [conn schema/v8-schema]
-    (let [db                  (load-recursive-parent-db! conn)
-          user                (recursive-user-ref "user-1")
-          reader-relation-eid (:db/id (impl.indexed/find-relation-def db :account :reader))
-          parent-relation-eid (:db/id (impl.indexed/find-relation-def db :account :parent))
-          reader-path         {:type :relation
-                               :name :reader
-                               :subject-type :user
-                               :relation-eid reader-relation-eid}
-          recursive-paths     [reader-path
-                               {:type :arrow
-                                :via :parent
-                                :target-type :account
-                                :via-relation-eid parent-relation-eid
-                                :target-permission :read
-                                :sub-paths [reader-path]}]]
+    (let [db   (load-recursive-parent-db! conn)
+          user (recursive-user-ref "user-1")]
       (testing "lookup-resources should not stop recursion only because the permission name repeats on a different resource"
-        (with-redefs [impl.indexed/get-permission-paths
-                      (fn [_db resource-type permission-name]
-                        (if (and (= :account resource-type)
-                                 (= :read permission-name))
-                          recursive-paths
-                          []))]
-          (is (= #{(spice-object :account "root")
-                   (spice-object :account "child")
-                   (spice-object :account "grandchild")}
-                 (paginated->spice-set db
-                                       (lookup-resources db {:subject       user
-                                                             :permission    :read
-                                                             :resource/type :account
-                                                             :first         100}))))
-          (is (= 3 (:count (count-resources db {:subject       user
-                                                :permission    :read
-                                                :resource/type :account})))))))))
+        (is (= #{(spice-object :account "root")
+                 (spice-object :account "child")
+                 (spice-object :account "grandchild")}
+               (paginated->spice-set db
+                                     (lookup-resources db {:subject       user
+                                                           :permission    :read
+                                                           :resource/type :account
+                                                           :first         100}))))
+        (is (= 3 (:count (count-resources db {:subject       user
+                                              :permission    :read
+                                              :resource/type :account}))))))))
 
 (deftest recursive-dependency-closure-traversal-tests
   (with-mem-conn [conn schema/v8-schema]
@@ -1141,13 +1122,19 @@
           (is (= (first eids)
                  (get-in page [:page-info :start-cursor :result-eid])))))
 
-      (testing "recursive lookup does not call public can? while paging"
-        (with-redefs [impl.indexed/can? (fn [& _]
-                                          (throw (ex-info "can? should not be called by pagination" {})))]
-          (is (= 2 (count (:data (lookup-resources db {:subject       user
-                                                       :permission    :read
-                                                       :resource/type :account
-                                                       :first         2})))))))
+      (testing "recursive lookup does not run point checks while paging"
+        (let [point-check (fn [& _]
+                            (throw (ex-info "a point check should not be run by pagination" {})))]
+          (with-redefs [engine/can-eids?           point-check
+                        engine/check-evidence-eids point-check]
+            (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                                  #"point check should not be run"
+                                  (can? db user :read (recursive-account-ref "root")))
+                "the public check goes through the redefined entry points")
+            (is (= 2 (count (:data (lookup-resources db {:subject       user
+                                                         :permission    :read
+                                                         :resource/type :account
+                                                         :first         2}))))))))
 
       (testing "bare recursive :last requires explicit complete evaluation"
         (binding [engine/*evaluation-mode* :complete-denotation]
