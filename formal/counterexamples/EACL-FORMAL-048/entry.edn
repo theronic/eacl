@@ -15,5 +15,6 @@
  :closing-evidence
  ["eacl.characterization-fixture-test/formal-ci-isolates-and-stops-performance-nrepls-test"
   "eacl.formal.routing-certificate-benchmark/run-gate!"
-  ".github/workflows/formal.yml/Gate routing-certificate logical work and JVM allocation"
-  "formal/verification/performance-gates.edn"]}
+  ;; Historical: formal/verification/performance-gates.edn was a generated
+  ;; evidence ledger, removed in 483911d6.
+  ".github/workflows/formal.yml/Gate routing-certificate logical work and JVM allocation"]}

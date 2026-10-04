@@ -13,7 +13,7 @@
  :fix
  "Withdraw the false all-root generated-authority claim. Recursive roots execute the generated indexed traversal; certified acyclic roots execute the faster source-specialized host engine with generated routing, page, count, and work decisions plus explicit source-specialization evidence. Keep those assurance classes disjoint in the manifest and regression corpus."
  :closing-evidence
- ["eacl.formal.state-trace-differential-test/generated-decisions-and-source-specialized-acyclic-paths-preserve-order-and-point-locality"
-  "formal/verification/acyclic-kernel.edn"
-  "formal/verification/source-specializations.edn"
-  "formal/verification/indexed-traversal.edn"]}
+ [;; Historical: formal/verification/acyclic-kernel.edn,
+  ;; source-specializations.edn and indexed-traversal.edn were generated
+  ;; evidence ledgers, removed in 483911d6.
+  "eacl.formal.state-trace-differential-test/generated-decisions-and-source-specialized-acyclic-paths-preserve-order-and-point-locality"]}

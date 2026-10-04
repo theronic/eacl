@@ -12,6 +12,7 @@
  "Datomic clients may retain an explicitly requested complete denotation in bounded client-private storage keyed by the selected immutable snapshot and complete semantic root. Later pages slice that denotation without backend traversal; unavailable artifacts replay from one independently selected immutable snapshot."
  :closing-evidence
  ["eacl.datomic.lookup-cache-test/recursive-cursors-resume-from-the-client-private-denotation-test"
-  "eacl.datomic.lookup-cache-test/recursive-cursors-replay-across-independent-client-proofs-test"
-  "eacl.bench.pagination-test/recursive-traversal-prefix-benchmark"
-  "eacl.bench.pagination-test/recursive-page-size-work-benchmark"]}
+  ;; Historical: eacl.bench.pagination-test/recursive-traversal-prefix-benchmark
+  ;; and recursive-page-size-work-benchmark were retired with the analysis
+  ;; router (3395d961).
+  "eacl.datomic.lookup-cache-test/recursive-cursors-replay-across-independent-client-proofs-test"]}

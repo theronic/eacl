@@ -11,5 +11,6 @@
  :fix
  "authenticated-store first passed the semantic kind through to the weighted provider (with :authenticated-v3 only as a compatibility fallback); trusted-surface-hygiene 11.1 then deleted the adapter outright — its only consumer was the write-only :shared-cache-store option nothing read — so the defective surface no longer exists to regress."
  :closing-evidence
- ["eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test"
-  "eacl.bench.pagination-test/permission-check-benchmark"]}
+ [;; Historical: eacl.bench.pagination-test/permission-check-benchmark was
+  ;; retired with the analysis router (3395d961).
+  "eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test"]}

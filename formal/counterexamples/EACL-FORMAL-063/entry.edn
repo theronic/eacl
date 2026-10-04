@@ -17,6 +17,6 @@
   "ExecutionContract.DemandPreservesCertifiedEvaluatorRoute"
   "ExecutionContract.AcyclicCompletionPreservesCertifiedPublicOrder"
   "eacl.engine.stable-discovery-gate-test/independent-oracle-equality-test"
-  "formal/mutations/registry.edn :completed-acyclic-artifact-keeps-fixed-point-order"
-  "eacl.engine.stable-discovery-gate-test/independent-oracle-equality-test"
-  "eacl.bench.subproblem-cache-test/distinct-query-shared-subgraph-cache-benchmark"]}
+  ;; Historical: eacl.bench.subproblem-cache-test/distinct-query-shared-subgraph-cache-benchmark
+  ;; was retired with the analysis router (3395d961).
+  "formal/mutations/registry.edn :completed-acyclic-artifact-keeps-fixed-point-order"]}

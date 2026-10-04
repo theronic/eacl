@@ -14,5 +14,5 @@
  "Materialized completion remains a semantic value oracle only. Production limit and dimensional-counter refinement is now assigned exclusively to the generated indexed state machine under its certified ordered-adapter contract, and reports prohibit cross-scope resource substitution."
  :closing-evidence
  ["eacl.formal.production-kernel-test/materialized-resource-limits-are-whole-closure-scoped"
-  "eacl.formal.state-trace-differential-test/recursive-shadow-queue-limit-is-query-local"
+  "eacl.formal.state-trace-differential-test/generated-queue-limit-is-query-local"
   "formal mutation :materialized-resource-counter-promoted-to-production"]}

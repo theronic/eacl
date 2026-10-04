@@ -16,6 +16,8 @@
  ["eacl.formal.production-kernel-test/generated-java-continues-pages-from-verified-lookahead"
   "eacl.engine.continuation-reuse-test/repeated-pagination-reuses-checkpoints-test"
   "eacl.engine.physical-route-test/anchored-point-check-test"
-  "eacl.datascript.contract-test/cold-recursive-point-check-publishes-complete-fixed-point-test"
+  ;; Historical: eacl.datascript.contract-test/cold-recursive-point-check-publishes-complete-fixed-point-test
+  ;; was removed when demand-bounded evaluation stopped publishing complete
+  ;; fixed points for point checks (7a3cd3e6).
   "formal mutation :generated-authority-bypasses-cache-cutover"
   "formal/smoke/clj/run-verified-authority nonbenchmark"]}
