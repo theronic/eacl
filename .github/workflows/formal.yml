@@ -608,12 +608,10 @@ jobs:
           sh bin/ci-nrepl-eval 7788 \
             "(do
                (require 'eacl.formal.generators-test :reload)
-               (require 'eacl.formal.cache-strategy-adversarial-test :reload)
                (require 'eacl.formal.mutation-control-test :reload)
                (let [result
                      (clojure.test/run-tests
                       'eacl.formal.generators-test
-                      'eacl.formal.cache-strategy-adversarial-test
                       'eacl.formal.mutation-control-test)]
                  (when (pos? (+ (:fail result 0) (:error result 0)))
                    (throw (ex-info \"generator/mutation controls failed\" result)))

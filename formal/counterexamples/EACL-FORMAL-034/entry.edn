@@ -14,5 +14,6 @@
  "The launcher now calls cljs.build.api/build, runs the Node suite, and asserts through the same nREPL that a future still completes. Formal evidence no longer depends on whether CLJS compilation ran before JVM concurrency tests."
  :closing-evidence
  ["formal/smoke/cljs/run runtime postcondition :eacl.formal/agent-executor-alive"
-  "eacl.characterization-fixture-test/formal-cljs-smoke-preserves-persistent-nrepl-executors-test"
+  ;; Historical: eacl.characterization-fixture-test/formal-cljs-smoke-preserves-persistent-nrepl-executors-test
+  ;; asserted only the text of the launcher and of formal.yml.
   "formal mutation :formal-cljs-smoke-terminates-agent-executors"]}

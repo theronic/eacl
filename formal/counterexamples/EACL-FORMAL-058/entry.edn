@@ -13,5 +13,7 @@
  :fix
  "Remove eager loads of formal-only former-engine namespaces. Let the corpus runner resolve each closing regression lazily only when its evidence namespace is present, and retain a source regression forbidding those eager requires."
  :closing-evidence
- ["eacl.formal.counterexample-replay-test/replay-entrypoint-does-not-eagerly-load-formal-only-oracles-test"
+ [;; Historical: eacl.formal.counterexample-replay-test/replay-entrypoint-does-not-eagerly-load-formal-only-oracles-test
+  ;; asserted only the text of bin/formal.
+  ".github/workflows/formal.yml/Replay minimized counterexample corpus"
   "EACL_NREPL_PORT=<ordinary-dev-test-cljs-test-port> bin/formal counterexample-replay: 42 tests, 2923 assertions, 0 failures/errors"]}

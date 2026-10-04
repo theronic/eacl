@@ -16,7 +16,6 @@
    [eacl.datascript.storage-test]
    [eacl.engine.relationships-test]
    [eacl.execution-test]
-   [eacl.formal.cache-strategy-adversarial-test]
    [eacl.formal.differential-runner-test]
    [eacl.formal.generators-test]
    [eacl.formal.production-kernel-cljs :as production]
@@ -131,7 +130,6 @@
      'eacl.secure-format-test
      'eacl.subproblem-cache-test
      'eacl.verified-kernel-test
-     'eacl.formal.cache-strategy-adversarial-test
      'eacl.formal.differential-runner-test
      'eacl.formal.generators-test
      'eacl.datascript.adapter-certification-test

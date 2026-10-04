@@ -1243,13 +1243,6 @@
                   :permission :view
                   :resource/type :server}))))))))
 
-(deftest indexed-facade-has-no-shared-schema-cache-surface-test
-  (is (nil? (ns-resolve 'eacl.datomic.impl.indexed '*schema-cache*)))
-  (is (nil? (ns-resolve 'eacl.datomic.impl.indexed 'make-schema-cache)))
-  (is (nil? (ns-resolve 'eacl.datomic.impl.indexed
-                        'evict-permission-paths-cache!)))
-  (is (nil? (ns-resolve 'eacl.engine.v8 'make-schema-cache))))
-
 (deftest string-object-id-resolution-test
   ;; d/entid on a bare string throws a raw IllegalArgumentException, which
   ;; leaked out of impl-level reads. Strings now resolve via the canonical

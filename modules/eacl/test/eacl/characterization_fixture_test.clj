@@ -28,52 +28,6 @@
        (sort-by :id)
        vec))
 
-(deftest formal-cljs-smoke-preserves-persistent-nrepl-executors-test
-  (let [runner
-        (slurp (repo/file "formal" "smoke" "cljs" "run"))
-        workflow
-        (slurp (repo/file ".github" "workflows" "formal.yml"))]
-    (is (str/includes? runner "cljs.build.api"))
-    (is (not (str/includes? runner "(cljs/-main")))
-    (is (str/includes?
-         runner
-         "@(future :eacl.formal/agent-executor-alive)"))
-    (is (str/includes? workflow "cljs.build.api"))
-    (is (not (str/includes? workflow "(cljs/-main")))))
-
-(deftest formal-ci-isolates-and-stops-performance-nrepls-test
-  (let [workflow
-        (slurp (repo/file ".github" "workflows" "formal.yml"))
-        index
-        (fn [needle]
-          (.indexOf workflow needle))
-        ordered-stages
-        ["Start heap-bounded generated-boundary nREPL"
-         "Gate portable CLJS indexed traversal scaling and ceiling"
-         "Restart heap-bounded nREPL for runtime performance suites"
-         "eacl.formal.verified-authority-suite/run-heavy!"
-         "eacl.formal.verified-authority-suite/run-nonbenchmark!"
-         "Restart heap-bounded nREPL for generated resource gates"
-         "Gate routing-certificate logical work and JVM allocation"
-         "Gate generated consistency-boundary overhead"
-         "Restart heap-bounded nREPL for recorded-baseline gates"
-         "Gate populated recursion against recorded v7 baselines"
-         "Gate Explorer enumeration against recorded v7 baselines"
-         "Stop CI nREPL"]]
-    (is (= 4
-           (count
-            (re-seq
-             #"JAVA_TOOL_OPTIONS='-Xms128m -Xmx1024m'"
-             workflow))))
-    (is (str/includes? workflow
-                       "echo \"$!\" > target/formal/ci-nrepl.pid"))
-    (is (str/includes? workflow "if: always()"))
-    (is (str/includes?
-         workflow
-         "kill -KILL \"$nrepl_pid\" 2>/dev/null || true"))
-    (is (every? (comp not neg? index) ordered-stages))
-    (is (apply < (map index ordered-stages)))))
-
 (defn- source-definitions
   [path]
   (into

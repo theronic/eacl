@@ -13,4 +13,6 @@
  :closing-evidence
  [;; Historical: eacl.bench.pagination-test/permission-check-benchmark was
   ;; retired with the analysis router (3395d961).
-  "eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test"]}
+  ;; Historical: eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test
+  ;; asserted only that the deleted names stayed absent.
+  "eacl.datomic.lookup-cache-test/cache-config-is-validated-test"]}
