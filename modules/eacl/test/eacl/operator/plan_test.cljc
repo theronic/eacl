@@ -458,6 +458,87 @@
         "through an operator permission to its own left operand")
     (is (nil? (generator :either)) "a union anchor fans in")))
 
+(def ^:private plain-witness-schema
+  "definition user {}
+   definition folder {
+     relation parent: folder
+     relation reader: user
+     relation deleter: user
+     relation banned: user
+     relation eligible: user
+     permission readable = reader + parent->readable
+     permission granted = deleter + parent->granted
+     permission removable = granted & readable
+     permission kept = granted - readable
+     permission cleared = granted - banned
+     permission cleared_readable = cleared & readable
+     permission either = (granted + readable) & (granted + reader)
+     permission open = (reader + deleter + parent->readable) - banned
+     permission strict = parent->readable & eligible
+     permission mixed = (reader + cleared) - banned
+     permission nested = (reader + (granted - banned)) - eligible
+     permission inherited = reader + (parent->inherited & eligible)
+     permission above = (eligible + parent->inherited) - banned
+   }")
+
+(deftest a-plain-candidate-proves-the-generator-node-test
+  (let [adapter (adapter plain-witness-schema :plain-witness)
+        witness (fn [permission]
+                  (let [sealed (plan/seal-plan adapter [:folder permission])
+                        delegated (or (plan/delegated-permissions sealed)
+                                      (:union-only (plan/guarded-delegation sealed)))]
+                    (when-let [[owner node-id] (cover-plan/plain-witness-node sealed delegated)]
+                      (let [program (get-in sealed [:predicate-programs owner])
+                            describe (fn describe [id]
+                                       (let [{:keys [instruction descriptor target-node children]}
+                                             (get program id)]
+                                         (case instruction
+                                           :direct-membership [:relation (:relation descriptor)]
+                                           :arrow-membership [:arrow (:relation descriptor)]
+                                           :permission-membership [:permission target-node]
+                                           :any-true [:union (set (map describe children))]
+                                           [instruction])))]
+                        [owner (describe node-id)]))))]
+    (testing "an exclusion's left operand"
+      (is (= [[:folder :kept] [:permission [:folder :granted]]] (witness :kept)))
+      (is (= [[:folder :open] [:union #{[:relation :reader] [:relation :deleter] [:arrow :parent]}]]
+             (witness :open))))
+    (testing "an intersection's anchor"
+      (is (= [[:folder :strict] [:relation :eligible]] (witness :strict)))
+      (is (contains? #{[[:folder :removable] [:permission [:folder :granted]]]
+                       [[:folder :removable] [:permission [:folder :readable]]]}
+                     (witness :removable)))
+      (is (contains? #{[[:folder :either] [:union #{[:permission [:folder :granted]]
+                                                    [:permission [:folder :readable]]}]]
+                       [[:folder :either] [:union #{[:permission [:folder :granted]]
+                                                    [:relation :reader]}]]}
+                     (witness :either))))
+    (testing "through a reference to an operator permission, to that permission's own generator node"
+      (is (= [[:folder :cleared] [:permission [:folder :granted]]] (witness :cleared_readable))))
+    (testing "no node when a generator row only covers its leaf"
+      (is (nil? (witness :mixed)) "a union names an operator permission")
+      (is (nil? (witness :nested)) "a union has an operator child")
+      (is (nil? (witness :inherited)) "a guarded member recurses through its own generator")
+      (is (nil? (witness :above)) "an arrow reaches a guarded member"))
+    (testing "a leaf is exact only for relations and delegated permissions"
+      (let [sealed (plan/seal-plan adapter [:folder :mixed])
+            delegated (plan/delegated-permissions sealed)
+            program (get-in sealed [:predicate-programs [:folder :mixed]])
+            exact (into {}
+                        (keep (fn [[id {:keys [instruction descriptor target-node]}]]
+                                (case instruction
+                                  :direct-membership [[:relation (:relation descriptor)]
+                                                      (cover-plan/exact-generator-leaf?
+                                                       sealed delegated [:folder :mixed] id)]
+                                  :permission-membership [[:permission target-node]
+                                                          (cover-plan/exact-generator-leaf?
+                                                           sealed delegated [:folder :mixed] id)]
+                                  nil)))
+                        program)]
+        (is (= {[:relation :reader] true [:relation :banned] true
+                [:permission [:folder :cleared]] false}
+               exact))))))
+
 (def ^:private guarded-schema
   "definition user {}
    definition folder {

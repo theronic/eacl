@@ -306,7 +306,8 @@
                    (invalid-request!
                     "Direct-membership cache lookup returned an invalid value."
                     {:index index :value cached}))))))
-         groups (group-by (juxt :direction :descriptor) misses)
+         groups (when (< 1 (count misses))
+                  (group-by (juxt :direction :descriptor) misses))
          ;; Decorate-sort: the group key vector is built once per group.
          ordered-groups (map second
                              (sort-by first compare
@@ -315,6 +316,17 @@
                                               entry])
                                            groups)))
          completed
+         (if (= 1 (count misses))
+           ;; One missed probe is its own group, chunk and candidate: the
+           ;; request below is the one the schedule would build for it. A
+           ;; point check dispatches every probe this way.
+           (let [{:keys [direction descriptor candidate index]} (nth misses 0)
+                 request {:direction direction
+                          :descriptor descriptor
+                          :candidates [candidate]}
+                 decisions (if edges? (match-many-checked adapter request true)
+                               (direct-match-many-checked? adapter request))]
+             (assoc results index (nth decisions 0)))
          (reduce
           (fn [results [[direction descriptor] entries]]
             (let [candidate->indexes
@@ -348,7 +360,7 @@
                (partition-all backend/maximum-direct-membership-batch-width
                               candidates))))
           results
-          ordered-groups)]
+          ordered-groups))]
      (add-stat! :cache-hits cache-hits)
      (when (some #{::unresolved} completed)
        (contract-violation! adapter :complete-scatter :redacted))

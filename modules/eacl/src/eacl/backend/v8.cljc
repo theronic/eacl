@@ -726,11 +726,14 @@
       (unsupported! backend-id capability requested supported))))
 
 (defn require-capability!
+  "`require-supported!` for an adapter. `basis-adapter` normalized and
+  validated the adapter's capabilities when it built the adapter, so a
+  request reads them instead of normalizing them again."
   [adapter capability requested]
-  (require-supported! (backend-id adapter)
-                      (capabilities adapter)
-                      capability
-                      requested))
+  (let [supported (get (capabilities adapter) capability #{})]
+    (if (contains? supported requested)
+      requested
+      (unsupported! (::id adapter) capability requested supported))))
 
 (defn require-consistency!
   "Normalizes a public consistency descriptor and verifies that the backend

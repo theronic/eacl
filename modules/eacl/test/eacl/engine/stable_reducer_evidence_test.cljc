@@ -196,3 +196,62 @@
                      (reducer/resume (:options env) (reducer/history-free prefix)))]
         (is (= (:result-evidence narrow) (merge (:result-evidence prefix) (:result-evidence suffix))))
         (is (= (get-in narrow [:qualified :weights]) (get-in suffix [:qualified :weights])))))))
+
+;; First-discovery plainness (design D4). Subject 1 holds 100 through a
+;; qualified tuple and 200 through an ordinary one. 300 is a child of both,
+;; 400 a child of 300 across a qualified edge, and 500 a child of 200.
+(def plain-path-rows
+  [[1 10 100 101] [1 10 200 nil]
+   [100 20 300 nil] [200 20 300 nil] [300 20 400 103] [400 20 100 nil] [200 20 500 nil]])
+
+(defn plain-path-environment [extra]
+  (environment plain-path-rows leaves (merge {:qualification nil :plain-paths? true} extra)))
+
+(deftest plain-paths-mark-first-discoveries-across-qualified-edges
+  (doseq [chunk [1 2 64] cap [0 1 16]]
+    (let [env (plain-path-environment {:physical-chunk-size chunk :sidecar-cap cap})
+          full (run env)]
+      ;; 300 is first discovered below 100, whose tuple is qualified, before
+      ;; the ordinary path through 200 reaches it again: its mark stays.
+      (is (= [100 300 400 200 500] (:results full)))
+      (is (= #{100 300 400} (:qualified-discoveries full)))
+      (is (every? :include-qualifier? @(:commands env)) "every scan reads the qualifier slot")
+      (is (empty? @(:reads env)) "and no qualifier is resolved")
+      (doseq [target [1 2 3 4]]
+        (let [prefix (run (assoc-in env [:options :target] target))
+              suffix (reducer/resume (:options env) (reducer/history-free prefix))]
+          (is (= (:results full) (into (:results prefix) (:results suffix))))
+          (is (= (set (filter (:qualified-discoveries full) (:results prefix)))
+                 (:qualified-discoveries prefix)))
+          (is (= (set (filter (:qualified-discoveries full) (:results suffix)))
+                 (:qualified-discoveries suffix))
+              "work items keep their marks across a checkpoint"))))))
+
+(deftest plain-paths-follow-the-reverse-discovery-too
+  ;; From 300 the first subject path is 100's qualified tuple; from 500 the
+  ;; only path is ordinary.
+  (let [marked (run (plain-path-environment {:direction :reverse :resource-eid 300}))
+        plain (run (plain-path-environment {:direction :reverse :resource-eid 500}))]
+    (is (= [1] (:results marked) (:results plain)))
+    (is (= #{1} (:qualified-discoveries marked)))
+    (is (= #{} (:qualified-discoveries plain)))))
+
+(deftest plain-paths-are-reported-only-by-a-run-that-tracks-them
+  (let [untracked (plain-path-environment {:plain-paths? false})
+        result (run untracked)]
+    (is (= [100 300 400 200 500] (:results result)))
+    (is (nil? (:qualified-discoveries result)))
+    (is (not-any? :include-qualifier? @(:commands untracked))))
+  (let [qualified (run (environment plain-path-rows {101 true 103 true} {:plain-paths? true}))]
+    (is (= [100 300 400 200 500] (:results qualified)))
+    (is (nil? (:qualified-discoveries qualified))
+        "a qualified run carries evidence instead and never claims a plain path")))
+
+(deftest plain-path-marks-leave-a-window-with-their-results
+  (doseq [[size results marks] [[2 [200 500] #{}] [3 [400 200 500] #{400}] [9 [100 300 400 200 500] #{100 300 400}]]]
+    (let [result (run (plain-path-environment {:result-sink :window :result-window-size size}))]
+      (is (= results (:results result)))
+      (is (= marks (:qualified-discoveries result)))))
+  (let [counted (run (plain-path-environment {:result-sink :count}))]
+    (is (= 5 (:discovered counted)))
+    (is (= #{} (:qualified-discoveries counted)))))

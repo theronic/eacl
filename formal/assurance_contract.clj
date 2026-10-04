@@ -771,6 +771,7 @@
      :exact-expression-table-to-plan-denotation
      :executable-exact-scc-certificate-and-canonical-negative-cycle-rejection
      :recursive-candidate-cover-containment-and-exact-emission
+     :plain-cover-witness-proves-the-generator-node
      :exact-derivation-scoped-witness-predicates
      :aligned-atomic-mask-schedule-and-vector-refinement
      :bounded-adaptive-batching

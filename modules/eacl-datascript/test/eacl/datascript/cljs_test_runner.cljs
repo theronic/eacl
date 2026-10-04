@@ -55,6 +55,7 @@
             [eacl.datascript.qualified-write-test]
             [eacl.datascript.self-test]
             [eacl.caveats.schema-admission-test]
+            [eacl.schema.qualification-admission-test]
             [eacl.schema.relation-allowance-test]
             [eacl.datascript.qualified-schema-test]
             [eacl.authorization.inspection-test]
@@ -85,6 +86,7 @@
             [eacl.engine.leveled-membership-refinement-test]
             [eacl.engine.guarded-membership-refinement-test]
             [eacl.engine.operand-order-refinement-test]
+            [eacl.engine.plain-witness-refinement-test]
             [eacl.operator.recursive-intersection-differential-test]
             [eacl.relationships.endpoint-pair-test]
             [eacl.relationships.edge-test]
@@ -190,6 +192,7 @@
                'eacl.datascript.qualified-write-test
                'eacl.datascript.self-test
                'eacl.caveats.schema-admission-test
+               'eacl.schema.qualification-admission-test
                'eacl.schema.relation-allowance-test
                'eacl.datascript.qualified-schema-test
                'eacl.authorization.inspection-test
@@ -220,6 +223,7 @@
                'eacl.engine.leveled-membership-refinement-test
                'eacl.engine.guarded-membership-refinement-test
                'eacl.engine.operand-order-refinement-test
+               'eacl.engine.plain-witness-refinement-test
                'eacl.operator.recursive-intersection-differential-test
                'eacl.relationships.endpoint-pair-test
                'eacl.relationships.edge-test

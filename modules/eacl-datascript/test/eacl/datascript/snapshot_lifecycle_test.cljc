@@ -516,6 +516,46 @@
     (is (= 2 (:context-constructions counts)))
     (is (= 1 (:releases counts)))))
 
+(deftest retained-snapshot-issues-one-token-per-second-and-key-test
+  (let [conn (datascript/create-conn)
+        ring (eacl/security-keyring
+              {:keys {:old (vec (range 32)) :new (vec (range 32 64))}
+               :active-kid :old})
+        client (datascript/make-client
+                conn {:cache cache/no-cache :security-keyring-controller ring})
+        _ (eacl/write-schema! client schema)
+        _ (ds/transact! conn [{:eacl/id "user"} {:eacl/id "account"}])
+        snapshot (eacl/snapshot client)
+        issue (fn [seconds target]
+                (with-redefs [causal-token/now-seconds (constantly seconds)]
+                  (eacl/basis-token target)))
+        first-token (issue 1000 snapshot)]
+    (testing "asking again in the same second returns the issued token"
+      (is (identical? first-token (issue 1000 snapshot)))
+      (is (= first-token (issue 1000 (eacl/snapshot client)))))
+    (testing "another second issues that second's token"
+      (let [later (issue 1001 snapshot)]
+        (is (not= first-token later))
+        (is (identical? later (issue 1001 snapshot)))
+        (is (= later (issue 1001 (eacl/snapshot client))))
+        (is (= first-token (issue 1000 snapshot)))))
+    (testing "an activated key signs the next token"
+      (let [before (issue 1002 snapshot)]
+        (eacl/activate-security-key! ring :new)
+        (let [rotated (issue 1002 snapshot)]
+          (is (not= before rotated))
+          (is (= rotated (issue 1002 (eacl/snapshot client)))))))
+    (testing "another basis keeps its own token"
+      (eacl/create-relationship!
+       client (eacl/spice-object :user "user") :owner
+       (eacl/spice-object :account "account"))
+      (is (not= (issue 1002 snapshot) (issue 1002 (eacl/snapshot client)))))
+    (testing "a released snapshot issues nothing"
+      (issue 1003 snapshot)
+      (eacl/release! snapshot)
+      (is (= :eacl/snapshot-released
+             (:type (error-data #(issue 1003 snapshot))))))))
+
 (deftest retained-snapshot-after-lifecycle-rotation-cannot-repopulate-runtime-test
   (let [{:keys [conn user account]} (fixture)
         client (datascript/make-client conn {:cache {}})

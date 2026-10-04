@@ -453,14 +453,16 @@
 
 (defn selected-basis-token
   "Issues a causal token from a closed semantic basis identity. This is the
-  source-free token path used by public snapshots."
-  [basis-identity {:keys [format-options]}]
+  source-free token path used by public snapshots. `:issued-at`, when
+  supplied, is the second the caller already read from the token clock."
+  [basis-identity {:keys [format-options issued-at]}]
   (causal-token/issue
    format-options
-   (select-keys
-    basis-identity
-    [:backend :source-id :branch :source-lifecycle
-     :revision :exact-locator])))
+   (cond-> (select-keys
+            basis-identity
+            [:backend :source-id :branch :source-lifecycle
+             :revision :exact-locator])
+     issued-at (assoc :issued-at issued-at))))
 
 (defn cursor-conflict!
   [data]

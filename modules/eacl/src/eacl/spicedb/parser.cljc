@@ -45,7 +45,7 @@
                           :dimension :source-bytes
                           :maximum maximum-schema-source-bytes
                           :actual-at-least lower-bound})))
-       (let [actual (count (secure/utf8-bytes schema-str))]
+       (let [actual (secure/utf8-size schema-str)]
          (when (> actual maximum-schema-source-bytes)
            (throw (ex-info "Schema source exceeds its byte limit."
                            {:type :eacl.schema/expression-limit
@@ -451,43 +451,52 @@
      parse-tree)
     @issues))
 
+(defn- type-reference-issues
+  "The compatibility issues of one subject type reference of a relation, in
+   the order wildcard, subject relation, caveat."
+  [res-type rel-name type-ref allow-caveats? allow-wildcards?]
+  (cond-> []
+    ;; Wildcards need expression storage; the legacy flat projection
+    ;; (->eacl-schema) has no representation for them.
+    (and (:wildcard? type-ref) (not allow-wildcards?))
+    (conj {:type          :wildcard-relation
+           :resource-type res-type
+           :relation      rel-name
+           :message       (str "Unsupported feature: Wildcard relation '" (:type type-ref) ":*' in "
+                               res-type "/" rel-name ". Flat permission storage cannot represent wildcard access.")})
+
+    ;; Check for subject relations
+    (:subject-relation type-ref)
+    (conj {:type             :subject-relation
+           :resource-type    res-type
+           :relation         rel-name
+           :subject-relation (:subject-relation type-ref)
+           :message          (str "Unsupported feature: Subject relation '" (:type type-ref) "#" (:subject-relation type-ref)
+                                  "' in " res-type "/" rel-name ". EACL does not support nested subject relations.")})
+
+    ;; Check for caveats
+    (and (:caveat type-ref) (not allow-caveats?))
+    (conj {:type          :caveat
+           :resource-type res-type
+           :relation      rel-name
+           :caveat        (:caveat type-ref)
+           :message       (str "Unsupported feature: Caveat 'with " (:caveat type-ref) "' in "
+                               res-type "/" rel-name ". EACL does not support conditional access via caveats.")})))
+
 (defn- collect-relation-issues
   "Check relations for EACL compatibility issues.
    Takes the transformed schema definitions map."
   [definitions allow-caveats? allow-wildcards?]
   (let [issues (atom [])]
+    ;; The body is a function of its own: `doseq` copies its body for every
+    ;; combination of chunked and unchunked bindings, which made this one
+    ;; method larger than the JVM compiles.
     (doseq [[res-type {:keys [relations]}] definitions
             [rel-name type-refs] relations
             type-ref type-refs]
-      ;; Wildcards need expression storage; the legacy flat projection
-      ;; (->eacl-schema) has no representation for them.
-      (when (and (:wildcard? type-ref) (not allow-wildcards?))
-        (swap! issues conj
-               {:type          :wildcard-relation
-                :resource-type res-type
-                :relation      rel-name
-                :message       (str "Unsupported feature: Wildcard relation '" (:type type-ref) ":*' in "
-                                    res-type "/" rel-name ". Flat permission storage cannot represent wildcard access.")}))
-
-      ;; Check for subject relations
-      (when (:subject-relation type-ref)
-        (swap! issues conj
-               {:type             :subject-relation
-                :resource-type    res-type
-                :relation         rel-name
-                :subject-relation (:subject-relation type-ref)
-                :message          (str "Unsupported feature: Subject relation '" (:type type-ref) "#" (:subject-relation type-ref)
-                                       "' in " res-type "/" rel-name ". EACL does not support nested subject relations.")}))
-
-      ;; Check for caveats
-      (when (and (:caveat type-ref) (not allow-caveats?))
-        (swap! issues conj
-               {:type          :caveat
-                :resource-type res-type
-                :relation      rel-name
-                :caveat        (:caveat type-ref)
-                :message       (str "Unsupported feature: Caveat 'with " (:caveat type-ref) "' in "
-                                    res-type "/" rel-name ". EACL does not support conditional access via caveats.")})))
+      (swap! issues into
+             (type-reference-issues res-type rel-name type-ref
+                                    allow-caveats? allow-wildcards?)))
     @issues))
 
 (defn validate-eacl-restrictions

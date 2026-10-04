@@ -23,8 +23,13 @@
 (def ^:private adapter-fields
   #{:backend :fingerprint :identity-contract :operator-capability})
 
-(defrecord DerivedSchemaStore [storage])
+(defrecord DerivedSchemaStore [storage validated-identities])
 (defrecord DerivedPartition [store identity artifact])
+
+(def ^:private maximum-validated-identities
+  "Identities a store remembers having validated. A client meets one per
+  schema generation, so a handful covers every request in flight."
+  8)
 
 (defn store?
   [value]
@@ -41,7 +46,7 @@
   Callers that expose a capacity pass one validated positive safe integer."
   ([] (store default-max-entries))
   ([max-entries]
-   (->DerivedSchemaStore (standard-lru/store max-entries))))
+   (->DerivedSchemaStore (standard-lru/store max-entries) (atom {}))))
 
 (defn- invalid-identity!
   [message data]
@@ -125,17 +130,59 @@
                         (get-in identity [:adapter :backend])}))
   identity)
 
+(defn- validated-identity
+  "The identity as `derived-store` first validated it.
+
+  Every request names the partitions of the schema generation it selected,
+  and nearly every request selects the generation the request before it
+  selected. The store remembers the last identities it validated, so an equal
+  identity is validated once per store instead of once per partition per
+  request, and every partition of it shares one identity value."
+  [derived-store identity]
+  (let [validated (:validated-identities derived-store)]
+    (or (get @validated identity)
+        (do
+          (validate-identity! identity)
+          (swap! validated
+                 (fn [remembered]
+                   (assoc (if (< (count remembered) maximum-validated-identities)
+                            remembered
+                            {})
+                          identity identity)))
+          identity))))
+
+(defn- require-store!
+  [derived-store]
+  (when-not (store? derived-store)
+    (invalid-identity! "Derived-schema partition requires a local LRU store."
+                       {:value derived-store})))
+
+(defn- require-artifact!
+  [artifact]
+  (when-not (keyword? artifact)
+    (invalid-identity! "Derived-schema artifact must be a keyword."
+                       {:artifact artifact})))
+
 (defn artifact-partition
   "Creates a stateless artifact partition over one complete schema identity."
   [derived-store identity artifact]
-  (when-not (store? derived-store)
-    (invalid-identity! "Derived-schema partition requires a local LRU store."
-                       {:value derived-store}))
-  (validate-identity! identity)
-  (when-not (keyword? artifact)
-    (invalid-identity! "Derived-schema artifact must be a keyword."
-                       {:artifact artifact}))
-  (->DerivedPartition derived-store identity artifact))
+  (require-store! derived-store)
+  (let [identity (validated-identity derived-store identity)]
+    (require-artifact! artifact)
+    (->DerivedPartition derived-store identity artifact)))
+
+(defn artifact-partitions
+  "`artifact-partition` for each of `artifacts`, as a map from artifact to
+  partition, validating the identity once."
+  [derived-store identity artifacts]
+  (require-store! derived-store)
+  (let [identity (validated-identity derived-store identity)]
+    (reduce (fn [partitions artifact]
+              (require-artifact! artifact)
+              (assoc partitions artifact
+                     (->DerivedPartition derived-store identity artifact)))
+            {}
+            artifacts)))
 
 (defn entry-key
   "Returns the full opaque key for one derived artifact."

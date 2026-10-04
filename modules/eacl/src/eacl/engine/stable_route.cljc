@@ -1117,30 +1117,69 @@
           (:conditional? outcome) ::qualified
           :else false)))))
 
+(def ^:private holding-edges-per-probe
+  "Edges the first scan of a slice may read for each probe asked of it: about
+  what one probe costs."
+  8)
+
 (defn ^:no-doc subject-holdings
-  "One subject's grants of one relation slice, read by one forward scan of at
-  most `holdings-limit` edges and retained in the request's `context`:
-  `{:complete? flag :edges {endpoint compact-edge}}`. The edges are the
-  stored compact edges a direct probe of each resource returns. When the
-  subject holds the slice `holdings-limit` times or more, `:complete?` is
-  false and a caller probes instead."
-  [{:keys [fetch-fn adapter context qualification cut-point!]}
-   subject-type subject-eid relation-eid resource-type]
-  (let [key [:subject-holdings subject-type subject-eid relation-eid resource-type]]
-    (or (get @context key)
-        (let [fetch-fn (or fetch-fn (reducer/adapter-fetch-fn adapter))
-              _ (when cut-point! (cut-point! nil))
-              edges (reducer/bounded-vector
-                     (fetch-fn (cond-> (forward-scan subject-type subject-eid relation-eid
-                                                     resource-type nil holdings-limit)
-                                 qualification (assoc :include-qualifier? true)))
-                     holdings-limit)
-              holdings {:complete? (< (count edges) holdings-limit)
-                        :edges (into {} (map (juxt edge/endpoint identity)) edges)}]
-          (request-counters/add-commands! 1)
-          (request-counters/add-fetched-values! (count edges))
-          (vswap! context assoc key holdings)
-          holdings))))
+  "One subject's grants of one relation slice, retained in the request's
+  `context`: `{:complete? flag :edges {endpoint compact-edge} :bound endpoint}`.
+  The edges are the stored compact edges a direct probe of each resource
+  returns. A truncated slice (`:complete?` false) still holds every edge up
+  to `:bound`, its last endpoint, because scans are strictly ordered; a
+  caller probes for a resource past it.
+
+  `demand` is the number of probes the caller is deciding from the slice.
+  The first forward scan reads at most `holdings-limit` edges, and no more
+  than `holding-edges-per-probe` for each demanded probe (at least that
+  many). Once the demand of earlier reads reaches the edges read so far, a
+  read continues the scan from `:bound` with as many edges again. Reading
+  holdings therefore costs at most a constant factor of the probes it
+  replaces. Without a demand the first scan reads `holdings-limit` edges and
+  nothing is continued."
+  ([options subject-type subject-eid relation-eid resource-type]
+   (subject-holdings options subject-type subject-eid relation-eid resource-type nil))
+  ([{:keys [fetch-fn adapter context qualification cut-point!]}
+    subject-type subject-eid relation-eid resource-type demand]
+   (let [key [:subject-holdings subject-type subject-eid relation-eid resource-type]
+         scan (fn [bound limit]
+                (let [fetch-fn (or fetch-fn (reducer/adapter-fetch-fn adapter))
+                      _ (when cut-point! (cut-point! nil))
+                      edges (reducer/bounded-vector
+                             (fetch-fn (cond-> (forward-scan subject-type subject-eid relation-eid
+                                                             resource-type bound limit)
+                                         qualification (assoc :include-qualifier? true)))
+                             limit)]
+                  (request-counters/add-commands! 1)
+                  (request-counters/add-fetched-values! (count edges))
+                  edges))
+         retained (get @context key)
+         held (or retained
+                  (let [limit (if demand
+                                (min holdings-limit
+                                     (* holding-edges-per-probe (max 1 demand)))
+                                holdings-limit)
+                        edges (scan nil limit)]
+                    {:complete? (< (count edges) limit)
+                     :edges (into {} (map (juxt edge/endpoint identity)) edges)
+                     :bound (some-> (peek edges) edge/endpoint)
+                     :size limit
+                     :demanded 0}))
+         {:keys [complete? size bound demanded]} held
+         held (if (or complete? (< demanded size))
+                held
+                (let [edges (scan bound size)]
+                  {:complete? (< (count edges) size)
+                   :edges (into (:edges held) (map (juxt edge/endpoint identity)) edges)
+                   :bound (if (seq edges) (edge/endpoint (peek edges)) bound)
+                   :size (* 2 size)
+                   :demanded demanded}))
+         held (cond-> held
+                (and demand (not (:complete? held))) (update :demanded + demand))]
+     (when-not (identical? held retained)
+       (vswap! context assoc key held))
+     held)))
 
 (defn check-many-eids
   "Decides one subject's membership in the plan's root permission for many

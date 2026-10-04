@@ -1155,7 +1155,7 @@
                     (first
                      (reduce (fn [[out size] q]
                                (let [encoded (evidence/encode (get (:facts state) q))
-                                     size (+ size (count (secure-format/utf8-bytes encoded)))]
+                                     size (+ size (secure-format/utf8-size encoded))]
                                  (limit-counter! limits counters :checkpoint-weight :maximum-checkpoint-weight size)
                                  [(conj out [q encoded]) size]))
                              [[] 0] (sorted-questions (keys (:facts state)))))
@@ -1406,13 +1406,19 @@
   witness expires, where the point check certifies its first witness. The
   two deadlines show only in a conditional result's residual. So a
   conditional decision is recomputed with `point-delegate` before it is
-  returned or published, and equals what a check returns."
+  returned or published, and equals what a check returns.
+
+  `witnesses`, aligned with the candidates, holds exact node evidence the
+  caller's cover proved for a candidate (`{node evidence}`), or nil. A
+  witnessed node is not evaluated. A check has no cover, so the conditional
+  recomputation takes no witness either."
   [{:keys [adapter plan candidates permission qualification delegate
-           point-delegate holdings]}
+           point-delegate holdings witnesses]}
    delegated]
   (let [permission (or permission (:root plan))
+        witnesses (when qualification witnesses)
         evaluate
-        (fn [delegate candidates]
+        (fn [delegate candidates witnesses]
           ;; Candidates were validated once and deduplicated by
           ;; `evaluate-cached-many`; the vector evaluator's own
           ;; re-validation is skipped.
@@ -1421,20 +1427,24 @@
                     :plan (operator-plan/delegated-view plan delegated)
                     :permission permission
                     :candidates
-                    (mapv (fn [{:keys [direction subject-type subject-eid resource-eid]}]
-                            {:direction direction
-                             :subject-type subject-type
-                             :subject-eid subject-eid
-                             :resource-type (first permission)
-                             :resource-eid resource-eid
-                             :true-nodes #{}})
+                    (into []
+                          (map-indexed
+                           (fn [index {:keys [direction subject-type subject-eid resource-eid]}]
+                             (let [witness (when witnesses (nth witnesses index))]
+                               (cond-> {:direction direction
+                                        :subject-type subject-type
+                                        :subject-eid subject-eid
+                                        :resource-type (first permission)
+                                        :resource-eid resource-eid
+                                        :true-nodes #{}}
+                                 witness (assoc :evidence-witnesses witness)))))
                           candidates)
                     :delegate delegate
                     :holdings holdings}
              qualification
              (assoc :qualification qualification
                     :witness-scope (qualification/exact-reuse-identity qualification)))))
-        decisions (evaluate delegate candidates)
+        decisions (evaluate delegate candidates witnesses)
         conditional (when point-delegate
                       (vec (keep-indexed (fn [index decision]
                                            (when (conditional-decision? decision) index))
@@ -1444,7 +1454,7 @@
        (reduce (fn [decisions [index decision]] (assoc decisions index decision))
                (vec decisions)
                (map vector conditional
-                    (evaluate point-delegate (mapv #(nth candidates %) conditional))))
+                    (evaluate point-delegate (mapv #(nth candidates %) conditional) nil)))
        decisions)
      :checkpoint nil
      :counters {}
@@ -1473,7 +1483,9 @@
   point reuse. Only unresolved distinct points enter the recursive evaluator;
   no point is published until that whole demanded vector succeeds. An
   optional `:delegate` oracle, `(fn [permission candidates] decisions)`,
-  decides union-only operands when the plan's recursion lies inside them."
+  decides union-only operands when the plan's recursion lies inside them.
+  Optional `:witnesses`, aligned with the candidates, hold exact node evidence
+  already proved for a candidate; only the delegated evaluation reads them."
   [{:keys [plan candidates permission scope-identity checkpoint qualification] :as options}]
   (validate-many-options! plan candidates)
   (let [options (assoc options :limits (normalize-limits (:limits options)))]
@@ -1493,9 +1505,16 @@
                                    (when (= ::miss decision) candidate)))
                            (distinct))
                   (map vector candidates reused))
+            ;; A candidate's witness follows it into the miss vector; any
+            ;; occurrence of a repeated candidate proves the same node.
+            miss-witnesses
+            (when-let [witnesses (:witnesses options)]
+              (let [by-candidate (zipmap candidates witnesses)]
+                (mapv by-candidate misses)))
             evaluated
             (if (seq misses)
-              (evaluate-fresh (assoc options :candidates misses))
+              (evaluate-fresh (assoc options :candidates misses
+                                     :witnesses miss-witnesses))
               {:decisions [] :counters {}})
             miss-decisions (zipmap misses (:decisions evaluated))
             decisions

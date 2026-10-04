@@ -285,266 +285,273 @@
         (when-not (some? root-id)
           (invalid! :missing-root "Operator plan root expression is missing."
                     {:root root-permission}))
-        (loop [stack [{:kind :eval :key root-key}]
-               memo (if (and arrow-witness (decisive? :union (:evidence arrow-witness)))
-                      {root-key (:evidence arrow-witness)} {})
-               active #{}
-               returned no-value]
-          (if (not= no-value returned)
-            (if (empty? stack)
-              (do
-                (add-stat! :memo-entries (count memo))
-                (add-stat! :transitions (:transitions @counters))
-                returned)
-              (let [{:keys [kind key remaining next-frame] :as continuation}
-                    (peek stack)
-                    stack (pop stack)]
-                (case kind
-                  :alias
-                  (let [[memo active value]
-                        (complete-value memo active key returned
-                                        maximum-memo-entries)]
-                    (recur stack memo active value))
-
-                  :nary
-                  (let [op (:op continuation)
-                        accumulated (evidence/combine op (:accumulated continuation) returned)]
-                    (if (or (decisive? op accumulated) (empty? remaining))
-                      (let [[memo active value]
-                            (complete-value memo active key accumulated maximum-memo-entries)]
-                        (recur stack memo active value))
-                      (recur (conj stack
-                                   (assoc continuation :accumulated accumulated
-                                          :remaining (subvec remaining 1))
-                                   {:kind :eval
-                                    :key [(first key) (first remaining)
-                                          (nth key 2) (nth key 3) (nth key 4)]})
-                             memo active no-value)))
-
-                  :exclusion-left
-                  (if (decisive? :exclusion returned)
+        ;; The machine's three kinds of step are separate functions. Written
+        ;; as one loop body, the method exceeded the size beyond which the
+        ;; JVM does not compile a method (8,000 bytecodes), so every operator
+        ;; decision ran in the bytecode interpreter. Each step returns the
+        ;; next `[stack memo active returned]`.
+        (let [resume
+              (fn [stack memo active returned continuation]
+                (let [{:keys [kind key remaining next-frame]} continuation]
+                  (case kind
+                    :alias
                     (let [[memo active value]
-                          (complete-value memo active key returned maximum-memo-entries)]
-                      (recur stack memo active value))
-                    (recur (conj stack
-                                 {:kind :exclusion-right :key key :left returned}
-                                 {:kind :eval
-                                  :key [(first key) (:right continuation)
-                                        (nth key 2) (nth key 3) (nth key 4)]})
-                           memo active no-value))
+                          (complete-value memo active key returned
+                                          maximum-memo-entries)]
+                      [stack memo active value])
 
-                  :exclusion-right
-                  (let [decision (evidence/combine :exclusion (:left continuation) returned)
-                        [memo active value]
-                        (complete-value memo active key decision maximum-memo-entries)]
-                    (recur stack memo active value))
+                    :nary
+                    (let [op (:op continuation)
+                          accumulated (evidence/combine op (:accumulated continuation) returned)]
+                      (if (or (decisive? op accumulated) (empty? remaining))
+                        (let [[memo active value]
+                              (complete-value memo active key accumulated maximum-memo-entries)]
+                          [stack memo active value])
+                        [(conj stack
+                               (assoc continuation :accumulated accumulated
+                                      :remaining (subvec remaining 1))
+                               {:kind :eval
+                                :key [(first key) (first remaining)
+                                      (nth key 2) (nth key 3) (nth key 4)]})
+                         memo active no-value]))
 
-                  :arrow-child
-                  (let [witness (evidence/combine :arrow (:via continuation) returned)
-                        accumulated (evidence/combine :union (:accumulated next-frame) witness)]
-                    (if (decisive? :union accumulated)
+                    :exclusion-left
+                    (if (decisive? :exclusion returned)
                       (let [[memo active value]
-                            (complete-value memo active key accumulated maximum-memo-entries)]
-                        (recur stack memo active value))
-                      (recur (conj stack (assoc next-frame :accumulated accumulated))
-                             memo active no-value)))
+                            (complete-value memo active key returned maximum-memo-entries)]
+                        [stack memo active value])
+                      [(conj stack
+                             {:kind :exclusion-right :key key :left returned}
+                             {:kind :eval
+                              :key [(first key) (:right continuation)
+                                    (nth key 2) (nth key 3) (nth key 4)]})
+                       memo active no-value])
 
-                  (invalid! :invalid-continuation
-                            "Operator evaluator encountered an invalid continuation."
-                            {:continuation continuation}))))
-            (let [next-transition (inc (:transitions @counters))]
-              (when (> next-transition (:maximum-transitions limits))
-                (limit! :transitions (:maximum-transitions limits)
-                        next-transition))
-              (vswap! counters assoc :transitions next-transition)
-              (execution/check! execution/*contract*
-                                :operator-point/transition
-                                {:transitions next-transition})
-              (let [{:keys [kind key] :as frame} (peek stack)
-                    stack (pop stack)]
-                (case kind
-                  :eval
-                  (if (contains? memo key)
-                    (do
-                      (add-stat! :memo-hits 1)
-                      (recur stack memo active (get memo key)))
-                    (if (contains? active key)
-                      (let [[memo active value]
-                            (complete-value memo active key
-                                            (active-recursion-outcome
-                                             {:key key})
-                                            maximum-memo-entries)]
-                        (recur stack memo active value))
-                      (let [[permission node-id current-subject-type
-                             current-subject-eid current-resource-eid] key
-                            predicate
-                            (get-in predicate-programs [permission node-id])
-                            instruction (:instruction predicate)
-                            active (conj active key)]
-                        (add-stat! :node-evaluations 1)
-                        (case instruction
-                          :direct-membership
-                          (let [decision
-                                (direct-match?
-                                 direct-match! current-subject-type
-                                 current-subject-eid (first permission)
-                                 current-resource-eid
-                                 (:descriptor predicate))
-                                [memo active value]
-                                (complete-value memo active key decision
-                                                maximum-memo-entries)]
-                            (recur stack memo active value))
+                    :exclusion-right
+                    (let [decision (evidence/combine :exclusion (:left continuation) returned)
+                          [memo active value]
+                          (complete-value memo active key decision maximum-memo-entries)]
+                      [stack memo active value])
 
-                          :delegated-membership
-                          (let [decisions
-                                (when delegate
-                                  (vec (delegate (:permission predicate)
-                                                 [{:direction :forward
-                                                   :subject-type current-subject-type
-                                                   :subject-eid current-subject-eid
-                                                   :resource-type (first permission)
-                                                   :resource-eid current-resource-eid}])))
-                                _ (when-not (= 1 (count decisions))
-                                    (invalid! :invalid-delegated-decisions
-                                              "A delegated operand returned no aligned decision."
-                                              {:key key}))
-                                [memo active value]
-                                (complete-value memo active key (first decisions)
-                                                maximum-memo-entries)]
-                            (recur stack memo active value))
+                    :arrow-child
+                    (let [witness (evidence/combine :arrow (:via continuation) returned)
+                          accumulated (evidence/combine :union (:accumulated next-frame) witness)]
+                      (if (decisive? :union accumulated)
+                        (let [[memo active value]
+                              (complete-value memo active key accumulated maximum-memo-entries)]
+                          [stack memo active value])
+                        [(conj stack (assoc next-frame :accumulated accumulated))
+                         memo active no-value]))
 
-                          :permission-membership
-                          (let [target (:target-node predicate)
-                                target-root (get roots target)]
-                            (when-not (some? target-root)
-                              (invalid! :missing-target-root
-                                        "Permission predicate target is missing."
-                                        {:target target}))
-                            (recur (conj stack
-                                         {:kind :alias :key key}
-                                         {:kind :eval
-                                          :key [target target-root
-                                                current-subject-type
-                                                current-subject-eid
-                                                current-resource-eid]})
-                                   memo active no-value))
+                    (invalid! :invalid-continuation
+                              "Operator evaluator encountered an invalid continuation."
+                              {:continuation continuation}))))
+              evaluate
+              (fn [stack memo active key]
+                (if (contains? memo key)
+                  (do
+                    (add-stat! :memo-hits 1)
+                    [stack memo active (get memo key)])
+                  (if (contains? active key)
+                    (let [[memo active value]
+                          (complete-value memo active key
+                                          (active-recursion-outcome
+                                           {:key key})
+                                          maximum-memo-entries)]
+                      [stack memo active value])
+                    (let [[permission node-id current-subject-type
+                           current-subject-eid current-resource-eid] key
+                          predicate
+                          (get-in predicate-programs [permission node-id])
+                          instruction (:instruction predicate)
+                          active (conj active key)]
+                      (add-stat! :node-evaluations 1)
+                      (case instruction
+                        :direct-membership
+                        (let [decision
+                              (direct-match?
+                               direct-match! current-subject-type
+                               current-subject-eid (first permission)
+                               current-resource-eid
+                               (:descriptor predicate))
+                              [memo active value]
+                              (complete-value memo active key decision
+                                              maximum-memo-entries)]
+                          [stack memo active value])
 
-                          :arrow-membership
-                          (recur
-                           (conj stack
-                                 {:kind :arrow-next
-                                  :key key
-                                  :descriptor (:descriptor predicate)
-                                  :partition-index 0
-                                  :accumulated (if (and arrow-witness (= root-key key))
-                                                 (:evidence arrow-witness) false)
-                                  :values [] :value-index 0
-                                  :bound nil :exhausted? false})
-                           memo active no-value)
+                        :delegated-membership
+                        (let [decisions
+                              (when delegate
+                                (vec (delegate (:permission predicate)
+                                               [{:direction :forward
+                                                 :subject-type current-subject-type
+                                                 :subject-eid current-subject-eid
+                                                 :resource-type (first permission)
+                                                 :resource-eid current-resource-eid}])))
+                              _ (when-not (= 1 (count decisions))
+                                  (invalid! :invalid-delegated-decisions
+                                            "A delegated operand returned no aligned decision."
+                                            {:key key}))
+                              [memo active value]
+                              (complete-value memo active key (first decisions)
+                                              maximum-memo-entries)]
+                          [stack memo active value])
 
-                          (:any-true :all-true)
-                          (let [children (operator-plan/operand-order plan permission node-id predicate)
-                                op (if (= :any-true instruction)
-                                     :union :intersection)
-                                first-child (first children)]
-                            (when-not first-child
-                              (invalid! :empty-operator
-                                        "Operator predicate has no children."
-                                        {:permission permission
-                                         :node-id node-id}))
-                            (recur
-                             (conj stack
-                                   {:kind :nary :key key :op op
-                                    :accumulated (not= :union op)
-                                    :remaining (subvec children 1)}
-                                   {:kind :eval
-                                    :key [permission first-child
-                                          current-subject-type
-                                          current-subject-eid
-                                          current-resource-eid]})
-                             memo active no-value))
-
-                          :left-and-not-right
-                          (recur
-                           (conj stack
-                                 {:kind :exclusion-left :key key
-                                  :right (:right predicate)}
+                        :permission-membership
+                        (let [target (:target-node predicate)
+                              target-root (get roots target)]
+                          (when-not (some? target-root)
+                            (invalid! :missing-target-root
+                                      "Permission predicate target is missing."
+                                      {:target target}))
+                          [(conj stack
+                                 {:kind :alias :key key}
                                  {:kind :eval
-                                  :key [permission (:left predicate)
+                                  :key [target target-root
                                         current-subject-type
                                         current-subject-eid
                                         current-resource-eid]})
-                           memo active no-value)
+                           memo active no-value])
 
-                          (invalid! :unknown-predicate-instruction
-                                    "Operator plan contains an unknown predicate instruction."
-                                    {:permission permission
-                                     :node-id node-id
-                                     :instruction instruction})))))
+                        :arrow-membership
+                        [(conj stack
+                               {:kind :arrow-next
+                                :key key
+                                :descriptor (:descriptor predicate)
+                                :partition-index 0
+                                :accumulated (if (and arrow-witness (= root-key key))
+                                               (:evidence arrow-witness) false)
+                                :values [] :value-index 0
+                                :bound nil :exhausted? false})
+                         memo active no-value]
 
-                  :arrow-next
-                  (let [{:keys [descriptor partition-index values value-index
-                                exhausted? accumulated]} frame
-                        partitions (:partitions descriptor)
-                        [stack memo active returned]
-                        (cond
-                          (>= partition-index (count partitions))
-                          (let [[memo active value]
-                                (complete-value memo active key accumulated maximum-memo-entries)]
-                            [stack memo active value])
+                        (:any-true :all-true)
+                        (let [children (operator-plan/operand-order plan permission node-id predicate)
+                              op (if (= :any-true instruction)
+                                   :union :intersection)
+                              first-child (first children)]
+                          (when-not first-child
+                            (invalid! :empty-operator
+                                      "Operator predicate has no children."
+                                      {:permission permission
+                                       :node-id node-id}))
+                          [(conj stack
+                                 {:kind :nary :key key :op op
+                                  :accumulated (not= :union op)
+                                  :remaining (subvec children 1)}
+                                 {:kind :eval
+                                  :key [permission first-child
+                                        current-subject-type
+                                        current-subject-eid
+                                        current-resource-eid]})
+                           memo active no-value])
 
-                          (< value-index (count values))
-                          (let [compact-edge (nth values value-index)
-                                intermediate-eid (edge/endpoint compact-edge)
-                                partition (nth partitions partition-index)
-                                known? (and arrow-witness
-                                            (known-arrow-binding? arrow-witness root-key key
-                                                                  partition-index intermediate-eid))
-                                via (when-not known?
-                                      (if qualification
-                                        (qualification/qualify qualification (:via-relation-eid partition) compact-edge)
-                                        true))
-                                next-frame (update frame :value-index inc)]
-                            (cond
-                              known?
-                              ;; The seed already contributed this exact binding.
-                              ;; Visit only remaining target obligations.
-                              [(conj stack next-frame) memo active no-value]
+                        :left-and-not-right
+                        [(conj stack
+                               {:kind :exclusion-left :key key
+                                :right (:right predicate)}
+                               {:kind :eval
+                                :key [permission (:left predicate)
+                                      current-subject-type
+                                      current-subject-eid
+                                      current-resource-eid]})
+                         memo active no-value]
 
-                              (evidence/no? via)
-                              [(conj stack (assoc next-frame :accumulated
-                                                  (evidence/combine :union accumulated via)))
-                               memo active no-value]
+                        (invalid! :unknown-predicate-instruction
+                                  "Operator plan contains an unknown predicate instruction."
+                                  {:permission permission
+                                   :node-id node-id
+                                   :instruction instruction}))))))
+              arrow-next
+              (fn [stack memo active frame]
+                (let [{:keys [key descriptor partition-index values value-index
+                              exhausted? accumulated]} frame
+                      partitions (:partitions descriptor)]
+                  (cond
+                    (>= partition-index (count partitions))
+                    (let [[memo active value]
+                          (complete-value memo active key accumulated maximum-memo-entries)]
+                      [stack memo active value])
 
-                              (= :relation (:target-kind partition))
-                              (let [child (direct-match? direct-match! (nth key 2) (nth key 3)
-                                                         (:intermediate-type partition) intermediate-eid
-                                                         (:target-relation partition))
-                                    witness (evidence/combine :arrow via child)
-                                    result (evidence/combine :union accumulated witness)]
-                                (if (decisive? :union result)
-                                  (let [[memo active value]
-                                        (complete-value memo active key result maximum-memo-entries)]
-                                    [stack memo active value])
-                                  [(conj stack (assoc next-frame :accumulated result))
-                                   memo active no-value]))
+                    (< value-index (count values))
+                    (let [compact-edge (nth values value-index)
+                          intermediate-eid (edge/endpoint compact-edge)
+                          partition (nth partitions partition-index)
+                          known? (and arrow-witness
+                                      (known-arrow-binding? arrow-witness root-key key
+                                                            partition-index intermediate-eid))
+                          via (when-not known?
+                                (if qualification
+                                  (qualification/qualify qualification (:via-relation-eid partition) compact-edge)
+                                  true))
+                          next-frame (update frame :value-index inc)]
+                      (cond
+                        known?
+                        ;; The seed already contributed this exact binding.
+                        ;; Visit only remaining target obligations.
+                        [(conj stack next-frame) memo active no-value]
 
-                              :else
-                              [(conj stack
-                                     {:kind :arrow-child :key key :next-frame next-frame :via via}
-                                     {:kind :eval
-                                      :key (target-key roots (nth key 2) (nth key 3)
-                                                       intermediate-eid partition)})
-                               memo active no-value]))
+                        (evidence/no? via)
+                        [(conj stack (assoc next-frame :accumulated
+                                            (evidence/combine :union accumulated via)))
+                         memo active no-value]
 
-                          exhausted?
-                          [(conj stack (next-partition frame)) memo active no-value]
+                        (= :relation (:target-kind partition))
+                        (let [child (direct-match? direct-match! (nth key 2) (nth key 3)
+                                                   (:intermediate-type partition) intermediate-eid
+                                                   (:target-relation partition))
+                              witness (evidence/combine :arrow via child)
+                              result (evidence/combine :union accumulated witness)]
+                          (if (decisive? :union result)
+                            (let [[memo active value]
+                                  (complete-value memo active key result maximum-memo-entries)]
+                              [stack memo active value])
+                            [(conj stack (assoc next-frame :accumulated result))
+                             memo active no-value]))
 
-                          :else
-                          [(conj stack (arrow-values! resource->subjects! frame limits counters qualification))
-                           memo active no-value])]
-                    (recur stack memo active returned))
+                        :else
+                        [(conj stack
+                               {:kind :arrow-child :key key :next-frame next-frame :via via}
+                               {:kind :eval
+                                :key (target-key roots (nth key 2) (nth key 3)
+                                                 intermediate-eid partition)})
+                         memo active no-value]))
 
-                  (invalid! :invalid-frame
-                            "Operator evaluator encountered an invalid frame."
-                            {:frame frame}))))))))))
+                    exhausted?
+                    [(conj stack (next-partition frame)) memo active no-value]
+
+                    :else
+                    [(conj stack (arrow-values! resource->subjects! frame limits counters qualification))
+                     memo active no-value])))]
+          (loop [stack [{:kind :eval :key root-key}]
+                 memo (if (and arrow-witness (decisive? :union (:evidence arrow-witness)))
+                        {root-key (:evidence arrow-witness)} {})
+                 active #{}
+                 returned no-value]
+            (if (not= no-value returned)
+              (if (empty? stack)
+                (do
+                  (add-stat! :memo-entries (count memo))
+                  (add-stat! :transitions (:transitions @counters))
+                  returned)
+                (let [[stack memo active returned]
+                      (resume (pop stack) memo active returned (peek stack))]
+                  (recur stack memo active returned)))
+              (let [next-transition (inc (:transitions @counters))]
+                (when (> next-transition (:maximum-transitions limits))
+                  (limit! :transitions (:maximum-transitions limits)
+                          next-transition))
+                (vswap! counters assoc :transitions next-transition)
+                (execution/check! execution/*contract*
+                                  :operator-point/transition
+                                  {:transitions next-transition})
+                (let [frame (peek stack)
+                      stack (pop stack)
+                      [stack memo active returned]
+                      (case (:kind frame)
+                        :eval (evaluate stack memo active (:key frame))
+                        :arrow-next (arrow-next stack memo active frame)
+                        (invalid! :invalid-frame
+                                  "Operator evaluator encountered an invalid frame."
+                                  {:frame frame}))]
+                  (recur stack memo active returned))))))))))

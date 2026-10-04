@@ -3,14 +3,28 @@
 # backend production namespaces with *warn-on-reflection* enabled and fails
 # on any reflection warning. Interop in authorization hot paths must be
 # type-hinted, not discovered reflectively per call.
+#
+# Method-size gate, on the same compilation: fails on any production method
+# larger than the JVM compiles (8,000 bytes of bytecode). HotSpot interprets
+# such a method for the life of the process; see
+# src-build/eacl/build/method_size.clj.
 set -uo pipefail
 
 log="${1:-target/reflection-gate.log}"
+classes="$(dirname "$log")/reflection-gate-classes"
 mkdir -p "$(dirname "$log")"
+rm -rf "$classes"
+mkdir -p "$classes"
 
 clojure -M:dev:caveats-jvm -e "
 (set! *warn-on-reflection* true)
-(binding [*warn-on-reflection* true]
+(load-file \"src-build/eacl/build/method_size.clj\")
+;; The storage libraries load first, so that only EACL's namespaces are
+;; written as class files below.
+(require 'datomic.api 'datascript.core 'datahike.api)
+(binding [*warn-on-reflection* true
+          *compile-files* true
+          *compile-path* \"$classes\"]
   (require 'eacl.caveats.jvm 'eacl.caveats.portable 'eacl.relationships.staged
            'eacl.relationships.qualifier-integrity
            'eacl.datomic.qualifiers 'eacl.datascript.qualifiers 'eacl.datahike.qualifiers
@@ -25,7 +39,11 @@ clojure -M:dev:caveats-jvm -e "
            'eacl.datascript.backend
            'eacl.datahike.core 'eacl.datahike.impl 'eacl.datahike.backend
            'eacl.datomic.core 'eacl.datomic.impl 'eacl.datomic.backend))
-(println :reflection-gate-compiled)" >"$log" 2>&1
+(println :reflection-gate-compiled)
+(let [oversized (eacl.build.method-size/oversized \"$classes\" \"eacl/\")]
+  (doseq [{:keys [class method bytes]} oversized]
+    (println \"Oversized method:\" bytes \"bytes\" (str class \".\" method)))
+  (println :method-size-gate-checked (count oversized)))" >"$log" 2>&1
 compile_status=$?
 
 if [ $compile_status -ne 0 ]; then
@@ -40,3 +58,16 @@ if grep -n "Reflection warning" "$log" >&2; then
 fi
 
 echo "reflection gate: clean"
+
+if ! grep -q ":method-size-gate-checked" "$log"; then
+  echo "method-size gate: the compiled methods were not checked" >&2
+  cat "$log" >&2
+  exit 1
+fi
+
+if grep -n "Oversized method:" "$log" >&2; then
+  echo "method-size gate: the JVM never compiles a method over 8,000 bytes; split it" >&2
+  exit 1
+fi
+
+echo "method-size gate: clean"

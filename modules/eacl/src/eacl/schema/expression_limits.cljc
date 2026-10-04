@@ -245,8 +245,8 @@
                :root (old->new root)
                :nodes records}
         checkpoint-weight
-        (count (secure/utf8-bytes
-                 (secure/encode-canonical value expression/codec-limits)))]
+        (secure/utf8-size
+         (secure/encode-canonical value expression/codec-limits))]
     {:dag value
      :metrics {:node-count (count records)
                :child-slot-count child-slot-count
